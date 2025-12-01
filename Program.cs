@@ -6,6 +6,7 @@ var builder = Host.CreateApplicationBuilder(args);
 
 builder.Services.Configure<Appsettings>(builder.Configuration.GetSection("Appsettings"));
 builder.Services.AddSingleton<ConfigManager>();
+builder.Services.AddSingleton<Logging>();
 
 builder.Services.AddHostedService<Worker>();
 

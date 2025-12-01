@@ -7,10 +7,10 @@ namespace Falcom
       private readonly Parameter parameter;
       private readonly Lager lager;
 
-      public Worker(ILogger<Worker> logger, ConfigManager configManager)
+      public Worker(ILogger<Worker> logger, ConfigManager configManager, Logging loggingService)
       {
          _logger = logger;
-         logging = new Logging(configManager);
+         logging = loggingService;
          parameter = new Parameter(configManager, logging);
          lager = new Lager(configManager, logging);
       }
