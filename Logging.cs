@@ -1,15 +1,16 @@
 using System;
 using System.Collections.Generic;
 using System.Text;
+using System.Threading;
 
 namespace Falcom 
 {
    public class Logging
    {
       private readonly ConfigManager _configManager;
-      private LogZentrale logZentrale; 
-      private LogFile logFile;
-      private LogConsole logConsole;
+      private readonly LogZentrale logZentrale; 
+      private readonly LogFile logFile;
+      private readonly LogConsole logConsole;
 
       private Boolean inf;
       private Boolean err;
@@ -19,6 +20,15 @@ namespace Falcom
       public Logging(ConfigManager configManager)
       {
          _configManager = configManager;
+         
+         Init();
+         
+         logZentrale = new LogZentrale(inf, war, err, dev);
+         logFile = new LogFile(_configManager.LogfilePath); 
+         logConsole = new LogConsole();
+         
+         logZentrale.Register(logFile.Log);         
+         logZentrale.Register(logConsole.Log);                
       }
       
       public void Init()
@@ -36,34 +46,32 @@ namespace Falcom
       
       public void Run()
       {  
-         Init();
-         
-         logZentrale = new LogZentrale(inf, war, err, dev);
-         logZentrale.Start();
-         
-         logFile = new LogFile(_configManager.LogfilePath); 
-         
-         logZentrale.Register(logFile.Log);         
-         
-         logConsole = new LogConsole();
-         logZentrale.Register(logConsole.Log);                
+         logZentrale?.Start();
       }
 
       public void Stop()
       {  
-         logZentrale.Stop();
+         logZentrale?.Stop();
       }
 
       public void Log(LogEintrag logEintrag)
       {
          try
          {
-            logZentrale.Log(logEintrag);
+            logZentrale?.Log(logEintrag);
          }
          catch(Exception e)
          {
             Console.WriteLine("Logging.Log Error = {0}", e.Message);
          }
+      }
+
+      public void ZLog(ELF logFlags, string formatString, params object[] paramObjects)
+      {
+         string threadInfo = string.Format("{0}:{1}", Thread.CurrentThread.Name, Thread.CurrentThread.ManagedThreadId);
+         LogEintrag logEintrag = new LogEintrag(logFlags, string.Format(formatString, paramObjects), DateTime.Now, threadInfo);
+
+         Log(logEintrag);
       }
    }
 }

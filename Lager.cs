@@ -8,19 +8,24 @@ namespace Falcom
 {
    public class Lagerplatz
    {
-       // Private Felder
-       private int lagerplatzNr;
-       private bool active;
-       private int restmenge;
-       private float cu;
-       private float mn;
-       private float c;
-       private float si;
-       private float s;
-       private float mg;
-       private string bezeichnung;
+      // Private Felder
+      private int lagerplatzNr;
+      private bool active;
+      private int restmenge;
+      private float cu;
+      private float mn;
+      private float c;
+      private float si;
+      private float s;
+      private float mg;
+      private string bezeichnung;
 
-       public Lagerplatz(int lagerplatzNr, bool active, int restmenge, float cu, float mn, float c, float si, float s, float mg, string bezeichnung)
+      public Lagerplatz()
+      {
+         // Standardkonstruktor
+      }
+
+      public Lagerplatz(int lagerplatzNr, bool active, int restmenge, float cu, float mn, float c, float si, float s, float mg, string bezeichnung)
        {
            this.lagerplatzNr = lagerplatzNr;
            this.active = active;
@@ -112,11 +117,51 @@ namespace Falcom
 	public class Lager
 	{
 		private readonly ConfigManager _configManager;
-		private Dictionary<int, Lagerplatz> lagerplätze;
+		private readonly Logging _logger;
+		private readonly Dictionary<int, Lagerplatz> lagerplätze;
 
-		public Lager(ConfigManager configManager)
+		public Lager(ConfigManager configManager, Logging logger)
 		{
 			_configManager = configManager;
+			_logger = logger;
+         lagerplätze = new Dictionary<int, Lagerplatz>();
+
+         try
+         {
+            SimpleSqlQuery query = new SimpleSqlQuery(_configManager.ConnectionString , "select * from FALCOM_Lager order by Lagerplatz");
+            if (query.QueryResult != null)
+            {
+               foreach (Dictionary<string, object> row in query.QueryResult)
+               {
+                  try
+                  {
+                     int lagerplatz = Convert.ToInt32(row["Lagerplatz"]);
+                     bool active = Convert.ToBoolean(row["Aktiv"]);
+                     int restmenge = Convert.ToInt32(row["Restmenge"]);
+                     float cu = (float)Math.Round(Convert.ToSingle(row["Cu"]), 3);
+                     float mn = (float)Math.Round(Convert.ToSingle(row["Mn"]), 3);
+                     float c = (float)Math.Round(Convert.ToSingle(row["C"]), 3);
+                     float si = (float)Math.Round(Convert.ToSingle(row["Si"]), 3);
+                     float s = (float)Math.Round(Convert.ToSingle(row["S"]), 3);
+                     float mg = (float)Math.Round(Convert.ToSingle(row["Mg"]), 3);
+
+                     string bezeichnung = Convert.ToString(row["Bezeichnung"]);
+
+                     // Erstelle einen Lagerplatz und füge ihn dem Dictionary hinzu
+                     Lagerplatz platz = new Lagerplatz(lagerplatz, active, restmenge, cu, mn, c, si, s, mg, bezeichnung);
+                     lagerplätze.Add(lagerplatz, platz);
+                  }
+                  catch(Exception e)
+                  {
+                     _logger.ZLog(ELF.ERROR, "Tabelle FALCOM_Lager -> {0}", e.Message);
+                  }
+               }
+            }
+         }
+         catch (Exception e)
+         {
+            _logger.ZLog(ELF.ERROR, "Tabelle FALCOM_Lager (2) -> {0}", e.Message);
+         }
 		}
 
       public float[] GetCuValues()
@@ -157,46 +202,5 @@ namespace Falcom
          // Konvertiere die Liste in ein Array vom Typ double und gebe es zurück
          return mnWerte.ToArray();
       }
-		public void Update()
-		{
-         lagerplätze = new Dictionary<int, Lagerplatz>();
-
-         try
-         {
-            SimpleSqlQuery query = new SimpleSqlQuery(_configManager.ConnectionString , "select * from FALCOM_Lager order by Lagerplatz");
-            if (query.QueryResult != null)
-            {
-               foreach (Dictionary<string, object> row in query.QueryResult)
-               {
-                  try
-                  {
-                     int lagerplatz = Convert.ToInt32(row["Lagerplatz"]);
-                     bool active = Convert.ToBoolean(row["Aktiv"]);
-                     int restmenge = Convert.ToInt32(row["Restmenge"]);
-                     float cu = (float)Math.Round(Convert.ToSingle(row["Cu"]), 3);
-                     float mn = (float)Math.Round(Convert.ToSingle(row["Mn"]), 3);
-                     float c = (float)Math.Round(Convert.ToSingle(row["C"]), 3);
-                     float si = (float)Math.Round(Convert.ToSingle(row["Si"]), 3);
-                     float s = (float)Math.Round(Convert.ToSingle(row["S"]), 3);
-                     float mg = (float)Math.Round(Convert.ToSingle(row["Mg"]), 3);
-
-                     string bezeichnung = Convert.ToString(row["Bezeichnung"]);
-
-                     // Erstelle einen Lagerplatz und füge ihn dem Dictionary hinzu
-                     Lagerplatz platz = new Lagerplatz(lagerplatz, active, restmenge, cu, mn, c, si, s, mg, bezeichnung);
-                     lagerplätze.Add(lagerplatz, platz);
-                  }
-                  catch(Exception e)
-                  {
-                     Worker.TheFALOCOM.ZLog(ELF.ERROR, "Tabelle FALCOM_Lager -> {0}", e.Message);
-                  }
-               }
-            }
-         }
-         catch (Exception e)
-         {
-            Worker.TheFALOCOM.ZLog(ELF.ERROR, "Tabelle FALCOM_Lager (2) -> {0}", e.Message);
-         }
-		}
 	}
 }
