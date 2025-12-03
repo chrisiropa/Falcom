@@ -11,7 +11,7 @@ namespace Falcom
       private const long maxLogfileEntries = 200000; //Entspricht im Mittel 20MB Filegr��e
       private long logfileEntryCounter = 0;
       private bool firstError = true;
-      private string logfilePath = "";
+      private readonly string logfilePath = "";
 
       public LogFile(string logfilePath)
       {

@@ -16,10 +16,10 @@ namespace Falcom
       private DateTime fileCompileTime;
       private DateTime fileCreationTime;
       private DateTime fileModifiedTime;
-      private string executionPath;
-      private string name;
-      private string produktName;
-      private string companyName;
+      private string executionPath = "";
+      private string name = "";
+      private string produktName = "";
+      private string companyName = "";
 
 
       public int Major { get { return major; } }
@@ -42,22 +42,25 @@ namespace Falcom
             Assembly asm = Assembly.GetExecutingAssembly();
             AssemblyName asmName = asm.GetName();
 
-
             object[] attribsProduct = asm.GetCustomAttributes(typeof(AssemblyProductAttribute), true);
-            if (attribsProduct.Length > 0)
+            if (attribsProduct != null && attribsProduct.Length > 0)
             {
-               AssemblyProductAttribute asmProduct = attribsProduct[0] as AssemblyProductAttribute;
+               AssemblyProductAttribute asmProduct = (AssemblyProductAttribute)attribsProduct[0];
                produktName = asmProduct.Product.ToString();
             }
 
             object[] attribsCompany = asm.GetCustomAttributes(typeof(AssemblyCompanyAttribute), true);
-            if (attribsCompany.Length > 0)
+
+            // Prüft, ob das Array Elemente hat UND ob das erste Element
+            // erfolgreich in AssemblyCompanyAttribute konvertiert werden kann.
+            if (attribsCompany.Length > 0 && attribsCompany[0] is AssemblyCompanyAttribute asmCompany)
             {
-               AssemblyCompanyAttribute asmCompany = attribsCompany[0] as AssemblyCompanyAttribute;
+               // Hier ist asmCompany garantiert NICHT null.
                companyName = asmCompany.Company.ToString();
             }
 
             executionPath = asm.Location;
+
             name = asmName.Name;
             major = asmName.Version.Major;
             minor = asmName.Version.Minor;

@@ -15,20 +15,12 @@ namespace Falcom
 
    }
 
-   public struct LogEintrag
+   public readonly struct LogEintrag(ELF logFlags, string text, DateTime zeitStempel, string threadInfo)
    {
-      private ELF logFlags;
-      private string text;
-      private DateTime zeitStempel;
-      private string threadInfo;
-
-      public LogEintrag(ELF logFlags, string text, DateTime zeitStempel, string threadInfo)
-      {
-         this.logFlags = logFlags;
-         this.text = text;
-         this.zeitStempel = zeitStempel;
-         this.threadInfo = threadInfo;
-      }
+      private readonly ELF logFlags = logFlags;
+      private readonly string text = text;
+      private readonly DateTime zeitStempel = zeitStempel;
+      private readonly string threadInfo = threadInfo;
 
       public ELF LogFlags
       {
@@ -46,8 +38,9 @@ namespace Falcom
                case ELF.DEVELOPER: return string.Format("DEV|");
                case ELF.ERROR: return string.Format("ERR|");
                case ELF.SUCCESS: return string.Format("SUC|");
+               case ELF.STATUS: return string.Format("STS|");
+               default: return string.Format("UNKNOWN|");
             }
-            return "UNKNOWN";
          }
       }
 
@@ -66,7 +59,7 @@ namespace Falcom
          get { return threadInfo; }
       }
 
-      public ConsoleColor GetColor(ELF elf)
+      public static ConsoleColor GetColor(ELF elf)
       {
          switch (elf)
          {
@@ -76,6 +69,7 @@ namespace Falcom
             case ELF.INFO: return Console.ForegroundColor;
             case ELF.SUCCESS: return ConsoleColor.Green;
             case ELF.WARNING: return ConsoleColor.Yellow;
+            default: break;
          }
 
          return Console.ForegroundColor;

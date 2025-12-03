@@ -10,7 +10,6 @@ namespace Falcom
       private readonly ConfigManager _configManager;
       private readonly LogZentrale logZentrale; 
       private readonly LogFile logFile;
-      private readonly LogConsole logConsole;
 
       private Boolean inf;
       private Boolean err;
@@ -25,10 +24,9 @@ namespace Falcom
          
          logZentrale = new LogZentrale(inf, war, err, dev);
          logFile = new LogFile(_configManager.LogfilePath); 
-         logConsole = new LogConsole();
          
          logZentrale.Register(logFile.Log);         
-         logZentrale.Register(logConsole.Log);                
+         logZentrale.Register(LogConsole.Log);                
       }
       
       public void Init()

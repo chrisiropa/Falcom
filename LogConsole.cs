@@ -3,12 +3,14 @@ using System.Collections.Generic;
 using System.Text;
 using System.IO;
 using System.Diagnostics;
+using System.Runtime.Versioning;
 
 
 namespace Falcom
 {
    class LogConsole
    {
+      [SupportedOSPlatform("windows")]
       public static void InitConsole()
       {
          try
@@ -24,6 +26,7 @@ namespace Falcom
          }
       }
    
+      [SupportedOSPlatform("windows")]
       public LogConsole()
       {
          try
@@ -39,7 +42,7 @@ namespace Falcom
 
       }
 
-      public void Log(LogEintrag logEintrag)
+      public static void Log(LogEintrag logEintrag)
       {
          try
          {
@@ -47,7 +50,7 @@ namespace Falcom
 
             
 
-            Console.ForegroundColor = logEintrag.GetColor(logEintrag.LogFlags);
+            Console.ForegroundColor = LogEintrag.GetColor(logEintrag.LogFlags);
 
             Console.WriteLine(string.Format("{2} {0} {3} {1}", logEintrag.ZeitStempel.ToString("dd.MM.yy HH:mm:ss.fff "), logEintrag.Text, logEintrag.LogFlagAsText, logEintrag.ThreadInfo));
 

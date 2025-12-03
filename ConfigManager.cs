@@ -19,9 +19,9 @@ namespace Falcom
 
    public class ConfigManager
    {
-      private readonly string connectionString;
-      private readonly string logfilePath;
-      private readonly string executionDirectory;
+      private readonly string connectionString = "";
+      private readonly string logfilePath = "";
+      private readonly string executionDirectory = "";
 
 
       public string ConnectionString => connectionString;
@@ -35,8 +35,11 @@ namespace Falcom
             var settings = appSettings.Value;
             logfilePath = settings.LogfilePath;
 
-            AssemblyInfoWrapper iw = new AssemblyInfoWrapper();
-            executionDirectory = Path.GetDirectoryName(iw.ExecutionPath);
+            AssemblyInfoWrapper iw = new();
+
+            // Path.GetDirectoryName kann null zurückgeben. Wenn es null ist, 
+            // wird der Standardwert (string.Empty) zugewiesen.
+            executionDirectory = Path.GetDirectoryName(iw.ExecutionPath) ?? string.Empty;
 
 
             SqlConnectionStringBuilder csb = new SqlConnectionStringBuilder();

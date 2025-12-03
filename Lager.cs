@@ -145,10 +145,10 @@ namespace Falcom
                      float s = (float)Math.Round(Convert.ToSingle(row["S"]), 3);
                      float mg = (float)Math.Round(Convert.ToSingle(row["Mg"]), 3);
 
-                     string bezeichnung = Convert.ToString(row["Bezeichnung"]);
+                     string bezeichnung = Convert.ToString(row["Bezeichnung"]) ?? string.Empty;
 
                      // Erstelle einen Lagerplatz und füge ihn dem Dictionary hinzu
-                     Lagerplatz platz = new Lagerplatz(lagerplatz, active, restmenge, cu, mn, c, si, s, mg, bezeichnung);
+                     Lagerplatz platz = new(lagerplatz, active, restmenge, cu, mn, c, si, s, mg, bezeichnung);
                      lagerplätze.Add(lagerplatz, platz);
                   }
                   catch(Exception e)
