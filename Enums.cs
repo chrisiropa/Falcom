@@ -4,5 +4,11 @@ using System.Text;
 
 namespace Falcom
 {
-   
+    public enum ProcessState
+    {
+        Idle,
+        ScrapStored,
+        FineDosingComplete,
+        MeltingProcessStarted
+    }
 }

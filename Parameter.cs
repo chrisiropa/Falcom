@@ -9,11 +9,11 @@ namespace Falcom
 	public class Parameter
 	{
       private readonly ConfigManager _configManager;
-      private readonly Logging _logger;
+      private readonly ILogger<Parameter> _logger;
       
       public string PythonExe { get; } = string.Empty;
 
-      public Parameter(ConfigManager configManager, Logging logger)
+      public Parameter(ConfigManager configManager, ILogger<Parameter> logger)
       {
          _configManager = configManager;
          _logger = logger;
@@ -32,14 +32,14 @@ namespace Falcom
                   }
                   catch(Exception e)
                   {
-                     _logger.ZLog(ELF.ERROR, "Tabelle FALCOM_PARAMETER (PYTHON_EXE) -> {0}", e.Message);
+                     _logger.LogError(e, "Tabelle FALCOM_PARAMETER konnte für PYTHON_EXE nicht gelesen werden.");
                   }
                }
             }
          }
          catch (Exception e)
          {
-            _logger.ZLog(ELF.ERROR, "Tabelle AAD_LEG_Behandlung_Ort_Map (2) -> {0}", e.Message);
+            _logger.LogError(e, "Tabelle FALCOM_PARAMETER konnte nicht geladen werden.");
          }
 	   }
 	}

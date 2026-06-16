@@ -391,10 +391,7 @@ healthchecksdb
 # Backup folder for Package Reference Convert tool in Visual Studio 2017
 MigrationBackup/
 
-# Ionide (cross platform F# VS Code tools) working folderrm -rf bin/
-rm -rf obj/
-rm -rf .vs/
-rm -rf .git  # Den alten, versteckten Git-Ordner auch gleich löschen
+# Ionide (cross platform F# VS Code tools) working folder
 **/.ionide/
 
 # Fody - auto-generated XML schema
@@ -432,6 +429,26 @@ FodyWeavers.xsd
 # Cache files
 *.cache
 *Temporary*
+
+# Python / PyInstaller build artifacts
+PythonFile/build/
+PythonFile/dist/
+PythonFile/__pycache__/
+PythonFile/*.pyc
+PythonFile/*.pyo
+PythonFile/*.pyd
+PythonFile/*.spec
+PythonFile/*.exe
+PythonFile/*.bin
+
+# Local certificates / secret material
+CertificateStores/
+*.der
+
+# Local database backups
+Datenbank/
+*.bak
+*.BAK
 
 # -------------------------------------------------------------------
 # Generische Temporäre Ordner und Dateien

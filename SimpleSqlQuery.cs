@@ -1,56 +1,53 @@
 using System;
 using System.Collections.Generic;
-using System.Text;
 using Microsoft.Data.SqlClient;
 
 namespace Falcom
 {
    public class SimpleSqlQuery
    {
-      private string connectionString;
-      private string query;
-      private Exception exception = null;
+      private readonly string connectionString;
+      private readonly string query;
+      private Exception? exception;
       private long zeilenAnzahl = -1;
-
-      
+      private List<Dictionary<string, object>>? queryResult = new List<Dictionary<string, object>>();
 
       public long ZeilenAnzahl
       {
          get { return zeilenAnzahl; }
       }
 
-      public Exception Exception
+      public Exception? Exception
       {
          get { return exception; }
       }
 
-      private List<Dictionary<string, object>> queryResult = new List<Dictionary<string, object>>();
-
-      public List<Dictionary<string, object>> QueryResult
+      public List<Dictionary<string, object>>? QueryResult
       {
          get { return queryResult; }
       }
 
-
       public SimpleSqlQuery(string connectionString, string formatString, params object[] paramObjects)
       {
          this.connectionString = connectionString;
-         this.query = string.Format(formatString, paramObjects);
+         query = string.Format(formatString, paramObjects);
 
          Execute();
       }
 
       private void Execute()
       {
-         SqlDataReader dataReader = null;
-         SqlConnection sqlConnection = new SqlConnection(connectionString);
+         SqlDataReader? dataReader = null;
+         using SqlConnection sqlConnection = new SqlConnection(connectionString);
 
          try
          {
             sqlConnection.Open();
-            SqlCommand dataCommand = new SqlCommand();
-            dataCommand.Connection = sqlConnection;
-            dataCommand.CommandText = query;
+            SqlCommand dataCommand = new SqlCommand
+            {
+               Connection = sqlConnection,
+               CommandText = query
+            };
 
             dataReader = dataCommand.ExecuteReader();
             while (dataReader.Read())
@@ -60,20 +57,15 @@ namespace Falcom
                for (int i = 0; i < dataReader.FieldCount; i++)
                {
                   string fieldName = dataReader.GetName(i);
-
                   object value = dataReader[fieldName];
-
                   dict[fieldName] = value;
                }
 
-               queryResult.Add(dict);
+               queryResult!.Add(dict);
             }
 
-            zeilenAnzahl = queryResult.Count;
-
-            dataReader.Close();
+            zeilenAnzahl = queryResult!.Count;
          }
-
          catch (Exception e)
          {
             zeilenAnzahl = -1;
@@ -82,12 +74,10 @@ namespace Falcom
          }
          finally
          {
-            if (dataReader != null)
+            if (dataReader is not null)
             {
                dataReader.Close();
             }
-
-            sqlConnection.Close();
          }
       }
    }
