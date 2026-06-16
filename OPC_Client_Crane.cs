@@ -5,11 +5,16 @@ namespace Falcom
 {
    public sealed class OPC_Client_Crane : IDisposable
    {
+      private static readonly TimeSpan ConnectRetryDelay = TimeSpan.FromSeconds(5);
+      private const string ZaehlerNodeId = "ns=1;s=LagerV.DataBlocks.Count_DB_1.Static.OPC.Zaehler";
+      private const string WatchdogNodeId = "ns=1;s=LagerV.DataBlocks.OPC_Daten_ORG.Static.Watchdog";
+
       private readonly ILogger<OPC_Client_Crane> _logger;
       private readonly object _syncRoot = new();
       private readonly List<OpcMonitoredItem> monitoredItems = new();
       private OpcClient? client = null;
       private OpcSubscription? subscription = null;
+      private bool spsDataUnavailable;
       private bool disposed;
 
       public OPC_Client_Crane(ILogger<OPC_Client_Crane> logger)
@@ -36,26 +41,139 @@ namespace Falcom
       /// </summary>
       public void Connect()
       {
+         ConnectOnce();
+      }
+
+      public async Task ConnectUntilConnectedAsync(CancellationToken cancellationToken)
+      {
+         var attempt = 1;
+
+         while (true)
+         {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            try
+            {
+               _logger.LogInformation("OPC-Verbindungsversuch {Attempt} wird gestartet.", attempt);
+               ConnectOnce();
+               ValidateWatchdogRead();
+               _logger.LogInformation("OPC-Verbindungsversuch {Attempt} erfolgreich abgeschlossen.", attempt);
+               return;
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+               throw;
+            }
+            catch (Exception ex)
+            {
+               _logger.LogError(ex, "OPC-Verbindungsversuch {Attempt} fehlgeschlagen. Naechster Versuch in {DelaySeconds} Sekunden.", attempt, ConnectRetryDelay.TotalSeconds);
+               attempt++;
+               await Task.Delay(ConnectRetryDelay, cancellationToken);
+            }
+         }
+      }
+
+      public async Task EnsureDataFlowAsync(CancellationToken cancellationToken)
+      {
+         var attempt = 1;
+
+         while (true)
+         {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            try
+            {
+               ValidateWatchdogRead();
+
+               if (spsDataUnavailable)
+               {
+                  spsDataUnavailable = false;
+                  _logger.LogInformation("SPS-Daten sind wieder lesbar. OPC-Subscription ist wieder aktiv.");
+               }
+
+               return;
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+               throw;
+            }
+            catch (Exception ex)
+            {
+               spsDataUnavailable = true;
+               _logger.LogError(ex, "SPS-Datenpruefung fehlgeschlagen. Wiederherstellungsversuch {Attempt} in {DelaySeconds} Sekunden.", attempt, ConnectRetryDelay.TotalSeconds);
+
+               await Task.Delay(ConnectRetryDelay, cancellationToken);
+
+               try
+               {
+                  _logger.LogInformation("OPC-Wiederherstellungsversuch {Attempt} wird gestartet.", attempt);
+                  ConnectOnce();
+                  _logger.LogInformation("OPC-Wiederherstellungsversuch {Attempt} abgeschlossen. SPS-Daten werden erneut geprueft.", attempt);
+               }
+               catch (Exception reconnectEx)
+               {
+                  _logger.LogError(reconnectEx, "OPC-Wiederherstellungsversuch {Attempt} fehlgeschlagen.", attempt);
+               }
+
+               attempt++;
+            }
+         }
+      }
+
+      private void ConnectOnce()
+      {
          if (disposed)
          {
             throw new ObjectDisposedException(nameof(OPC_Client_Crane));
          }
 
-         try
+         lock (_syncRoot)
          {
-            _logger.LogInformation("Verbindungsversuch zu opc.tcp://DEV11...");
+            ResetSubscription();
+
+            _logger.LogInformation("Verbindung zu opc.tcp://DEV11 wird aufgebaut.");
             client?.Connect();
 
             // Subscriptions einrichten
             subscription = client?.SubscribeNodes();
 
             // Deine Kanäle registrieren
-            ConnectChannels();
-            ConnectChannels_WD_TEST();
+            if (!ConnectChannels())
+            {
+               throw new InvalidOperationException("OPC-Kanal 'Zaehler' konnte nicht registriert werden.");
+            }
+
+            if (!ConnectChannels_WD_TEST())
+            {
+               throw new InvalidOperationException("OPC-Kanal 'Watchdog' konnte nicht registriert werden.");
+            }
+
+            _logger.LogInformation("OPC-Verbindung und Kanalregistrierung sind bereit.");
          }
-         catch (Exception ex)
+      }
+
+      private void ValidateWatchdogRead()
+      {
+         if (disposed)
          {
-            _logger.LogError(ex, "Erster Verbindungsaufbau fehlgeschlagen. AutoReconnect läuft im Hintergrund...");
+            throw new ObjectDisposedException(nameof(OPC_Client_Crane));
+         }
+
+         lock (_syncRoot)
+         {
+            if (client is null)
+            {
+               throw new InvalidOperationException("OPC-Client ist nicht initialisiert.");
+            }
+
+            OpcValue watchdogValue = client.ReadNode(WatchdogNodeId);
+
+            if (!watchdogValue.Status.IsGood)
+            {
+               throw new InvalidOperationException($"Watchdog-Node ist nicht sauber lesbar. Status={watchdogValue.Status.Code}, Wert={watchdogValue.Value}");
+            }
+
+            _logger.LogDebug("Watchdog-Node erfolgreich gelesen. Status={Status}, Wert={Value}", watchdogValue.Status.Code, watchdogValue.Value);
          }
       }
 
@@ -72,22 +190,7 @@ namespace Falcom
             {
                _logger.LogInformation("OPC_Client_Crane wird heruntergefahren.");
 
-               if (subscription is not null)
-               {
-                  foreach (OpcMonitoredItem item in monitoredItems)
-                  {
-                     item.DataChangeReceived -= HandleDataChange;
-                  }
-
-                  if (monitoredItems.Count > 0)
-                  {
-                     subscription.RemoveMonitoredItem(monitoredItems);
-                     subscription.ApplyChanges();
-                     monitoredItems.Clear();
-                  }
-
-                  subscription = null;
-               }
+               ResetSubscription();
 
                if (client is not null)
                {
@@ -119,12 +222,34 @@ namespace Falcom
          }
       }
 
+      private void ResetSubscription()
+      {
+         if (subscription is null)
+         {
+            monitoredItems.Clear();
+            return;
+         }
+
+         foreach (OpcMonitoredItem item in monitoredItems)
+         {
+            item.DataChangeReceived -= HandleDataChange;
+         }
+
+         if (monitoredItems.Count > 0)
+         {
+            subscription.RemoveMonitoredItem(monitoredItems);
+            subscription.ApplyChanges();
+            monitoredItems.Clear();
+         }
+
+         subscription = null;
+      }
+
       public Boolean ConnectChannels()
       {
          if (subscription == null || client == null) return false;
 
-         string zaehlerNodeId = "ns=1;s=LagerV.DataBlocks.Count_DB_1.Static.OPC.Zaehler";
-         var zaehlerItem = new OpcMonitoredItem(zaehlerNodeId, OpcAttribute.Value);
+         var zaehlerItem = new OpcMonitoredItem(ZaehlerNodeId, OpcAttribute.Value);
          zaehlerItem.DataChangeReceived += HandleDataChange;
 
          subscription.AddMonitoredItem(zaehlerItem);
@@ -139,8 +264,7 @@ namespace Falcom
       {
          if (subscription == null || client == null) return false;
 
-         string craneEvent = "ns=1;s=LagerV.DataBlocks.OPC_Daten_ORG.Static.Watchdog";
-         var item = new OpcMonitoredItem(craneEvent, OpcAttribute.Value)
+         var item = new OpcMonitoredItem(WatchdogNodeId, OpcAttribute.Value)
          {
             Tag = "craneEvent"
          };

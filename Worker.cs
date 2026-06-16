@@ -24,11 +24,13 @@ namespace Falcom
 
          try
          {
-            _opcClientCrane.Connect();
+            await _opcClientCrane.ConnectUntilConnectedAsync(stoppingToken);
 
             // Start state
             while (!stoppingToken.IsCancellationRequested)
             {
+               await _opcClientCrane.EnsureDataFlowAsync(stoppingToken);
+
                if (_logger.IsEnabled(LogLevel.Information))
                {
                   _logger.LogInformation("Current state: {state}", _currentState);
