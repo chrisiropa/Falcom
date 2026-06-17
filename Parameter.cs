@@ -10,8 +10,8 @@ namespace Falcom
 	{
       private readonly ConfigManager _configManager;
       private readonly ILogger<Parameter> _logger;
-      
-      public string PythonExe { get; } = string.Empty;
+
+      public string OpcServer { get; } = string.Empty;
 
       public Parameter(ConfigManager configManager, ILogger<Parameter> logger)
       {
@@ -20,19 +20,19 @@ namespace Falcom
 
 		   try
          {
-            SimpleSqlQuery query = new SimpleSqlQuery(_configManager.ConnectionString , "select * from FALCOM_PARAMETER where Name like 'PYTHON_EXE'");
+            SimpleSqlQuery query = new SimpleSqlQuery(_configManager.ConnectionString, "select * from FALCOM_PARAMETER where Name like 'OpcServer'");
             if (query.QueryResult != null)
             {
                foreach (Dictionary<string, object> row in query.QueryResult)
                {
                   try
                   {
-                     PythonExe = (string)row["Wert"];
+                     OpcServer = (string)row["Wert"];
                      break;
                   }
                   catch(Exception e)
                   {
-                     _logger.LogError(e, "Tabelle FALCOM_PARAMETER konnte für PYTHON_EXE nicht gelesen werden.");
+                     _logger.LogError(e, "Tabelle FALCOM_PARAMETER konnte für OpcServer nicht gelesen werden.");
                   }
                }
             }

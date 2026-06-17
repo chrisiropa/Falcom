@@ -8,37 +8,53 @@ namespace Falcom
       private static readonly TimeSpan ConnectRetryDelay = TimeSpan.FromSeconds(5);
       private const string ZaehlerNodeId = "ns=1;s=LagerV.DataBlocks.Count_DB_1.Static.OPC.Zaehler";
       private const string WatchdogNodeId = "ns=1;s=LagerV.DataBlocks.OPC_Daten_ORG.Static.Watchdog";
+      private const string KranfahrtBeendetNodeId = "ns=1;s=LagerV.DataBlocks.Count_DB_1.Static.OPC.Comands.Stop";
 
       private readonly ILogger<OPC_Client_Crane> _logger;
+      private readonly FalcomEventQueue _eventQueue; // NEU: Privates Feld für die Queue
       private readonly object _syncRoot = new();
       private readonly List<OpcMonitoredItem> monitoredItems = new();
+      private readonly string opcServerEndpoint;
       private OpcClient? client = null;
       private OpcSubscription? subscription = null;
       private bool spsDataUnavailable;
       private bool disposed;
 
-      public OPC_Client_Crane(ILogger<OPC_Client_Crane> logger)
+      // NEU: FalcomEventQueue im Konstruktor anfordern
+      public OPC_Client_Crane(ILogger<OPC_Client_Crane> logger, Parameter parameter, FalcomEventQueue eventQueue)
       {
          _logger = logger;
+         _eventQueue = eventQueue; // NEU: Zuweisung für den späteren Zugriff
          TraegerLicense();
 
-         // 1. Client instanziieren
-         this.client = new OpcClient("opc.tcp://DEV11");
+         if (string.IsNullOrWhiteSpace(parameter.OpcServer))
+         {
+            throw new InvalidOperationException("Der Datenbankparameter 'OpcServer' ist leer oder wurde nicht gefunden.");
+         }
 
-         // 2. Automatisches Reconnect-Verhalten konfigurieren
-         // Das SDK aktiviert das Auto-Reconnect automatisch, sobald ein Timeout gesetzt ist.
-         // Wir versuchen alle 5 Sekunden (5000 ms) eine Wiederverbindung.
-         this.client.ReconnectTimeout = 5000;
+         opcServerEndpoint = parameter.OpcServer.Trim();
 
-         // 3. Statusänderungen überwachen (ersetzt Connected / Disconnected)
-         this.client.StateChanged += OnClientStateChanged;
+         // Client-Instanz das erste Mal erstellen
+         CreateClientInstance();
 
-         _logger.LogInformation("OPC_Client_Crane initialisiert. Bereit für Connect().");
+         _logger.LogInformation("OPC_Client_Crane initialisiert fuer {OpcServerEndpoint}. Bereit fuer Connect().", opcServerEndpoint);
       }
 
       /// <summary>
-      /// Startet den Verbindungsaufbau. Sollte von außen (z.B. im Worker-Start) aufgerufen werden.
+      /// Hilfsmethode zur sauberen Kapselung der Client-Instanziierung (Option B)
       /// </summary>
+      private void CreateClientInstance()
+      {
+         if (this.client is not null)
+         {
+            this.client.StateChanged -= OnClientStateChanged;
+         }
+
+         this.client = new OpcClient(opcServerEndpoint);
+         this.client.ReconnectTimeout = 5000;
+         this.client.StateChanged += OnClientStateChanged;
+      }
+
       public void Connect()
       {
          ConnectOnce();
@@ -88,7 +104,7 @@ namespace Falcom
                if (spsDataUnavailable)
                {
                   spsDataUnavailable = false;
-                  _logger.LogInformation("SPS-Daten sind wieder lesbar. OPC-Subscription ist wieder aktiv.");
+                  _logger.LogInformation("SPS-Daten sind wieder lesbar. OPC-Subscription is wieder aktiv.");
                }
 
                return;
@@ -106,8 +122,27 @@ namespace Falcom
 
                try
                {
-                  _logger.LogInformation("OPC-Wiederherstellungsversuch {Attempt} wird gestartet.", attempt);
-                  ConnectOnce();
+                  _logger.LogInformation("OPC-Wiederherstellungsversuch {Attempt} wird gestartet (Radikaler Reconnect).", attempt);
+
+                  lock (_syncRoot)
+                  {
+                     if (client is not null)
+                     {
+                        try
+                        {
+                           client.Disconnect();
+                        }
+                        catch
+                        {
+                        }
+                        client.Dispose();
+                        client = null;
+                     }
+
+                     CreateClientInstance();
+                     ConnectOnce();
+                  }
+
                   _logger.LogInformation("OPC-Wiederherstellungsversuch {Attempt} abgeschlossen. SPS-Daten werden erneut geprueft.", attempt);
                }
                catch (Exception reconnectEx)
@@ -131,21 +166,14 @@ namespace Falcom
          {
             ResetSubscription();
 
-            _logger.LogInformation("Verbindung zu opc.tcp://DEV11 wird aufgebaut.");
+            _logger.LogInformation("Verbindung zu {OpcServerEndpoint} wird aufgebaut.", opcServerEndpoint);
             client?.Connect();
 
-            // Subscriptions einrichten
             subscription = client?.SubscribeNodes();
 
-            // Deine Kanäle registrieren
             if (!ConnectChannels())
             {
                throw new InvalidOperationException("OPC-Kanal 'Zaehler' konnte nicht registriert werden.");
-            }
-
-            if (!ConnectChannels_WD_TEST())
-            {
-               throw new InvalidOperationException("OPC-Kanal 'Watchdog' konnte nicht registriert werden.");
             }
 
             _logger.LogInformation("OPC-Verbindung und Kanalregistrierung sind bereit.");
@@ -173,7 +201,7 @@ namespace Falcom
                throw new InvalidOperationException($"Watchdog-Node ist nicht sauber lesbar. Status={watchdogValue.Status.Code}, Wert={watchdogValue.Value}");
             }
 
-            _logger.LogDebug("Watchdog-Node erfolgreich gelesen. Status={Status}, Wert={Value}", watchdogValue.Status.Code, watchdogValue.Value);
+            _logger.LogInformation("Watchdog-Node erfolgreich gelesen. Status={Status}, Wert={Value}", watchdogValue.Status.Code, watchdogValue.Value);
          }
       }
 
@@ -216,8 +244,12 @@ namespace Falcom
                return;
             }
 
-            client?.Dispose();
-            client = null;
+            if (client is not null)
+            {
+               client.StateChanged -= OnClientStateChanged;
+               client.Dispose();
+               client = null;
+            }
             disposed = true;
          }
       }
@@ -237,8 +269,16 @@ namespace Falcom
 
          if (monitoredItems.Count > 0)
          {
-            subscription.RemoveMonitoredItem(monitoredItems);
-            subscription.ApplyChanges();
+            try
+            {
+               subscription.RemoveMonitoredItem(monitoredItems);
+               subscription.ApplyChanges();
+            }
+            catch (Exception ex)
+            {
+               _logger.LogDebug(ex, "Alte Subscription konnte wegen totem Kanal nicht sauber entfernt werden. Wird erzwungen.");
+            }
+
             monitoredItems.Clear();
          }
 
@@ -251,9 +291,14 @@ namespace Falcom
 
          var zaehlerItem = new OpcMonitoredItem(ZaehlerNodeId, OpcAttribute.Value);
          zaehlerItem.DataChangeReceived += HandleDataChange;
-
          subscription.AddMonitoredItem(zaehlerItem);
          monitoredItems.Add(zaehlerItem);
+
+         var kranfahrtBeendetItem = new OpcMonitoredItem(KranfahrtBeendetNodeId, OpcAttribute.Value);
+         kranfahrtBeendetItem.DataChangeReceived += HandleDataChange;
+         subscription.AddMonitoredItem(kranfahrtBeendetItem);
+         monitoredItems.Add(kranfahrtBeendetItem);
+
          subscription.ApplyChanges();
 
          _logger.LogInformation("Kanal 'Zähler' erfolgreich registriert.");
@@ -287,7 +332,6 @@ namespace Falcom
             var neuerZaehlerWert = e.Item.Value.Value;
             _logger.LogInformation("Event ausgelöst von [{Node}]. Wert: {Z}", e.MonitoredItem.NodeId, neuerZaehlerWert);
 
-            // Nur nachlesen, wenn es sich um den Zähler handelt
             if (e.MonitoredItem.NodeId.ToString().Contains("ns=1;s=LagerV.DataBlocks.Count_DB_1.Static.OPC.Zaehler"))
             {
                string baseNode = "ns=1;s=LagerV.DataBlocks.Count_DB_1.Static.OPC.";
@@ -296,13 +340,27 @@ namespace Falcom
                var cmdStop = client.ReadNode($"{baseNode}Comands.Stop")?.Value;
                var statusRun = client.ReadNode($"{baseNode}Status.Run")?.Value;
 
-               _logger.LogInformation("Werte erfolgreich nachgelesen - Start: {Start}, Stop: {Stop}, Run: {Run}",
-                   cmdStart, cmdStop, statusRun);
+               _logger.LogInformation("Werte erfolgreich nachgelesen - Start: {Start}, Stop: {Stop}, Run: {Run}", cmdStart, cmdStop, statusRun);
 
                if (statusRun is bool isRunning && isRunning)
                {
                   // Deine Kran-Logik
                }
+            }
+            else if (e.MonitoredItem.NodeId.ToString().Contains(KranfahrtBeendetNodeId))
+            {
+               _logger.LogInformation("Kranfahrt beendet");
+               var kranEvent = new KranfahrtBeendetEvent(
+                    auftragsNummer: 1,
+                    kranQuelle: "BOX 4",
+                    toleranz: 50.0,
+                    istGewicht: 555.0,
+                    fehlercode: 0
+               );
+
+               // NEU: Jetzt über das injizierte Feld asynchron in den Channel schieben
+               // Da HandleDataChange synchron ist, nutzen wir das im Channel vorgesehene Verhalten
+               _eventQueue.Writer.WriteAsync(kranEvent, cancellationToken: default).AsTask().Wait();
             }
          }
          catch (Exception ex)
@@ -311,15 +369,12 @@ namespace Falcom
          }
       }
 
-      
-
       #region Verbindungs-Event-Handler
 
       private void OnClientStateChanged(object? sender, OpcClientStateChangedEventArgs e)
       {
          _logger.LogDebug("OPC Client Zustand geändert von {OldState} zu {NewState}", e.OldState, e.NewState);
 
-         // Hier fangen wir die Zustände für dein Logging sauber ab
          if (e.NewState == OpcClientState.Connected)
          {
             _logger.LogWarning("OPC UA Client erfolgreich verbunden / wiederverbunden!");
@@ -340,7 +395,6 @@ namespace Falcom
       {
          Opc.UaFx.Client.Licenser.LicenseKey = ConfigManager.TraegerLicenseKey;
          var license = Opc.UaFx.Client.Licenser.LicenseInfo;
-         // In produktiven Apps lieber loggen statt Console.WriteLine
          Console.WriteLine("Traeger Licence Info = {0} | Gültig = {1}", license.ToString(), !license.IsEvaluation);
       }
    }

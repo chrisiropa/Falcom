@@ -16,6 +16,7 @@ builder.Services.AddSingleton<ConfigManager>();
 builder.Services.AddSingleton<Parameter>();
 builder.Services.AddSingleton<Lager>();;
 builder.Services.AddSingleton<OPC_Client_Crane>();
+builder.Services.AddSingleton<FalcomEventQueue>();
 
 builder.Services.AddHostedService<Worker>();
 builder.Services.AddHostedService<ConsoleShutdownService>();
