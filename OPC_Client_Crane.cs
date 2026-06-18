@@ -9,6 +9,11 @@ namespace Falcom
       private const string ZaehlerNodeId = "ns=1;s=LagerV.DataBlocks.Count_DB_1.Static.OPC.Zaehler";
       private const string WatchdogNodeId = "ns=1;s=LagerV.DataBlocks.OPC_Daten_ORG.Static.Watchdog";
       private const string KranfahrtBeendetNodeId = "ns=1;s=LagerV.DataBlocks.Count_DB_1.Static.OPC.Comands.Stop";
+      private const string AuftragIdNodeId = "ns=1;s=LagerV.DataBlocks.Count_DB_1.Static.OPC.AuftragID";
+      private const string QuelleNodeId = "ns=1;s=LagerV.DataBlocks.Count_DB_1.Static.OPC.KranQuelle";
+      private const string ToleranzNodeId = "ns=1;s=LagerV.DataBlocks.Count_DB_1.Static.OPC.Toleranz";
+      private const string IstGewichtNodeId = "ns=1;s=LagerV.DataBlocks.Count_DB_1.Static.OPC.IstGewicht";
+      private const string FehlercodeNodeId = "ns=1;s=LagerV.DataBlocks.Count_DB_1.Static.OPC.Fehlercode";
 
       private readonly ILogger<OPC_Client_Crane> _logger;
       private readonly FalcomEventQueue _eventQueue; // NEU: Privates Feld für die Queue
@@ -349,18 +354,36 @@ namespace Falcom
             }
             else if (e.MonitoredItem.NodeId.ToString().Contains(KranfahrtBeendetNodeId))
             {
+               if (e.Item.Value.Value is not bool isStopped || !isStopped)
+               {
+                  _logger.LogDebug("Stop-Signal wurde zurueckgesetzt.");
+                  return;
+               }
+
                _logger.LogInformation("Kranfahrt beendet");
+               int auftragId = Convert.ToInt32(client.ReadNode(AuftragIdNodeId).Value);
+               string kranQuelle = Convert.ToString(client.ReadNode(QuelleNodeId).Value) ?? string.Empty;
+               double toleranz = Convert.ToDouble(client.ReadNode(ToleranzNodeId).Value);
+               double istGewicht = Convert.ToDouble(client.ReadNode(IstGewichtNodeId).Value);
+               int fehlercode = Convert.ToInt32(client.ReadNode(FehlercodeNodeId).Value);
+
                var kranEvent = new KranfahrtBeendetEvent(
-                    auftragsNummer: 1,
-                    kranQuelle: "BOX 4",
-                    toleranz: 50.0,
-                    istGewicht: 555.0,
-                    fehlercode: 0
+                    auftragsNummer: auftragId,
+                    kranQuelle: kranQuelle,
+                    toleranz: toleranz,
+                    istGewicht: istGewicht,
+                    fehlercode: fehlercode
                );
 
-               // NEU: Jetzt über das injizierte Feld asynchron in den Channel schieben
-               // Da HandleDataChange synchron ist, nutzen wir das im Channel vorgesehene Verhalten
-               _eventQueue.Writer.WriteAsync(kranEvent, cancellationToken: default).AsTask().Wait();
+               if (!_eventQueue.Writer.TryWrite(kranEvent))
+               {
+                  _logger.LogError("KranfahrtBeendetEvent konnte nicht in die Event-Queue geschrieben werden.");
+                  return;
+               }
+
+               _logger.LogInformation(
+                  "KranfahrtBeendetEvent eingereiht: Auftrag={AuftragId}, Quelle={Quelle}, Toleranz={Toleranz}, IstGewicht={IstGewicht}, Fehlercode={Fehlercode}",
+                  auftragId, kranQuelle, toleranz, istGewicht, fehlercode);
             }
          }
          catch (Exception ex)
