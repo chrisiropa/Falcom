@@ -7,6 +7,7 @@
         Height="897"
         MinWidth="680"
         MinHeight="806"
+        Loaded="MainWindow_Loaded"
         WindowStartupLocation="CenterScreen"
         Background="#F4F5F7">
     <Grid>
@@ -74,21 +75,9 @@
                     </StackPanel>
                     <StackPanel Grid.Row="1" Grid.Column="2">
                         <Label Content="Kranquelle" Target="{Binding ElementName=CmbQuelle}" />
-                        <ComboBox x:Name="CmbQuelle" SelectedIndex="3">
-                            <ComboBoxItem Content="BOX 1" />
-                            <ComboBoxItem Content="BOX 2" />
-                            <ComboBoxItem Content="BOX 3" />
-                            <ComboBoxItem Content="BOX 4" />
-                            <ComboBoxItem Content="BOX 5" />
-                            <ComboBoxItem Content="BOX 6" />
-                            <ComboBoxItem Content="BOX 7" />
-                            <ComboBoxItem Content="BOX 8" />
-                            <ComboBoxItem Content="BOX 9" />
-                            <ComboBoxItem Content="BOX 10" />
-                            <ComboBoxItem Content="LKW1" />
-                            <ComboBoxItem Content="LKW2" />
-                            <ComboBoxItem Content="LKW3" />
-                        </ComboBox>
+                        <ComboBox x:Name="CmbQuelle"
+                                  DisplayMemberPath="DisplayText"
+                                  SelectedValuePath="OpcValue" />
                     </StackPanel>
 
                     <StackPanel Grid.Row="3" Grid.Column="0">
@@ -97,21 +86,9 @@
                     </StackPanel>
                     <StackPanel Grid.Row="3" Grid.Column="2">
                         <Label Content="Kranziel" Target="{Binding ElementName=CmbZiel}" />
-                        <ComboBox x:Name="CmbZiel" SelectedIndex="0">
-                            <ComboBoxItem Content="CW1" />
-                            <ComboBoxItem Content="CW2" />
-                            <ComboBoxItem Content="CW3" />
-                            <ComboBoxItem Content="BOX 1" />
-                            <ComboBoxItem Content="BOX 2" />
-                            <ComboBoxItem Content="BOX 3" />
-                            <ComboBoxItem Content="BOX 4" />
-                            <ComboBoxItem Content="BOX 5" />
-                            <ComboBoxItem Content="BOX 6" />
-                            <ComboBoxItem Content="BOX 7" />
-                            <ComboBoxItem Content="BOX 8" />
-                            <ComboBoxItem Content="BOX 9" />
-                            <ComboBoxItem Content="BOX 10" />
-                        </ComboBox>
+                        <ComboBox x:Name="CmbZiel"
+                                  DisplayMemberPath="DisplayText"
+                                  SelectedValuePath="OpcValue" />
                     </StackPanel>
 
                     <StackPanel Grid.Row="5" Grid.Column="0">

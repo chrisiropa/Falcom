@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using Microsoft.Data.SqlClient;
 using Opc.UaFx;
 using Opc.UaFx.Client;
 
@@ -9,12 +10,12 @@ namespace KranSimulator;
 
 public partial class MainWindow : Window
 {
-    private const string NodeAuftragId = "ns=1;s=LagerV.DataBlocks.Count_DB_1.Static.OPC.AuftragID";
-    private const string NodeQuelle = "ns=1;s=LagerV.DataBlocks.Count_DB_1.Static.OPC.KranQuelle";
-    private const string NodeZiel = "ns=1;s=LagerV.DataBlocks.Count_DB_1.Static.OPC.KranZiel";
-    private const string NodeToleranz = "ns=1;s=LagerV.DataBlocks.Count_DB_1.Static.OPC.Toleranz";
-    private const string NodeIstGewicht = "ns=1;s=LagerV.DataBlocks.Count_DB_1.Static.OPC.IstGewicht";
-    private const string NodeFehlercode = "ns=1;s=LagerV.DataBlocks.Count_DB_1.Static.OPC.Fehlercode";
+    private const string NodeAuftragId = "ns=1;s=LagerV.DataBlocks.Count_DB_1.Static.OPC.Event.AuftragID";
+    private const string NodeQuelle = "ns=1;s=LagerV.DataBlocks.Count_DB_1.Static.OPC.Event.KranQuelle";
+    private const string NodeZiel = "ns=1;s=LagerV.DataBlocks.Count_DB_1.Static.OPC.Event.KranZiel";
+    private const string NodeToleranz = "ns=1;s=LagerV.DataBlocks.Count_DB_1.Static.OPC.Event.Toleranz";
+    private const string NodeIstGewicht = "ns=1;s=LagerV.DataBlocks.Count_DB_1.Static.OPC.Event.IstGewicht";
+    private const string NodeFehlercode = "ns=1;s=LagerV.DataBlocks.Count_DB_1.Static.OPC.Event.FehlerCode";
     private const string NodeKranCMD = "ns=1;s=LagerV.DataBlocks.Count_DB_1.Static.OPC.Event.CmdID";
 
     public MainWindow()
@@ -30,6 +31,40 @@ public partial class MainWindow : Window
         Log(string.IsNullOrWhiteSpace(licenseKey)
             ? "Bereit. Kein Lizenzschluessel in FALCOM_TRAEGER_LICENSE_KEY gefunden."
             : "Bereit. Traeger-Lizenz aus der Umgebung geladen.");
+    }
+
+    private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
+    {
+        SetBusy(true, "Kranpositionen werden aus FG geladen...");
+
+        try
+        {
+            IReadOnlyList<CranePosition> positions = await Task.Run(LoadCranePositions);
+            List<CranePosition> sources = positions
+                .Where(position => position.Art is "QUELLE" or "QUELLE_UND_ZIEL")
+                .ToList();
+            List<CranePosition> targets = positions
+                .Where(position => position.Art is "ZIEL" or "QUELLE_UND_ZIEL")
+                .ToList();
+
+            CmbQuelle.ItemsSource = sources;
+            CmbZiel.ItemsSource = targets;
+            CmbQuelle.SelectedIndex = sources.Count > 0 ? 0 : -1;
+            CmbZiel.SelectedIndex = targets.Count > 0 ? 0 : -1;
+
+            TxtStatus.Text = "Kranpositionen geladen";
+            Log($"{sources.Count} Kranquellen und {targets.Count} Kranziele aus FG geladen.");
+        }
+        catch (Exception ex)
+        {
+            ConnectionIndicator.Fill = Brushes.Firebrick;
+            TxtStatus.Text = "Kranpositionen konnten nicht geladen werden";
+            Log($"FEHLER beim Laden der Kranpositionen: {ex.Message}");
+        }
+        finally
+        {
+            SetBusy(false, TxtStatus.Text);
+        }
     }
 
     private async void BtnWriteFalcomEvent_Click(object sender, RoutedEventArgs e)
@@ -71,12 +106,7 @@ public partial class MainWindow : Window
         try
         {
             string endpoint = TxtEndpoint.Text.Trim();
-            string? error = await Task.Run(() =>
-            {
-                using var client = new OpcClient(endpoint);
-                client.Connect();
-                return action(client);
-            });
+            string? error = await Task.Run(() => ExecuteOpcAction(endpoint, action));
 
             if (error is not null)
             {
@@ -99,6 +129,27 @@ public partial class MainWindow : Window
         finally
         {
             SetBusy(false, TxtStatus.Text);
+        }
+    }
+
+    private static string? ExecuteOpcAction(
+        string endpoint,
+        Func<OpcClient, string?> action)
+    {
+        try
+        {
+            using var client = new OpcClient(endpoint)
+            {
+                OperationTimeout = 5000,
+                SessionTimeout = 5000
+            };
+
+            client.Connect();
+            return action(client);
+        }
+        catch (Exception ex)
+        {
+            return $"Verbindung zum OPC-UA Server '{endpoint}' fehlgeschlagen: {ex.Message}";
         }
     }
 
@@ -136,6 +187,14 @@ public partial class MainWindow : Window
         if (string.IsNullOrWhiteSpace(TxtEndpoint.Text))
         {
             return ShowValidationError("Bitte einen OPC-UA Endpoint eingeben.", TxtEndpoint);
+        }
+
+        if (!Uri.TryCreate(TxtEndpoint.Text.Trim(), UriKind.Absolute, out Uri? endpoint)
+            || !string.Equals(endpoint.Scheme, "opc.tcp", StringComparison.OrdinalIgnoreCase))
+        {
+            return ShowValidationError(
+                "Der OPC-UA Endpoint muss dem Format opc.tcp://Server:Port entsprechen.",
+                TxtEndpoint);
         }
 
         if (!int.TryParse(TxtAuftragId.Text, NumberStyles.Integer, CultureInfo.CurrentCulture, out int auftragId))
@@ -176,7 +235,57 @@ public partial class MainWindow : Window
 
     private static string? GetSelectedValue(ComboBox comboBox)
     {
-        return (comboBox.SelectedItem as ComboBoxItem)?.Content?.ToString();
+        return comboBox.SelectedValue as string;
+    }
+
+    private static IReadOnlyList<CranePosition> LoadCranePositions()
+    {
+        const string sql = """
+            SELECT PositionsTyp, PositionsNr, Bezeichnung, Art
+            FROM dbo.FALCOM_KRAN_POSITION
+            WHERE Art IN (N'QUELLE', N'ZIEL', N'QUELLE_UND_ZIEL')
+            ORDER BY
+                CASE PositionsTyp
+                    WHEN N'LKW_PLATZ' THEN 1
+                    WHEN N'LAGERBOX' THEN 2
+                    WHEN N'CHARGIERWAGEN' THEN 3
+                    ELSE 4
+                END,
+                PositionsNr;
+            """;
+
+        var positions = new List<CranePosition>();
+        using var connection = new SqlConnection(DatabaseConfig.LoadConnectionString());
+        using var command = new SqlCommand(sql, connection);
+        connection.Open();
+
+        using SqlDataReader reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            string positionType = reader.GetString(0);
+            int positionNumber = reader.GetInt32(1);
+            string description = reader.GetString(2);
+            string art = reader.GetString(3);
+            string opcValue = CreateOpcPositionValue(positionType, positionNumber);
+
+            positions.Add(new CranePosition(
+                opcValue,
+                $"{opcValue} - {description}",
+                art));
+        }
+
+        return positions;
+    }
+
+    private static string CreateOpcPositionValue(string positionType, int positionNumber)
+    {
+        return positionType switch
+        {
+            "LKW_PLATZ" => $"LKW{positionNumber}",
+            "LAGERBOX" => $"BOX {positionNumber}",
+            "CHARGIERWAGEN" => $"CW{positionNumber}",
+            _ => $"{positionType} {positionNumber}"
+        };
     }
 
     private static bool TryParseDouble(string text, out double value)
@@ -200,6 +309,7 @@ public partial class MainWindow : Window
 
     private void SetBusy(bool isBusy, string status)
     {
+        BtnWriteFalcomEvent.IsEnabled = !isBusy;
         TxtEndpoint.IsEnabled = !isBusy;
         CmbQuelle.IsEnabled = !isBusy;
         CmbZiel.IsEnabled = !isBusy;
@@ -219,4 +329,9 @@ public partial class MainWindow : Window
         double Toleranz,
         double IstGewicht,
         int Fehlercode);
+
+    private sealed record CranePosition(
+        string OpcValue,
+        string DisplayText,
+        string Art);
 }
