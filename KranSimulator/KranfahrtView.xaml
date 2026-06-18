@@ -102,8 +102,8 @@
                             ClipToBounds="True">
                     <Viewport3D.Camera>
                         <PerspectiveCamera x:Name="SceneCamera"
-                                           Position="0,19,36"
-                                           LookDirection="0,-13.5,-36"
+                                           Position="0,26,40"
+                                           LookDirection="0,-23.5,-40"
                                            UpDirection="0,1,0"
                                            FieldOfView="52" />
                     </Viewport3D.Camera>

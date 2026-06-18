@@ -9,18 +9,23 @@ namespace KranSimulator;
 
 public partial class KranfahrtView : UserControl
 {
-    private const double RaisedY = 7.0;
+    private const double CraneRailHeight = 8.0;
+    private const double HoistAnchorY = 7.35;
+    private const double RaisedY = 6.55;
+    private const double BoxSize = 5.0;
+    private const double BoxWallHeight = 5.0;
+    private const double BoxWallThickness = 0.18;
     private const double HomeX = 0.0;
     private const double HomeZ = 0.0;
-    private const double DefaultCameraHeight = 19.0;
-    private const double DefaultCameraDistance = 36.0;
-    private const double DefaultCameraTargetHeight = 5.5;
+    private const double DefaultCameraHeight = 26.0;
+    private const double DefaultCameraDistance = 40.0;
+    private const double DefaultCameraTargetHeight = 2.5;
 
     private readonly TranslateTransform3D bridgeTransform = new();
     private readonly TranslateTransform3D trolleyTransform = new();
     private readonly TranslateTransform3D magnetTransform = new();
     private readonly TranslateTransform3D cableTransform = new();
-    private readonly ScaleTransform3D cableScale = new(1, RaisedY - 1, 1);
+    private readonly ScaleTransform3D cableScale = new(1, HoistAnchorY - RaisedY, 1);
     private readonly TranslateTransform3D loadTransform = new();
     private readonly Model3DGroup scene = new();
     private readonly Model3DGroup loadGroup = new();
@@ -31,22 +36,22 @@ public partial class KranfahrtView : UserControl
     private static readonly IReadOnlyDictionary<string, CranePoint> CranePoints =
         new Dictionary<string, CranePoint>(StringComparer.OrdinalIgnoreCase)
         {
-            ["LKW1"] = new(-7, -7, 1.25),
-            ["LKW2"] = new(0, -7, 1.25),
-            ["LKW3"] = new(7, -7, 1.25),
-            ["BOX 1"] = new(-8, -2.3, 1.35),
-            ["BOX 2"] = new(-4, -2.3, 1.35),
-            ["BOX 3"] = new(0, -2.3, 1.35),
-            ["BOX 4"] = new(4, -2.3, 1.35),
-            ["BOX 5"] = new(8, -2.3, 1.35),
-            ["BOX 6"] = new(-8, 2.3, 1.35),
-            ["BOX 7"] = new(-4, 2.3, 1.35),
-            ["BOX 8"] = new(0, 2.3, 1.35),
-            ["BOX 9"] = new(4, 2.3, 1.35),
-            ["BOX 10"] = new(8, 2.3, 1.35),
-            ["CW1"] = new(-7, 7, 1.4),
-            ["CW2"] = new(0, 7, 1.4),
-            ["CW3"] = new(7, 7, 1.4)
+            ["LKW1"] = new(-8, -9, 1.2),
+            ["LKW2"] = new(0, -9, 1.2),
+            ["LKW3"] = new(8, -9, 1.2),
+            ["BOX 1"] = new(-10, -2.5, 1.0),
+            ["BOX 2"] = new(-5, -2.5, 1.0),
+            ["BOX 3"] = new(0, -2.5, 1.0),
+            ["BOX 4"] = new(5, -2.5, 1.0),
+            ["BOX 5"] = new(10, -2.5, 1.0),
+            ["BOX 6"] = new(-10, 2.5, 1.0),
+            ["BOX 7"] = new(-5, 2.5, 1.0),
+            ["BOX 8"] = new(0, 2.5, 1.0),
+            ["BOX 9"] = new(5, 2.5, 1.0),
+            ["BOX 10"] = new(10, 2.5, 1.0),
+            ["CW1"] = new(-8, 9, 1.25),
+            ["CW2"] = new(0, 9, 1.25),
+            ["CW3"] = new(8, 9, 1.25)
         };
 
     public KranfahrtView()
@@ -64,7 +69,7 @@ public partial class KranfahrtView : UserControl
         scene.Children.Add(new DirectionalLight(Colors.White, new Vector3D(-1, -2, -1)));
         scene.Children.Add(new DirectionalLight(Color.FromRgb(150, 170, 190), new Vector3D(1, -1, 1)));
 
-        scene.Children.Add(CreateBox(0, -0.25, 0, 22, 0.5, 18, Color.FromRgb(62, 66, 70)));
+        scene.Children.Add(CreateBox(0, -0.25, 0, 30, 0.5, 24, Color.FromRgb(72, 76, 79)));
         AddFloorMarkings();
         AddTrucks();
         AddStorageBoxes();
@@ -76,83 +81,177 @@ public partial class KranfahrtView : UserControl
 
     private void AddFloorMarkings()
     {
-        Material lineMaterial = CreateMaterial(Color.FromRgb(120, 124, 128));
+        Material lineMaterial = CreateMaterial(Color.FromRgb(108, 112, 114));
 
-        for (int x = -10; x <= 10; x += 2)
+        for (int x = -14; x <= 14; x += 2)
         {
-            scene.Children.Add(CreateBox(x, 0.02, 0, 0.035, 0.025, 17.5, lineMaterial));
+            scene.Children.Add(CreateBox(x, 0.02, 0, 0.035, 0.025, 23.5, lineMaterial));
         }
 
-        for (int z = -8; z <= 8; z += 2)
+        for (int z = -11; z <= 11; z += 2)
         {
-            scene.Children.Add(CreateBox(0, 0.025, z, 21.5, 0.03, 0.035, lineMaterial));
+            scene.Children.Add(CreateBox(0, 0.025, z, 29.5, 0.03, 0.035, lineMaterial));
         }
     }
 
     private void AddTrucks()
     {
-        AddTruck(-7, -7, "LKW1");
-        AddTruck(0, -7, "LKW2");
-        AddTruck(7, -7, "LKW3");
+        AddTruck(-8, -9, "LKW1");
+        AddTruck(0, -9, "LKW2");
+        AddTruck(8, -9, "LKW3");
     }
 
     private void AddTruck(double x, double z, string label)
     {
-        scene.Children.Add(CreateBox(x, 0.65, z, 4.2, 1.1, 2.0, Color.FromRgb(69, 76, 84)));
-        scene.Children.Add(CreateBox(x + 1.35, 1.35, z, 1.25, 1.4, 1.9, Color.FromRgb(42, 48, 54)));
-        scene.Children.Add(CreateBox(x - 0.6, 1.25, z, 2.4, 0.7, 1.65, Color.FromRgb(175, 179, 184)));
+        scene.Children.Add(CreateBox(x, 0.65, z, 4.2, 1.1, 2.0, Color.FromRgb(59, 71, 78)));
+        scene.Children.Add(CreateBox(x + 1.35, 1.35, z, 1.25, 1.4, 1.9, Color.FromRgb(34, 43, 49)));
+        scene.Children.Add(CreateBox(x - 0.6, 1.25, z, 2.4, 0.7, 1.65, Color.FromRgb(130, 145, 151)));
         scene.Children.Add(CreateLabelPlate(label, x, 1.92, z - 1.03, 2.2, 0.65));
     }
 
     private void AddStorageBoxes()
     {
+        Material steelMaterial = CreateMaterial(Color.FromRgb(104, 116, 120));
+        Material darkSteelMaterial = CreateMaterial(Color.FromRgb(69, 80, 84));
+
+        double blockWidth = BoxSize * 5;
+        double blockDepth = BoxSize * 2;
+
+        // Shared walls create ten contiguous, open-top boxes without gaps.
+        for (int wallIndex = 0; wallIndex <= 5; wallIndex++)
+        {
+            double wallX = -blockWidth / 2 + wallIndex * BoxSize;
+            scene.Children.Add(CreateBox(
+                wallX,
+                BoxWallHeight / 2,
+                0,
+                BoxWallThickness,
+                BoxWallHeight,
+                blockDepth + BoxWallThickness,
+                wallIndex is 0 or 5 ? darkSteelMaterial : steelMaterial));
+        }
+
+        for (int wallIndex = 0; wallIndex <= 2; wallIndex++)
+        {
+            double wallZ = -blockDepth / 2 + wallIndex * BoxSize;
+            scene.Children.Add(CreateBox(
+                0,
+                BoxWallHeight / 2,
+                wallZ,
+                blockWidth + BoxWallThickness,
+                BoxWallHeight,
+                BoxWallThickness,
+                wallIndex is 0 or 2 ? darkSteelMaterial : steelMaterial));
+        }
+
+        Color[] scrapColors =
+        [
+            Color.FromRgb(116, 80, 55),
+            Color.FromRgb(139, 93, 54),
+            Color.FromRgb(96, 85, 71),
+            Color.FromRgb(151, 103, 60)
+        ];
+
         for (int index = 1; index <= 10; index++)
         {
             CranePoint point = CranePoints[$"BOX {index}"];
-            scene.Children.Add(CreateBox(point.X, 0.65, point.Z, 3.25, 1.2, 3.2, Color.FromRgb(118, 123, 128)));
-            scene.Children.Add(CreateBox(point.X, 1.22, point.Z, 2.75, 0.55, 2.7, Color.FromRgb(194, 137, 60)));
-            scene.Children.Add(CreateLabelPlate($"BOX {index}", point.X, 1.72, point.Z - 1.63, 2.2, 0.55));
+            double fillHeight = 0.55 + (index % 4) * 0.22;
+            scene.Children.Add(CreateBox(
+                point.X,
+                fillHeight / 2,
+                point.Z,
+                BoxSize - 0.45,
+                fillHeight,
+                BoxSize - 0.45,
+                scrapColors[(index - 1) % scrapColors.Length]));
+
+            double labelZ = index <= 5 ? 0.12 : 5.12;
+            scene.Children.Add(CreateLabelPlate(
+                $"BOX {index}",
+                point.X,
+                4.25,
+                labelZ,
+                2.3,
+                0.55));
         }
     }
 
     private void AddChargingCars()
     {
-        AddChargingCar(-7, 7, "CW1");
-        AddChargingCar(0, 7, "CW2");
-        AddChargingCar(7, 7, "CW3");
+        AddChargingCar(-8, 9, "CW1");
+        AddChargingCar(0, 9, "CW2");
+        AddChargingCar(8, 9, "CW3");
     }
 
     private void AddChargingCar(double x, double z, string label)
     {
-        scene.Children.Add(CreateBox(x, 0.7, z, 4.0, 1.25, 2.5, Color.FromRgb(134, 34, 28)));
-        scene.Children.Add(CreateBox(x, 1.28, z, 3.3, 0.55, 1.9, Color.FromRgb(196, 64, 53)));
+        scene.Children.Add(CreateBox(x, 0.7, z, 4.0, 1.25, 2.5, Color.FromRgb(43, 78, 94)));
+        scene.Children.Add(CreateBox(x, 1.28, z, 3.3, 0.55, 1.9, Color.FromRgb(67, 113, 132)));
         scene.Children.Add(CreateLabelPlate(label, x, 1.8, z - 1.28, 1.8, 0.58));
     }
 
     private void AddCrane()
     {
-        Material railMaterial = CreateMaterial(Color.FromRgb(168, 173, 179));
-        Material craneMaterial = CreateMaterial(Color.FromRgb(179, 38, 30));
-        Material darkMaterial = CreateMaterial(Color.FromRgb(45, 49, 54));
+        Material columnMaterial = CreateMaterial(Color.FromRgb(63, 75, 81));
+        Material railMaterial = CreateMaterial(Color.FromRgb(37, 45, 49));
+        Material craneMaterial = CreateMaterial(Color.FromRgb(226, 174, 44));
+        Material darkMaterial = CreateMaterial(Color.FromRgb(36, 41, 44));
 
-        scene.Children.Add(CreateBox(-10.2, 4.6, -8.4, 0.45, 9.2, 0.45, railMaterial));
-        scene.Children.Add(CreateBox(-10.2, 4.6, 8.4, 0.45, 9.2, 0.45, railMaterial));
-        scene.Children.Add(CreateBox(10.2, 4.6, -8.4, 0.45, 9.2, 0.45, railMaterial));
-        scene.Children.Add(CreateBox(10.2, 4.6, 8.4, 0.45, 9.2, 0.45, railMaterial));
-        scene.Children.Add(CreateBox(-10.2, 8.9, 0, 0.4, 0.35, 17.5, railMaterial));
-        scene.Children.Add(CreateBox(10.2, 8.9, 0, 0.4, 0.35, 17.5, railMaterial));
-        scene.Children.Add(CreateBox(0, 8.9, -8.4, 20.8, 0.35, 0.4, railMaterial));
-        scene.Children.Add(CreateBox(0, 8.9, 8.4, 20.8, 0.35, 0.4, railMaterial));
+        const double runwayX = 13.35;
+        const double runwayLength = 22.5;
+        double columnHeight = CraneRailHeight;
+
+        foreach (double x in new[] { -runwayX, runwayX })
+        {
+            foreach (double z in new[] { -10.5, 0.0, 10.5 })
+            {
+                scene.Children.Add(CreateBox(
+                    x,
+                    columnHeight / 2,
+                    z,
+                    0.55,
+                    columnHeight,
+                    0.55,
+                    columnMaterial));
+                scene.Children.Add(CreateBox(
+                    x,
+                    0.18,
+                    z,
+                    1.35,
+                    0.35,
+                    1.35,
+                    darkMaterial));
+            }
+
+            scene.Children.Add(CreateBox(
+                x,
+                CraneRailHeight,
+                0,
+                0.75,
+                0.65,
+                runwayLength,
+                railMaterial));
+            scene.Children.Add(CreateBox(
+                x,
+                CraneRailHeight + 0.4,
+                0,
+                0.24,
+                0.14,
+                runwayLength,
+                craneMaterial));
+        }
 
         Model3DGroup bridge = new();
-        bridge.Children.Add(CreateBox(0, 8.45, 0, 20.4, 0.65, 0.65, craneMaterial));
-        bridge.Children.Add(CreateBox(0, 7.95, 0, 20.4, 0.28, 0.35, darkMaterial));
+        bridge.Children.Add(CreateBox(0, CraneRailHeight + 0.65, 0, 27.0, 0.85, 0.75, craneMaterial));
+        bridge.Children.Add(CreateBox(0, CraneRailHeight + 0.08, 0, 26.4, 0.25, 0.38, darkMaterial));
+        bridge.Children.Add(CreateBox(-12.8, CraneRailHeight + 0.35, 0, 1.0, 0.65, 1.25, darkMaterial));
+        bridge.Children.Add(CreateBox(12.8, CraneRailHeight + 0.35, 0, 1.0, 0.65, 1.25, darkMaterial));
         bridge.Transform = bridgeTransform;
         scene.Children.Add(bridge);
 
         Model3DGroup trolley = new();
-        trolley.Children.Add(CreateBox(0, 8.05, 0, 1.4, 0.75, 1.25, darkMaterial));
-        trolley.Children.Add(CreateBox(0, 7.55, 0, 0.8, 0.35, 0.8, craneMaterial));
+        trolley.Children.Add(CreateBox(0, CraneRailHeight + 0.18, 0, 1.65, 0.75, 1.45, darkMaterial));
+        trolley.Children.Add(CreateBox(0, HoistAnchorY + 0.22, 0, 0.9, 0.45, 0.9, craneMaterial));
         trolley.Transform = trolleyTransform;
         scene.Children.Add(trolley);
 
@@ -165,7 +264,7 @@ public partial class KranfahrtView : UserControl
         scene.Children.Add(cable);
 
         Model3DGroup magnet = new();
-        magnet.Children.Add(CreateCylinder(0.75, 0.32, Color.FromRgb(70, 75, 80), 24));
+        magnet.Children.Add(CreateCylinder(0.82, 0.34, Color.FromRgb(57, 64, 68), 24));
         magnet.Children.Add(CreateBox(0, 0.38, 0, 0.7, 0.45, 0.7, darkMaterial));
         magnet.Transform = magnetTransform;
         scene.Children.Add(magnet);
@@ -301,7 +400,7 @@ public partial class KranfahrtView : UserControl
 
     private async Task MoveHoistAsync(double targetY, double speedFactor)
     {
-        double cableLength = 7.55 - targetY;
+        double cableLength = HoistAnchorY - targetY;
         double cableCenterY = targetY + cableLength / 2;
         double seconds = Math.Max(0.35, Math.Abs(targetY - magnetTransform.OffsetY) / 3.5) * speedFactor;
 
@@ -327,7 +426,7 @@ public partial class KranfahrtView : UserControl
         magnetTransform.OffsetX = HomeX;
         magnetTransform.OffsetY = RaisedY;
         magnetTransform.OffsetZ = HomeZ;
-        cableScale.ScaleY = 7.55 - RaisedY;
+        cableScale.ScaleY = HoistAnchorY - RaisedY;
         cableTransform.OffsetX = HomeX;
         cableTransform.OffsetY = RaisedY + cableScale.ScaleY / 2;
         cableTransform.OffsetZ = HomeZ;
