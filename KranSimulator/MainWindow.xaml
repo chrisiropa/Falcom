@@ -1,6 +1,7 @@
 <Window x:Class="KranSimulator.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:KranSimulator"
         Title="Falcom Kran-Simulator"
         Icon="Falke-Transparent.ico"
         Width="780"
@@ -38,91 +39,102 @@
             </DockPanel>
         </Border>
 
-        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
-            <Grid Margin="24">
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
-                </Grid.RowDefinitions>
+        <TabControl Grid.Row="1"
+                    Background="#F4F5F7"
+                    BorderThickness="0"
+                    Padding="0">
+            <TabItem Header="FALCOM Event">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <Grid Margin="24">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
 
-                <StackPanel Grid.Row="0">
-                    <TextBlock Text="Verbindung" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,12" />
-                    <Label Content="OPC-UA Endpoint" Target="{Binding ElementName=TxtEndpoint}" />
-                    <TextBox x:Name="TxtEndpoint" Text="opc.tcp://localhost:4840" />
-                </StackPanel>
+                        <StackPanel Grid.Row="0">
+                            <TextBlock Text="Verbindung" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,12" />
+                            <Label Content="OPC-UA Endpoint" Target="{Binding ElementName=TxtEndpoint}" />
+                            <TextBox x:Name="TxtEndpoint" Text="opc.tcp://localhost:4840" />
+                        </StackPanel>
 
-                <Grid Grid.Row="1" Margin="0,24,0,0">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="20" />
-                        <ColumnDefinition Width="*" />
-                    </Grid.ColumnDefinitions>
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="16" />
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="16" />
-                        <RowDefinition Height="Auto" />
-                    </Grid.RowDefinitions>
+                        <Grid Grid.Row="1" Margin="0,24,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="20" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="16" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="16" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
 
-                    <TextBlock Grid.ColumnSpan="3" Text="Auftragsdaten" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,12" />
+                            <TextBlock Grid.ColumnSpan="3" Text="Auftragsdaten" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,12" />
 
-                    <StackPanel Grid.Row="1" Grid.Column="0">
-                        <Label Content="Auftrag-ID" Target="{Binding ElementName=TxtAuftragId}" />
-                        <TextBox x:Name="TxtAuftragId" Text="1" />
-                    </StackPanel>
-                    <StackPanel Grid.Row="1" Grid.Column="2">
-                        <Label Content="Kranquelle" Target="{Binding ElementName=CmbQuelle}" />
-                        <ComboBox x:Name="CmbQuelle"
-                                  DisplayMemberPath="DisplayText"
-                                  SelectedValuePath="OpcValue" />
-                    </StackPanel>
+                            <StackPanel Grid.Row="1" Grid.Column="0">
+                                <Label Content="Auftrag-ID" Target="{Binding ElementName=TxtAuftragId}" />
+                                <TextBox x:Name="TxtAuftragId" Text="1" />
+                            </StackPanel>
+                            <StackPanel Grid.Row="1" Grid.Column="2">
+                                <Label Content="Kranquelle" Target="{Binding ElementName=CmbQuelle}" />
+                                <ComboBox x:Name="CmbQuelle"
+                                          DisplayMemberPath="DisplayText"
+                                          SelectedValuePath="OpcValue" />
+                            </StackPanel>
 
-                    <StackPanel Grid.Row="3" Grid.Column="0">
-                        <Label Content="Istgewicht (kg)" Target="{Binding ElementName=TxtGewicht}" />
-                        <TextBox x:Name="TxtGewicht" Text="555,0" />
-                    </StackPanel>
-                    <StackPanel Grid.Row="3" Grid.Column="2">
-                        <Label Content="Kranziel" Target="{Binding ElementName=CmbZiel}" />
-                        <ComboBox x:Name="CmbZiel"
-                                  DisplayMemberPath="DisplayText"
-                                  SelectedValuePath="OpcValue" />
-                    </StackPanel>
+                            <StackPanel Grid.Row="3" Grid.Column="0">
+                                <Label Content="Istgewicht (kg)" Target="{Binding ElementName=TxtGewicht}" />
+                                <TextBox x:Name="TxtGewicht" Text="555,0" />
+                            </StackPanel>
+                            <StackPanel Grid.Row="3" Grid.Column="2">
+                                <Label Content="Kranziel" Target="{Binding ElementName=CmbZiel}" />
+                                <ComboBox x:Name="CmbZiel"
+                                          DisplayMemberPath="DisplayText"
+                                          SelectedValuePath="OpcValue" />
+                            </StackPanel>
 
-                    <StackPanel Grid.Row="5" Grid.Column="0">
-                        <Label Content="Fehlercode" Target="{Binding ElementName=TxtFehlercode}" />
-                        <TextBox x:Name="TxtFehlercode" Text="0" />
-                    </StackPanel>
-                    <StackPanel Grid.Row="5" Grid.Column="2">
-                        <Label Content="Toleranz" Target="{Binding ElementName=TxtToleranz}" />
-                        <TextBox x:Name="TxtToleranz" Text="50,0" />
-                    </StackPanel>
-                </Grid>
+                            <StackPanel Grid.Row="5" Grid.Column="0">
+                                <Label Content="Fehlercode" Target="{Binding ElementName=TxtFehlercode}" />
+                                <TextBox x:Name="TxtFehlercode" Text="0" />
+                            </StackPanel>
+                            <StackPanel Grid.Row="5" Grid.Column="2">
+                                <Label Content="Toleranz" Target="{Binding ElementName=TxtToleranz}" />
+                                <TextBox x:Name="TxtToleranz" Text="50,0" />
+                            </StackPanel>
+                        </Grid>
 
-                <StackPanel Grid.Row="2" Margin="0,26,0,0">
-                    <WrapPanel>
-                        <Button x:Name="BtnWriteFalcomEvent"
-                                Content="FALCOM Event schreiben"
-                                Click="BtnWriteFalcomEvent_Click"
-                                Background="{StaticResource AccentBrush}"
-                                Foreground="White"
-                                BorderBrush="{StaticResource AccentBrush}" />
-                    </WrapPanel>
+                        <StackPanel Grid.Row="2" Margin="0,26,0,0">
+                            <WrapPanel>
+                                <Button x:Name="BtnWriteFalcomEvent"
+                                        Content="FALCOM Event schreiben"
+                                        Click="BtnWriteFalcomEvent_Click"
+                                        Background="{StaticResource AccentBrush}"
+                                        Foreground="White"
+                                        BorderBrush="{StaticResource AccentBrush}" />
+                            </WrapPanel>
 
-                    <TextBlock Text="Protokoll" FontSize="16" FontWeight="SemiBold" Margin="0,26,0,10" />
-                    <TextBox x:Name="TxtLog"
-                             Height="150"
-                             IsReadOnly="True"
-                             AcceptsReturn="True"
-                             TextWrapping="Wrap"
-                             VerticalScrollBarVisibility="Visible"
-                             FontFamily="Consolas"
-                             Background="#FFFFFF" />
-                </StackPanel>
-            </Grid>
-        </ScrollViewer>
+                            <TextBlock Text="Protokoll" FontSize="16" FontWeight="SemiBold" Margin="0,26,0,10" />
+                            <TextBox x:Name="TxtLog"
+                                     Height="150"
+                                     IsReadOnly="True"
+                                     AcceptsReturn="True"
+                                     TextWrapping="Wrap"
+                                     VerticalScrollBarVisibility="Visible"
+                                     FontFamily="Consolas"
+                                     Background="#FFFFFF" />
+                        </StackPanel>
+                    </Grid>
+                </ScrollViewer>
+            </TabItem>
+
+            <TabItem Header="Kranfahrt">
+                <local:KranfahrtView />
+            </TabItem>
+        </TabControl>
 
         <Border Grid.Row="2" Background="#E8EAED" Padding="24,10">
             <TextBlock x:Name="TxtStatus" Text="Bereit" Foreground="#5F6368" />
