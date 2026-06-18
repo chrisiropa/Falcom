@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Media;
 using Opc.UaFx;
 using Opc.UaFx.Client;
@@ -10,10 +11,11 @@ public partial class MainWindow : Window
 {
     private const string NodeAuftragId = "ns=1;s=LagerV.DataBlocks.Count_DB_1.Static.OPC.AuftragID";
     private const string NodeQuelle = "ns=1;s=LagerV.DataBlocks.Count_DB_1.Static.OPC.KranQuelle";
+    private const string NodeZiel = "ns=1;s=LagerV.DataBlocks.Count_DB_1.Static.OPC.KranZiel";
     private const string NodeToleranz = "ns=1;s=LagerV.DataBlocks.Count_DB_1.Static.OPC.Toleranz";
     private const string NodeIstGewicht = "ns=1;s=LagerV.DataBlocks.Count_DB_1.Static.OPC.IstGewicht";
     private const string NodeFehlercode = "ns=1;s=LagerV.DataBlocks.Count_DB_1.Static.OPC.Fehlercode";
-    private const string NodeKranfahrtBeendet = "ns=1;s=LagerV.DataBlocks.Count_DB_1.Static.OPC.Comands.Stop";
+    private const string NodeKranCMD = "ns=1;s=LagerV.DataBlocks.Count_DB_1.Static.OPC.Event.CmdID";
 
     public MainWindow()
     {
@@ -30,7 +32,7 @@ public partial class MainWindow : Window
             : "Bereit. Traeger-Lizenz aus der Umgebung geladen.");
     }
 
-    private async void BtnUpdateValues_Click(object sender, RoutedEventArgs e)
+    private async void BtnWriteFalcomEvent_Click(object sender, RoutedEventArgs e)
     {
         if (!TryReadInput(out CranePayload payload))
         {
@@ -38,20 +40,7 @@ public partial class MainWindow : Window
         }
 
         await ExecuteOpcActionAsync(
-            "Nutzdaten werden geschrieben...",
-            client => WritePayload(client, payload),
-            $"Nutzdaten fuer Auftrag {payload.AuftragId} erfolgreich geschrieben.");
-    }
-
-    private async void BtnStopSignal_Click(object sender, RoutedEventArgs e)
-    {
-        if (!TryReadInput(out CranePayload payload))
-        {
-            return;
-        }
-
-        await ExecuteOpcActionAsync(
-            "Kranfahrt-Ende wird simuliert...",
+            "FALCOM Event wird geschrieben...",
             client =>
             {
                 string? error = WritePayload(client, payload);
@@ -60,16 +49,16 @@ public partial class MainWindow : Window
                     return error;
                 }
 
-                error = WriteNodeChecked(client, NodeKranfahrtBeendet, false, "Kranfahrt beendet (Reset)");
+                error = WriteNodeChecked(client, NodeKranCMD, false, "Kran Komando zurückgesetzt");
                 if (error is not null)
                 {
                     return error;
                 }
 
                 Thread.Sleep(1200);
-                return WriteNodeChecked(client, NodeKranfahrtBeendet, true, "Kranfahrt beendet");
+                return WriteNodeChecked(client, NodeKranCMD, true, "Kran Komando gesetzt");
             },
-            $"Kranfahrt beendet: Auftrag {payload.AuftragId}, Gewicht {payload.IstGewicht:N2} kg.");
+            $"FALCOM Event geschrieben: Auftrag {payload.AuftragId}, {payload.Quelle} -> {payload.Ziel}, Gewicht {payload.IstGewicht:N2} kg.");
     }
 
     private async Task ExecuteOpcActionAsync(
@@ -117,6 +106,7 @@ public partial class MainWindow : Window
     {
         return WriteNodeChecked(client, NodeAuftragId, payload.AuftragId, "Auftrag-ID")
             ?? WriteNodeChecked(client, NodeQuelle, payload.Quelle, "Kranquelle")
+            ?? WriteNodeChecked(client, NodeZiel, payload.Ziel, "Kranziel")
             ?? WriteNodeChecked(client, NodeIstGewicht, payload.IstGewicht, "Istgewicht")
             ?? WriteNodeChecked(client, NodeFehlercode, payload.Fehlercode, "Fehlercode")
             ?? WriteNodeChecked(client, NodeToleranz, payload.Toleranz, "Toleranz");
@@ -153,9 +143,16 @@ public partial class MainWindow : Window
             return ShowValidationError("Die Auftrag-ID muss eine ganze Zahl sein.", TxtAuftragId);
         }
 
-        if (string.IsNullOrWhiteSpace(TxtQuelle.Text))
+        string? quelle = GetSelectedValue(CmbQuelle);
+        if (quelle is null)
         {
-            return ShowValidationError("Bitte eine Kranquelle eingeben.", TxtQuelle);
+            return ShowValidationError("Bitte eine Kranquelle auswaehlen.", CmbQuelle);
+        }
+
+        string? ziel = GetSelectedValue(CmbZiel);
+        if (ziel is null)
+        {
+            return ShowValidationError("Bitte ein Kranziel auswaehlen.", CmbZiel);
         }
 
         if (!TryParseDouble(TxtGewicht.Text, out double gewicht))
@@ -173,8 +170,13 @@ public partial class MainWindow : Window
             return ShowValidationError("Der Fehlercode muss eine ganze Zahl sein.", TxtFehlercode);
         }
 
-        payload = new CranePayload(auftragId, TxtQuelle.Text.Trim(), toleranz, gewicht, fehlercode);
+        payload = new CranePayload(auftragId, quelle, ziel, toleranz, gewicht, fehlercode);
         return true;
+    }
+
+    private static string? GetSelectedValue(ComboBox comboBox)
+    {
+        return (comboBox.SelectedItem as ComboBoxItem)?.Content?.ToString();
     }
 
     private static bool TryParseDouble(string text, out double value)
@@ -183,19 +185,24 @@ public partial class MainWindow : Window
             || double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out value);
     }
 
-    private bool ShowValidationError(string message, System.Windows.Controls.TextBox textBox)
+    private bool ShowValidationError(string message, Control control)
     {
         MessageBox.Show(message, "Eingabe pruefen", MessageBoxButton.OK, MessageBoxImage.Warning);
-        textBox.Focus();
-        textBox.SelectAll();
+        control.Focus();
+
+        if (control is TextBox textBox)
+        {
+            textBox.SelectAll();
+        }
+
         return false;
     }
 
     private void SetBusy(bool isBusy, string status)
     {
-        BtnUpdateValues.IsEnabled = !isBusy;
-        BtnStopSignal.IsEnabled = !isBusy;
         TxtEndpoint.IsEnabled = !isBusy;
+        CmbQuelle.IsEnabled = !isBusy;
+        CmbZiel.IsEnabled = !isBusy;
         TxtStatus.Text = status;
     }
 
@@ -208,6 +215,7 @@ public partial class MainWindow : Window
     private readonly record struct CranePayload(
         int AuftragId,
         string Quelle,
+        string Ziel,
         double Toleranz,
         double IstGewicht,
         int Fehlercode);

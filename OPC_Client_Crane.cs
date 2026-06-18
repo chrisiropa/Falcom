@@ -11,6 +11,7 @@ namespace Falcom
       private const string KranfahrtBeendetNodeId = "ns=1;s=LagerV.DataBlocks.Count_DB_1.Static.OPC.Comands.Stop";
       private const string AuftragIdNodeId = "ns=1;s=LagerV.DataBlocks.Count_DB_1.Static.OPC.AuftragID";
       private const string QuelleNodeId = "ns=1;s=LagerV.DataBlocks.Count_DB_1.Static.OPC.KranQuelle";
+      private const string ZielNodeId = "ns=1;s=LagerV.DataBlocks.Count_DB_1.Static.OPC.KranZiel";
       private const string ToleranzNodeId = "ns=1;s=LagerV.DataBlocks.Count_DB_1.Static.OPC.Toleranz";
       private const string IstGewichtNodeId = "ns=1;s=LagerV.DataBlocks.Count_DB_1.Static.OPC.IstGewicht";
       private const string FehlercodeNodeId = "ns=1;s=LagerV.DataBlocks.Count_DB_1.Static.OPC.Fehlercode";
@@ -363,6 +364,7 @@ namespace Falcom
                _logger.LogInformation("Kranfahrt beendet");
                int auftragId = Convert.ToInt32(client.ReadNode(AuftragIdNodeId).Value);
                string kranQuelle = Convert.ToString(client.ReadNode(QuelleNodeId).Value) ?? string.Empty;
+               string kranZiel = Convert.ToString(client.ReadNode(ZielNodeId).Value) ?? string.Empty;
                double toleranz = Convert.ToDouble(client.ReadNode(ToleranzNodeId).Value);
                double istGewicht = Convert.ToDouble(client.ReadNode(IstGewichtNodeId).Value);
                int fehlercode = Convert.ToInt32(client.ReadNode(FehlercodeNodeId).Value);
@@ -370,6 +372,7 @@ namespace Falcom
                var kranEvent = new KranfahrtBeendetEvent(
                     auftragsNummer: auftragId,
                     kranQuelle: kranQuelle,
+                    kranZiel: kranZiel,
                     toleranz: toleranz,
                     istGewicht: istGewicht,
                     fehlercode: fehlercode
@@ -382,8 +385,8 @@ namespace Falcom
                }
 
                _logger.LogInformation(
-                  "KranfahrtBeendetEvent eingereiht: Auftrag={AuftragId}, Quelle={Quelle}, Toleranz={Toleranz}, IstGewicht={IstGewicht}, Fehlercode={Fehlercode}",
-                  auftragId, kranQuelle, toleranz, istGewicht, fehlercode);
+                  "KranfahrtBeendetEvent eingereiht: Auftrag={AuftragId}, Quelle={Quelle}, Ziel={Ziel}, Toleranz={Toleranz}, IstGewicht={IstGewicht}, Fehlercode={Fehlercode}",
+                  auftragId, kranQuelle, kranZiel, toleranz, istGewicht, fehlercode);
             }
          }
          catch (Exception ex)

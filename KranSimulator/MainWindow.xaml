@@ -4,9 +4,9 @@
         Title="Falcom Kran-Simulator"
         Icon="Falke-Transparent.ico"
         Width="780"
-        Height="690"
+        Height="897"
         MinWidth="680"
-        MinHeight="620"
+        MinHeight="806"
         WindowStartupLocation="CenterScreen"
         Background="#F4F5F7">
     <Grid>
@@ -73,8 +73,22 @@
                         <TextBox x:Name="TxtAuftragId" Text="1" />
                     </StackPanel>
                     <StackPanel Grid.Row="1" Grid.Column="2">
-                        <Label Content="Kranquelle" Target="{Binding ElementName=TxtQuelle}" />
-                        <TextBox x:Name="TxtQuelle" Text="BOX 4" />
+                        <Label Content="Kranquelle" Target="{Binding ElementName=CmbQuelle}" />
+                        <ComboBox x:Name="CmbQuelle" SelectedIndex="3">
+                            <ComboBoxItem Content="BOX 1" />
+                            <ComboBoxItem Content="BOX 2" />
+                            <ComboBoxItem Content="BOX 3" />
+                            <ComboBoxItem Content="BOX 4" />
+                            <ComboBoxItem Content="BOX 5" />
+                            <ComboBoxItem Content="BOX 6" />
+                            <ComboBoxItem Content="BOX 7" />
+                            <ComboBoxItem Content="BOX 8" />
+                            <ComboBoxItem Content="BOX 9" />
+                            <ComboBoxItem Content="BOX 10" />
+                            <ComboBoxItem Content="LKW1" />
+                            <ComboBoxItem Content="LKW2" />
+                            <ComboBoxItem Content="LKW3" />
+                        </ComboBox>
                     </StackPanel>
 
                     <StackPanel Grid.Row="3" Grid.Column="0">
@@ -82,25 +96,39 @@
                         <TextBox x:Name="TxtGewicht" Text="555,0" />
                     </StackPanel>
                     <StackPanel Grid.Row="3" Grid.Column="2">
-                        <Label Content="Toleranz" Target="{Binding ElementName=TxtToleranz}" />
-                        <TextBox x:Name="TxtToleranz" Text="50,0" />
+                        <Label Content="Kranziel" Target="{Binding ElementName=CmbZiel}" />
+                        <ComboBox x:Name="CmbZiel" SelectedIndex="0">
+                            <ComboBoxItem Content="CW1" />
+                            <ComboBoxItem Content="CW2" />
+                            <ComboBoxItem Content="CW3" />
+                            <ComboBoxItem Content="BOX 1" />
+                            <ComboBoxItem Content="BOX 2" />
+                            <ComboBoxItem Content="BOX 3" />
+                            <ComboBoxItem Content="BOX 4" />
+                            <ComboBoxItem Content="BOX 5" />
+                            <ComboBoxItem Content="BOX 6" />
+                            <ComboBoxItem Content="BOX 7" />
+                            <ComboBoxItem Content="BOX 8" />
+                            <ComboBoxItem Content="BOX 9" />
+                            <ComboBoxItem Content="BOX 10" />
+                        </ComboBox>
                     </StackPanel>
 
                     <StackPanel Grid.Row="5" Grid.Column="0">
                         <Label Content="Fehlercode" Target="{Binding ElementName=TxtFehlercode}" />
                         <TextBox x:Name="TxtFehlercode" Text="0" />
                     </StackPanel>
+                    <StackPanel Grid.Row="5" Grid.Column="2">
+                        <Label Content="Toleranz" Target="{Binding ElementName=TxtToleranz}" />
+                        <TextBox x:Name="TxtToleranz" Text="50,0" />
+                    </StackPanel>
                 </Grid>
 
                 <StackPanel Grid.Row="2" Margin="0,26,0,0">
                     <WrapPanel>
-                        <Button x:Name="BtnUpdateValues"
-                                Content="Nutzdaten schreiben"
-                                Click="BtnUpdateValues_Click"
-                                Margin="0,0,10,0" />
-                        <Button x:Name="BtnStopSignal"
-                                Content="Kranfahrt beenden"
-                                Click="BtnStopSignal_Click"
+                        <Button x:Name="BtnWriteFalcomEvent"
+                                Content="FALCOM Event schreiben"
+                                Click="BtnWriteFalcomEvent_Click"
                                 Background="{StaticResource AccentBrush}"
                                 Foreground="White"
                                 BorderBrush="{StaticResource AccentBrush}" />
@@ -112,7 +140,7 @@
                              IsReadOnly="True"
                              AcceptsReturn="True"
                              TextWrapping="Wrap"
-                             VerticalScrollBarVisibility="Auto"
+                             VerticalScrollBarVisibility="Visible"
                              FontFamily="Consolas"
                              Background="#FFFFFF" />
                 </StackPanel>
