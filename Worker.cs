@@ -142,36 +142,6 @@ namespace Falcom
          await base.StopAsync(cancellationToken);
       }
 
-      private void LogOpenCraneQueueOrders()
-      {
-         // ... (Deine bestehende SQL-Log-Methode bleibt absolut unverändert)
-         const string sql = @"
-            SELECT ID, Reihenfolge, Prioritaet, AuftragsTyp, AuftragID, ErstelltDatumZeit, Bemerkung
-            FROM dbo.FALCOM_KRAN_QUEUE
-            WHERE FertigDatumZeit IS NULL
-            ORDER BY Prioritaet ASC, Reihenfolge ASC, ErstelltDatumZeit ASC, ID ASC";
-
-         SimpleSqlQuery query = new(_configManager.ConnectionString, sql);
-
-         if (query.Exception is not null)
-         {
-            _logger.LogError(query.Exception, "Tabelle FALCOM_KRAN_QUEUE konnte nicht abgefragt werden.");
-            return;
-         }
-
-         if (query.QueryResult is null || query.QueryResult.Count == 0)
-         {
-            return;
-         }
-
-         _logger.LogInformation("{count} offene Kran-Auftraege in FALCOM_KRAN_QUEUE gefunden.", query.QueryResult.Count);
-
-         foreach (Dictionary<string, object> row in query.QueryResult)
-         {
-            _logger.LogInformation(
-               "Offener Kran-Auftrag: QueueID={queueId}, Reihenfolge={reihenfolge}, Prioritaet={prioritaet}, AuftragsTyp={auftragsTyp}, AuftragID={auftragId}, Erstellt={erstellt}, Bemerkung={bemerkung}",
-               row["ID"], row["Reihenfolge"], row["Prioritaet"], row["AuftragsTyp"], row["AuftragID"], row["ErstelltDatumZeit"], row["Bemerkung"]);
-         }
-      }
+      
    }
 }

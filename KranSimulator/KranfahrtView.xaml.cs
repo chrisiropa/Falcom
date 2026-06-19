@@ -12,14 +12,19 @@ public partial class KranfahrtView : UserControl
     private const double CraneRailHeight = 8.0;
     private const double HoistAnchorY = 7.35;
     private const double RaisedY = 6.55;
-    private const double BoxSize = 5.0;
     private const double BoxWallHeight = 5.0;
     private const double BoxWallThickness = 0.18;
+    private const double StorageWidth = 25.0;
+    private const double StorageDepth = 10.0;
+    private const double LeftStorageWidth = 8.0;
+    private const double RightStorageColumnWidth = 8.5;
+    private const double LeftStorageRowDepth = 2.5;
+    private const double RightStorageRowDepth = StorageDepth / 3.0;
     private const double HomeX = 0.0;
     private const double HomeZ = 0.0;
-    private const double DefaultCameraHeight = 26.0;
-    private const double DefaultCameraDistance = 40.0;
-    private const double DefaultCameraTargetHeight = 2.5;
+    private const double DefaultCameraHeight = 52.0;
+    private const double DefaultCameraDistance = 38.0;
+    private const double DefaultCameraTargetHeight = 1.8;
 
     private readonly TranslateTransform3D bridgeTransform = new();
     private readonly TranslateTransform3D trolleyTransform = new();
@@ -39,19 +44,34 @@ public partial class KranfahrtView : UserControl
             ["LKW1"] = new(-8, -9, 1.2),
             ["LKW2"] = new(0, -9, 1.2),
             ["LKW3"] = new(8, -9, 1.2),
-            ["BOX 1"] = new(-10, -2.5, 1.0),
-            ["BOX 2"] = new(-5, -2.5, 1.0),
-            ["BOX 3"] = new(0, -2.5, 1.0),
-            ["BOX 4"] = new(5, -2.5, 1.0),
-            ["BOX 5"] = new(10, -2.5, 1.0),
-            ["BOX 6"] = new(-10, 2.5, 1.0),
-            ["BOX 7"] = new(-5, 2.5, 1.0),
-            ["BOX 8"] = new(0, 2.5, 1.0),
-            ["BOX 9"] = new(5, 2.5, 1.0),
-            ["BOX 10"] = new(10, 2.5, 1.0),
+            ["BOX 1"] = new(-8.5, 3.75, 1.0),
+            ["BOX 2"] = new(-0.25, 10.0 / 3.0, 1.0),
+            ["BOX 3"] = new(8.25, 10.0 / 3.0, 1.0),
+            ["BOX 4"] = new(-8.5, 1.25, 1.0),
+            ["BOX 5"] = new(-0.25, 0, 1.0),
+            ["BOX 6"] = new(8.25, 0, 1.0),
+            ["BOX 7"] = new(-8.5, -1.25, 1.0),
+            ["BOX 8"] = new(-0.25, -10.0 / 3.0, 1.0),
+            ["BOX 9"] = new(8.25, -10.0 / 3.0, 1.0),
+            ["BOX 10"] = new(-8.5, -3.75, 1.0),
             ["CW1"] = new(-8, 9, 1.25),
             ["CW2"] = new(0, 9, 1.25),
             ["CW3"] = new(8, 9, 1.25)
+        };
+
+    private static readonly IReadOnlyDictionary<int, StorageBoxLayout> StorageBoxes =
+        new Dictionary<int, StorageBoxLayout>
+        {
+            [1] = new(-8.5, 3.75, LeftStorageWidth, LeftStorageRowDepth),
+            [2] = new(-0.25, 10.0 / 3.0, RightStorageColumnWidth, RightStorageRowDepth),
+            [3] = new(8.25, 10.0 / 3.0, RightStorageColumnWidth, RightStorageRowDepth),
+            [4] = new(-8.5, 1.25, LeftStorageWidth, LeftStorageRowDepth),
+            [5] = new(-0.25, 0, RightStorageColumnWidth, RightStorageRowDepth),
+            [6] = new(8.25, 0, RightStorageColumnWidth, RightStorageRowDepth),
+            [7] = new(-8.5, -1.25, LeftStorageWidth, LeftStorageRowDepth),
+            [8] = new(-0.25, -10.0 / 3.0, RightStorageColumnWidth, RightStorageRowDepth),
+            [9] = new(8.25, -10.0 / 3.0, RightStorageColumnWidth, RightStorageRowDepth),
+            [10] = new(-8.5, -3.75, LeftStorageWidth, LeftStorageRowDepth)
         };
 
     public KranfahrtView()
@@ -106,7 +126,7 @@ public partial class KranfahrtView : UserControl
         scene.Children.Add(CreateBox(x, 0.65, z, 4.2, 1.1, 2.0, Color.FromRgb(59, 71, 78)));
         scene.Children.Add(CreateBox(x + 1.35, 1.35, z, 1.25, 1.4, 1.9, Color.FromRgb(34, 43, 49)));
         scene.Children.Add(CreateBox(x - 0.6, 1.25, z, 2.4, 0.7, 1.65, Color.FromRgb(130, 145, 151)));
-        scene.Children.Add(CreateLabelPlate(label, x, 1.92, z - 1.03, 2.2, 0.65));
+        scene.Children.Add(CreateLabelPlate(label, x, 1.92, z + 1.03, 2.2, 0.65));
     }
 
     private void AddStorageBoxes()
@@ -114,34 +134,42 @@ public partial class KranfahrtView : UserControl
         Material steelMaterial = CreateMaterial(Color.FromRgb(104, 116, 120));
         Material darkSteelMaterial = CreateMaterial(Color.FromRgb(69, 80, 84));
 
-        double blockWidth = BoxSize * 5;
-        double blockDepth = BoxSize * 2;
+        double leftEdge = -StorageWidth / 2;
+        double rightEdge = StorageWidth / 2;
+        double backEdge = -StorageDepth / 2;
+        double frontEdge = StorageDepth / 2;
+        double leftDividerX = leftEdge + LeftStorageWidth;
+        double rightDividerX = leftDividerX + RightStorageColumnWidth;
 
-        // Shared walls create ten contiguous, open-top boxes without gaps.
-        for (int wallIndex = 0; wallIndex <= 5; wallIndex++)
+        // Außenwände der unverändert großen Lagerfläche.
+        AddStorageWallX(leftEdge, 0, StorageDepth, darkSteelMaterial);
+        AddStorageWallX(rightEdge, 0, StorageDepth, darkSteelMaterial);
+        AddStorageWallZ(0, backEdge, StorageWidth, darkSteelMaterial);
+        AddStorageWallZ(0, frontEdge, StorageWidth, darkSteelMaterial);
+
+        // Unterteilung exakt nach Anlagenplan:
+        // links vier Boxen, rechts zwei Spalten mit jeweils drei Boxen.
+        AddStorageWallX(leftDividerX, 0, StorageDepth, steelMaterial);
+        AddStorageWallX(rightDividerX, 0, StorageDepth, steelMaterial);
+
+        for (int divider = 1; divider <= 3; divider++)
         {
-            double wallX = -blockWidth / 2 + wallIndex * BoxSize;
-            scene.Children.Add(CreateBox(
-                wallX,
-                BoxWallHeight / 2,
-                0,
-                BoxWallThickness,
-                BoxWallHeight,
-                blockDepth + BoxWallThickness,
-                wallIndex is 0 or 5 ? darkSteelMaterial : steelMaterial));
+            double z = backEdge + divider * LeftStorageRowDepth;
+            AddStorageWallZ(
+                leftEdge + LeftStorageWidth / 2,
+                z,
+                LeftStorageWidth,
+                steelMaterial);
         }
 
-        for (int wallIndex = 0; wallIndex <= 2; wallIndex++)
+        for (int divider = 1; divider <= 2; divider++)
         {
-            double wallZ = -blockDepth / 2 + wallIndex * BoxSize;
-            scene.Children.Add(CreateBox(
-                0,
-                BoxWallHeight / 2,
-                wallZ,
-                blockWidth + BoxWallThickness,
-                BoxWallHeight,
-                BoxWallThickness,
-                wallIndex is 0 or 2 ? darkSteelMaterial : steelMaterial));
+            double z = backEdge + divider * RightStorageRowDepth;
+            AddStorageWallZ(
+                leftDividerX + (StorageWidth - LeftStorageWidth) / 2,
+                z,
+                StorageWidth - LeftStorageWidth,
+                steelMaterial);
         }
 
         Color[] scrapColors =
@@ -154,26 +182,57 @@ public partial class KranfahrtView : UserControl
 
         for (int index = 1; index <= 10; index++)
         {
-            CranePoint point = CranePoints[$"BOX {index}"];
+            StorageBoxLayout box = StorageBoxes[index];
             double fillHeight = 0.55 + (index % 4) * 0.22;
             scene.Children.Add(CreateBox(
-                point.X,
+                box.X,
                 fillHeight / 2,
-                point.Z,
-                BoxSize - 0.45,
+                box.Z,
+                box.Width - 0.45,
                 fillHeight,
-                BoxSize - 0.45,
+                box.Depth - 0.45,
                 scrapColors[(index - 1) % scrapColors.Length]));
 
-            double labelZ = index <= 5 ? 0.12 : 5.12;
             scene.Children.Add(CreateLabelPlate(
                 $"BOX {index}",
-                point.X,
+                box.X,
                 4.25,
-                labelZ,
+                box.Z + box.Depth / 2 + 0.12,
                 2.3,
                 0.55));
         }
+    }
+
+    private void AddStorageWallX(
+        double x,
+        double z,
+        double depth,
+        Material material)
+    {
+        scene.Children.Add(CreateBox(
+            x,
+            BoxWallHeight / 2,
+            z,
+            BoxWallThickness,
+            BoxWallHeight,
+            depth + BoxWallThickness,
+            material));
+    }
+
+    private void AddStorageWallZ(
+        double x,
+        double z,
+        double width,
+        Material material)
+    {
+        scene.Children.Add(CreateBox(
+            x,
+            BoxWallHeight / 2,
+            z,
+            width + BoxWallThickness,
+            BoxWallHeight,
+            BoxWallThickness,
+            material));
     }
 
     private void AddChargingCars()
@@ -185,9 +244,25 @@ public partial class KranfahrtView : UserControl
 
     private void AddChargingCar(double x, double z, string label)
     {
-        scene.Children.Add(CreateBox(x, 0.7, z, 4.0, 1.25, 2.5, Color.FromRgb(43, 78, 94)));
-        scene.Children.Add(CreateBox(x, 1.28, z, 3.3, 0.55, 1.9, Color.FromRgb(67, 113, 132)));
-        scene.Children.Add(CreateLabelPlate(label, x, 1.8, z - 1.28, 1.8, 0.58));
+        scene.Children.Add(CreateEllipticCylinder(
+            x,
+            0,
+            z,
+            1.8,
+            3.2,
+            1.25,
+            Color.FromRgb(43, 78, 94),
+            40));
+        scene.Children.Add(CreateEllipticCylinder(
+            x,
+            1.25,
+            z,
+            1.48,
+            2.72,
+            0.55,
+            Color.FromRgb(67, 113, 132),
+            40));
+        scene.Children.Add(CreateLabelPlate(label, x, 1.9, z + 3.22, 1.8, 0.58));
     }
 
     private void AddCrane()
@@ -584,6 +659,66 @@ public partial class KranfahrtView : UserControl
         return new GeometryModel3D(mesh, material) { BackMaterial = material };
     }
 
+    private static GeometryModel3D CreateEllipticCylinder(
+        double centerX,
+        double baseY,
+        double centerZ,
+        double radiusX,
+        double radiusZ,
+        double height,
+        Color color,
+        int segments)
+    {
+        var positions = new Point3DCollection();
+        var triangles = new Int32Collection();
+
+        for (int index = 0; index < segments; index++)
+        {
+            double angle = index * Math.PI * 2 / segments;
+            double x = centerX + Math.Cos(angle) * radiusX;
+            double z = centerZ + Math.Sin(angle) * radiusZ;
+            positions.Add(new Point3D(x, baseY, z));
+            positions.Add(new Point3D(x, baseY + height, z));
+        }
+
+        int bottomCenter = positions.Count;
+        positions.Add(new Point3D(centerX, baseY, centerZ));
+        int topCenter = positions.Count;
+        positions.Add(new Point3D(centerX, baseY + height, centerZ));
+
+        for (int index = 0; index < segments; index++)
+        {
+            int next = (index + 1) % segments;
+            int bottom = index * 2;
+            int top = bottom + 1;
+            int nextBottom = next * 2;
+            int nextTop = nextBottom + 1;
+
+            triangles.Add(bottom);
+            triangles.Add(top);
+            triangles.Add(nextBottom);
+            triangles.Add(nextBottom);
+            triangles.Add(top);
+            triangles.Add(nextTop);
+
+            triangles.Add(bottomCenter);
+            triangles.Add(nextBottom);
+            triangles.Add(bottom);
+
+            triangles.Add(topCenter);
+            triangles.Add(top);
+            triangles.Add(nextTop);
+        }
+
+        var mesh = new MeshGeometry3D
+        {
+            Positions = positions,
+            TriangleIndices = triangles
+        };
+        Material material = CreateMaterial(color);
+        return new GeometryModel3D(mesh, material) { BackMaterial = material };
+    }
+
     private static GeometryModel3D CreateIrregularLoad(Color color)
     {
         GeometryModel3D load = CreateBox(0, 0, 0, 1.15, 0.6, 1.0, color);
@@ -681,4 +816,10 @@ public partial class KranfahrtView : UserControl
     }
 
     private readonly record struct CranePoint(double X, double Z, double PickY);
+
+    private readonly record struct StorageBoxLayout(
+        double X,
+        double Z,
+        double Width,
+        double Depth);
 }
