@@ -10,6 +10,7 @@ namespace Falcom
       private const string WatchdogNodeId = "ns=1;s=LagerV.DataBlocks.OPC_Daten_ORG.Static.Watchdog";
       private const string KranfahrtBeendetNodeId = "ns=1;s=LagerV.DataBlocks.Count_DB_1.Static.OPC.Comands.Stop";
       private const string AuftragIdNodeId = "ns=1;s=LagerV.DataBlocks.Count_DB_1.Static.OPC.AuftragID";
+      private const string TeilfahrtNodeId = "ns=1;s=LagerV.DataBlocks.Count_DB_1.Static.OPC.TeilfahrtNodeId";      
       private const string QuelleNodeId = "ns=1;s=LagerV.DataBlocks.Count_DB_1.Static.OPC.KranQuelle";
       private const string ZielNodeId = "ns=1;s=LagerV.DataBlocks.Count_DB_1.Static.OPC.KranZiel";
       private const string ToleranzNodeId = "ns=1;s=LagerV.DataBlocks.Count_DB_1.Static.OPC.Toleranz";
@@ -363,6 +364,7 @@ namespace Falcom
 
                _logger.LogInformation("Kranfahrt beendet");
                int auftragId = Convert.ToInt32(client.ReadNode(AuftragIdNodeId).Value);
+               int teilfahrtID = Convert.ToInt32(client.ReadNode(TeilfahrtNodeId).Value);
                string kranQuelle = Convert.ToString(client.ReadNode(QuelleNodeId).Value) ?? string.Empty;
                string kranZiel = Convert.ToString(client.ReadNode(ZielNodeId).Value) ?? string.Empty;
                double toleranz = Convert.ToDouble(client.ReadNode(ToleranzNodeId).Value);
@@ -371,11 +373,13 @@ namespace Falcom
 
                var kranEvent = new KranfahrtBeendetEvent(
                     auftragsNummer: auftragId,
+                    teilfahrtID: teilfahrtID,
                     kranQuelle: kranQuelle,
                     kranZiel: kranZiel,
                     toleranz: toleranz,
                     istGewicht: istGewicht,
-                    fehlercode: fehlercode
+                    fehlercode: fehlercode,
+                    änderungsZähler: Convert.ToInt32(e.Item.Value.Value)
                );
 
                if (!_eventQueue.Writer.TryWrite(kranEvent))
