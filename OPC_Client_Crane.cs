@@ -8,14 +8,6 @@ namespace Falcom
       private static readonly TimeSpan ConnectRetryDelay = TimeSpan.FromSeconds(5);
       private const string ZaehlerNodeId = "ns=1;s=LagerV.DataBlocks.Count_DB_1.Static.OPC.Zaehler";
       private const string WatchdogNodeId = "ns=1;s=LagerV.DataBlocks.OPC_Daten_ORG.Static.Watchdog";
-      private const string KranfahrtBeendetNodeId = "ns=1;s=LagerV.DataBlocks.Count_DB_1.Static.OPC.Comands.Stop";
-      private const string AuftragIdNodeId = "ns=1;s=LagerV.DataBlocks.Count_DB_1.Static.OPC.AuftragID";
-      private const string TeilfahrtNodeId = "ns=1;s=LagerV.DataBlocks.Count_DB_1.Static.OPC.TeilfahrtNodeId";      
-      private const string QuelleNodeId = "ns=1;s=LagerV.DataBlocks.Count_DB_1.Static.OPC.KranQuelle";
-      private const string ZielNodeId = "ns=1;s=LagerV.DataBlocks.Count_DB_1.Static.OPC.KranZiel";
-      private const string ToleranzNodeId = "ns=1;s=LagerV.DataBlocks.Count_DB_1.Static.OPC.Toleranz";
-      private const string IstGewichtNodeId = "ns=1;s=LagerV.DataBlocks.Count_DB_1.Static.OPC.IstGewicht";
-      private const string FehlercodeNodeId = "ns=1;s=LagerV.DataBlocks.Count_DB_1.Static.OPC.Fehlercode";
 
       private readonly ILogger<OPC_Client_Crane> _logger;
       private readonly FalcomEventQueue _eventQueue; // NEU: Privates Feld für die Queue
@@ -28,11 +20,16 @@ namespace Falcom
       private bool disposed;
 
       // NEU: FalcomEventQueue im Konstruktor anfordern
-      public OPC_Client_Crane(ILogger<OPC_Client_Crane> logger, Parameter parameter, FalcomEventQueue eventQueue)
+      public OPC_Client_Crane(
+         ILogger<OPC_Client_Crane> logger,
+         Parameter parameter,
+         ConfigManager configManager,
+         FalcomEventQueue eventQueue)
       {
          _logger = logger;
          _eventQueue = eventQueue; // NEU: Zuweisung für den späteren Zugriff
          TraegerLicense();
+         KranfahrtBeendetEvent.LoadOpcNodes(configManager);
 
          if (string.IsNullOrWhiteSpace(parameter.OpcServer))
          {
@@ -301,7 +298,7 @@ namespace Falcom
          subscription.AddMonitoredItem(zaehlerItem);
          monitoredItems.Add(zaehlerItem);
 
-         var kranfahrtBeendetItem = new OpcMonitoredItem(KranfahrtBeendetNodeId, OpcAttribute.Value);
+         var kranfahrtBeendetItem = new OpcMonitoredItem(KranfahrtBeendetEvent.ÄnderungsZaehlerOPCNode, OpcAttribute.Value);
          kranfahrtBeendetItem.DataChangeReceived += HandleDataChange;
          subscription.AddMonitoredItem(kranfahrtBeendetItem);
          monitoredItems.Add(kranfahrtBeendetItem);
@@ -354,7 +351,10 @@ namespace Falcom
                   // Deine Kran-Logik
                }
             }
-            else if (e.MonitoredItem.NodeId.ToString().Contains(KranfahrtBeendetNodeId))
+            else if (string.Equals(
+               e.MonitoredItem.NodeId.ToString(),
+               KranfahrtBeendetEvent.ÄnderungsZaehlerOPCNode,
+               StringComparison.Ordinal))
             {
                if (e.Item.Value.Value is not bool isStopped || !isStopped)
                {
@@ -363,13 +363,13 @@ namespace Falcom
                }
 
                _logger.LogInformation("Kranfahrt beendet");
-               int auftragId = Convert.ToInt32(client.ReadNode(AuftragIdNodeId).Value);
-               int teilfahrtID = Convert.ToInt32(client.ReadNode(TeilfahrtNodeId).Value);
-               string kranQuelle = Convert.ToString(client.ReadNode(QuelleNodeId).Value) ?? string.Empty;
-               string kranZiel = Convert.ToString(client.ReadNode(ZielNodeId).Value) ?? string.Empty;
-               double toleranz = Convert.ToDouble(client.ReadNode(ToleranzNodeId).Value);
-               double istGewicht = Convert.ToDouble(client.ReadNode(IstGewichtNodeId).Value);
-               int fehlercode = Convert.ToInt32(client.ReadNode(FehlercodeNodeId).Value);
+               int auftragId = Convert.ToInt32(client.ReadNode(KranfahrtBeendetEvent.AuftragsNummerOPCNode).Value);
+               int teilfahrtID = Convert.ToInt32(client.ReadNode(KranfahrtBeendetEvent.TeilfahrtIDOPCNode).Value);
+               string kranQuelle = Convert.ToString(client.ReadNode(KranfahrtBeendetEvent.KranQuelleOPCNode).Value) ?? string.Empty;
+               string kranZiel = Convert.ToString(client.ReadNode(KranfahrtBeendetEvent.KranZielOPCNode).Value) ?? string.Empty;
+               double toleranz = Convert.ToDouble(client.ReadNode(KranfahrtBeendetEvent.ToleranzOPCNode).Value);
+               double istGewicht = Convert.ToDouble(client.ReadNode(KranfahrtBeendetEvent.IstGewichtOPCNode).Value);
+               int fehlercode = Convert.ToInt32(client.ReadNode(KranfahrtBeendetEvent.FehlercodeOPCNode).Value);
 
                var kranEvent = new KranfahrtBeendetEvent(
                     auftragsNummer: auftragId,
