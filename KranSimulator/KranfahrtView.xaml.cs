@@ -4,6 +4,7 @@ using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Media.Media3D;
+using Microsoft.Data.SqlClient;
 
 namespace KranSimulator;
 
@@ -34,6 +35,7 @@ public partial class KranfahrtView : UserControl
     private readonly TranslateTransform3D loadTransform = new();
     private readonly Model3DGroup scene = new();
     private readonly Model3DGroup loadGroup = new();
+    private readonly IReadOnlyDictionary<string, string> positionLabels;
     private GeometryModel3D? loadModel;
     private bool isRunning;
     private int cameraIndex;
@@ -77,6 +79,7 @@ public partial class KranfahrtView : UserControl
     public KranfahrtView()
     {
         InitializeComponent();
+        positionLabels = LoadPositionLabels();
         BuildScene();
         ResetCrane();
         SetDefaultCamera();
@@ -116,17 +119,63 @@ public partial class KranfahrtView : UserControl
 
     private void AddTrucks()
     {
-        AddTruck(-8, -9, "LKW1");
-        AddTruck(0, -9, "LKW2");
-        AddTruck(8, -9, "LKW3");
+        AddScrapPile(-8, -9, GetPositionLabel("LKW_PLATZ", 1, "LKW1"), 0);
+        AddScrapPile(0, -9, GetPositionLabel("LKW_PLATZ", 2, "LKW2"), 1);
+        AddScrapPile(8, -9, GetPositionLabel("LKW_PLATZ", 3, "LKW3"), 2);
     }
 
-    private void AddTruck(double x, double z, string label)
+    private void AddScrapPile(
+        double x,
+        double z,
+        string label,
+        int colorOffset)
     {
-        scene.Children.Add(CreateBox(x, 0.65, z, 4.2, 1.1, 2.0, Color.FromRgb(59, 71, 78)));
-        scene.Children.Add(CreateBox(x + 1.35, 1.35, z, 1.25, 1.4, 1.9, Color.FromRgb(34, 43, 49)));
-        scene.Children.Add(CreateBox(x - 0.6, 1.25, z, 2.4, 0.7, 1.65, Color.FromRgb(130, 145, 151)));
-        scene.Children.Add(CreateLabelPlate(label, x, 1.92, z + 1.03, 2.2, 0.65));
+        Color[] scrapColors =
+        [
+            Color.FromRgb(107, 91, 75),
+            Color.FromRgb(130, 78, 48),
+            Color.FromRgb(83, 91, 94),
+            Color.FromRgb(151, 112, 68),
+            Color.FromRgb(72, 78, 80)
+        ];
+        (double X, double Z, double Width, double Height, double Depth, double Angle)[] pieces =
+        [
+            (-1.25, -0.45, 1.45, 0.55, 0.75, 14),
+            (-0.25, -0.72, 1.15, 0.75, 0.65, -21),
+            (0.95, -0.48, 1.55, 0.62, 0.72, 8),
+            (-1.05, 0.34, 1.10, 0.82, 0.72, -12),
+            (0.05, 0.18, 1.55, 1.02, 0.82, 19),
+            (1.15, 0.38, 1.05, 0.78, 0.72, -17),
+            (-0.55, 0.78, 1.25, 0.68, 0.62, 29),
+            (0.62, 0.82, 1.35, 0.72, 0.68, -8),
+            (-0.05, -0.05, 0.85, 1.28, 0.72, 41)
+        ];
+
+        for (int index = 0; index < pieces.Length; index++)
+        {
+            var piece = pieces[index];
+            GeometryModel3D scrapPiece = CreateBox(
+                x + piece.X,
+                piece.Height / 2,
+                z + piece.Z,
+                piece.Width,
+                piece.Height,
+                piece.Depth,
+                scrapColors[(index + colorOffset) % scrapColors.Length]);
+            scrapPiece.Transform = new RotateTransform3D(
+                new AxisAngleRotation3D(new Vector3D(0, 1, 0), piece.Angle),
+                new Point3D(x + piece.X, piece.Height / 2, z + piece.Z));
+            scene.Children.Add(scrapPiece);
+        }
+
+        scene.Children.Add(CreateLabelPlate(
+            label,
+            x,
+            2.35,
+            z - 2.15,
+            6.2,
+            1.45,
+            68));
     }
 
     private void AddStorageBoxes()
@@ -194,12 +243,13 @@ public partial class KranfahrtView : UserControl
                 scrapColors[(index - 1) % scrapColors.Length]));
 
             scene.Children.Add(CreateLabelPlate(
-                $"BOX {index}",
+                GetPositionLabel("LAGERBOX", index, $"BOX {index}"),
                 box.X,
                 4.25,
                 box.Z + box.Depth / 2 + 0.12,
-                2.3,
-                0.55));
+                Math.Min(box.Width - 0.35, 6.4),
+                1.35,
+                76));
         }
     }
 
@@ -237,32 +287,121 @@ public partial class KranfahrtView : UserControl
 
     private void AddChargingCars()
     {
-        AddChargingCar(-8, 9, "CW1");
-        AddChargingCar(0, 9, "CW2");
-        AddChargingCar(8, 9, "CW3");
+        AddChargingCar(-8, 9, GetPositionLabel("CHARGIERWAGEN", 1, "CW1"));
+        AddChargingCar(0, 9, GetPositionLabel("CHARGIERWAGEN", 2, "CW2"));
+        AddChargingCar(8, 9, GetPositionLabel("CHARGIERWAGEN", 3, "CW3"));
     }
 
     private void AddChargingCar(double x, double z, string label)
     {
-        scene.Children.Add(CreateEllipticCylinder(
+        Material frameMaterial = CreateMaterial(Color.FromRgb(37, 72, 89));
+        Material bodyMaterial = CreateMaterial(Color.FromRgb(69, 137, 174));
+        Material edgeMaterial = CreateMaterial(Color.FromRgb(105, 174, 207));
+        Material innerMaterial = CreateMaterial(Color.FromRgb(29, 49, 58));
+        Material driveMaterial = CreateMaterial(Color.FromRgb(56, 61, 64));
+        Material warningMaterial = CreateMaterial(Color.FromRgb(220, 155, 40));
+
+        // Grundrahmen und langer Beschickungstrog.
+        scene.Children.Add(CreateBox(x, 0.28, z, 4.1, 0.45, 6.4, frameMaterial));
+        scene.Children.Add(CreateBox(x, 0.82, z, 3.55, 0.85, 5.85, bodyMaterial));
+        scene.Children.Add(CreateBox(x, 1.28, z, 2.75, 0.18, 5.15, innerMaterial));
+
+        // Umlaufende Oberkante und sichtbare Querstege wie bei einer schweren Industrieanlage.
+        scene.Children.Add(CreateBox(x - 1.72, 1.42, z, 0.18, 0.22, 5.95, edgeMaterial));
+        scene.Children.Add(CreateBox(x + 1.72, 1.42, z, 0.18, 0.22, 5.95, edgeMaterial));
+        scene.Children.Add(CreateBox(x, 1.42, z - 2.92, 3.6, 0.22, 0.18, edgeMaterial));
+        scene.Children.Add(CreateBox(x, 1.42, z + 2.92, 3.6, 0.22, 0.18, edgeMaterial));
+
+        foreach (double ribZ in new[] { -1.95, -0.98, 0.0, 0.98, 1.95 })
+        {
+            scene.Children.Add(CreateBox(x, 1.48, z + ribZ, 3.5, 0.18, 0.14, edgeMaterial));
+        }
+
+        // Einlaufgehäuse, Antrieb und seitliche Maschinenkästen.
+        scene.Children.Add(CreateBox(x, 1.12, z - 2.45, 3.25, 1.15, 0.85, bodyMaterial));
+        scene.Children.Add(CreateBox(x - 1.38, 0.92, z - 2.3, 0.85, 1.35, 1.2, frameMaterial));
+        scene.Children.Add(CreateBox(x + 1.45, 0.72, z + 1.95, 0.72, 0.85, 1.25, driveMaterial));
+        scene.Children.Add(CreateBox(x + 1.48, 1.28, z + 1.95, 0.48, 0.28, 0.72, warningMaterial));
+
+        // Bodenfüße geben dem Wagen in der Draufsicht eine klar technische Silhouette.
+        foreach (double footX in new[] { -1.55, 1.55 })
+        {
+            foreach (double footZ in new[] { -2.45, 2.45 })
+            {
+                scene.Children.Add(CreateBox(
+                    x + footX,
+                    0.18,
+                    z + footZ,
+                    0.65,
+                    0.35,
+                    0.85,
+                    driveMaterial));
+            }
+        }
+
+        scene.Children.Add(CreateLabelPlate(
+            label,
             x,
-            0,
-            z,
-            1.8,
-            3.2,
+            2.25,
+            z - 3.15,
+            5.6,
             1.25,
-            Color.FromRgb(43, 78, 94),
-            40));
-        scene.Children.Add(CreateEllipticCylinder(
-            x,
-            1.25,
-            z,
-            1.48,
-            2.72,
-            0.55,
-            Color.FromRgb(67, 113, 132),
-            40));
-        scene.Children.Add(CreateLabelPlate(label, x, 1.9, z + 3.22, 1.8, 0.58));
+            56));
+    }
+
+    private static IReadOnlyDictionary<string, string> LoadPositionLabels()
+    {
+        const string sql = """
+            SELECT PositionsTyp, PositionsNr, Bezeichnung
+            FROM dbo.FALCOM_KRAN_POSITION
+            WHERE PositionsTyp IN (N'LKW_PLATZ', N'LAGERBOX', N'CHARGIERWAGEN');
+            """;
+
+        try
+        {
+            var labels = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            using var connection = new SqlConnection(DatabaseConfig.LoadConnectionString());
+            using var command = new SqlCommand(sql, connection);
+            connection.Open();
+
+            using SqlDataReader reader = command.ExecuteReader();
+            while (reader.Read())
+            {
+                string positionType = reader.GetString(0);
+                int positionNumber = reader.GetInt32(1);
+                string description = reader.GetString(2);
+
+                if (!string.IsNullOrWhiteSpace(description))
+                {
+                    labels[CreatePositionLabelKey(positionType, positionNumber)] = description.Trim();
+                }
+            }
+
+            return labels;
+        }
+        catch
+        {
+            return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        }
+    }
+
+    private string GetPositionLabel(
+        string positionType,
+        int positionNumber,
+        string fallback)
+    {
+        return positionLabels.TryGetValue(
+            CreatePositionLabelKey(positionType, positionNumber),
+            out string? label)
+            ? label
+            : fallback;
+    }
+
+    private static string CreatePositionLabelKey(
+        string positionType,
+        int positionNumber)
+    {
+        return $"{positionType}:{positionNumber}";
     }
 
     private void AddCrane()
@@ -659,66 +798,6 @@ public partial class KranfahrtView : UserControl
         return new GeometryModel3D(mesh, material) { BackMaterial = material };
     }
 
-    private static GeometryModel3D CreateEllipticCylinder(
-        double centerX,
-        double baseY,
-        double centerZ,
-        double radiusX,
-        double radiusZ,
-        double height,
-        Color color,
-        int segments)
-    {
-        var positions = new Point3DCollection();
-        var triangles = new Int32Collection();
-
-        for (int index = 0; index < segments; index++)
-        {
-            double angle = index * Math.PI * 2 / segments;
-            double x = centerX + Math.Cos(angle) * radiusX;
-            double z = centerZ + Math.Sin(angle) * radiusZ;
-            positions.Add(new Point3D(x, baseY, z));
-            positions.Add(new Point3D(x, baseY + height, z));
-        }
-
-        int bottomCenter = positions.Count;
-        positions.Add(new Point3D(centerX, baseY, centerZ));
-        int topCenter = positions.Count;
-        positions.Add(new Point3D(centerX, baseY + height, centerZ));
-
-        for (int index = 0; index < segments; index++)
-        {
-            int next = (index + 1) % segments;
-            int bottom = index * 2;
-            int top = bottom + 1;
-            int nextBottom = next * 2;
-            int nextTop = nextBottom + 1;
-
-            triangles.Add(bottom);
-            triangles.Add(top);
-            triangles.Add(nextBottom);
-            triangles.Add(nextBottom);
-            triangles.Add(top);
-            triangles.Add(nextTop);
-
-            triangles.Add(bottomCenter);
-            triangles.Add(nextBottom);
-            triangles.Add(bottom);
-
-            triangles.Add(topCenter);
-            triangles.Add(top);
-            triangles.Add(nextTop);
-        }
-
-        var mesh = new MeshGeometry3D
-        {
-            Positions = positions,
-            TriangleIndices = triangles
-        };
-        Material material = CreateMaterial(color);
-        return new GeometryModel3D(mesh, material) { BackMaterial = material };
-    }
-
     private static GeometryModel3D CreateIrregularLoad(Color color)
     {
         GeometryModel3D load = CreateBox(0, 0, 0, 1.15, 0.6, 1.0, color);
@@ -733,7 +812,8 @@ public partial class KranfahrtView : UserControl
         double y,
         double z,
         double width,
-        double height)
+        double height,
+        double fontSize = 22)
     {
         var label = new TextBlock
         {
@@ -741,14 +821,15 @@ public partial class KranfahrtView : UserControl
             Foreground = Brushes.White,
             Background = Brushes.Transparent,
             FontWeight = FontWeights.SemiBold,
-            FontSize = 22,
+            FontFamily = new FontFamily("Segoe UI"),
+            FontSize = fontSize,
             TextAlignment = TextAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
-            Width = 220,
-            Height = 58
+            Width = 800,
+            Height = 120
         };
-        label.Measure(new Size(220, 58));
-        label.Arrange(new Rect(0, 0, 220, 58));
+        label.Measure(new Size(800, 120));
+        label.Arrange(new Rect(0, 0, 800, 120));
 
         var brush = new VisualBrush(label);
         Material material = new DiffuseMaterial(brush);
