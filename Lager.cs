@@ -147,14 +147,14 @@ namespace Falcom
                   }
                   catch (Exception e)
                   {
-                     _logger.LogError(e, "Tabelle FALCOM_Lager konnte nicht gelesen werden.");
+                     _logger.LogError(e, "000D|Tabelle FALCOM_Lager konnte nicht gelesen werden.");
                   }
                }
             }
          }
          catch (Exception e)
          {
-            _logger.LogError(e, "Tabelle FALCOM_Lager konnte nicht geladen werden.");
+            _logger.LogError(e, "000E|Tabelle FALCOM_Lager konnte nicht geladen werden.");
          }
       }
 

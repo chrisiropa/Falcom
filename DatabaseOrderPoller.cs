@@ -31,20 +31,20 @@ namespace Falcom
 
       protected override async Task ExecuteAsync(CancellationToken stoppingToken)
       {
-         _logger.LogInformation("Datenbank-Poller gestartet. Nutze Stored Procedures. Intervall: {Interval}s", PollInterval.TotalSeconds);
+         _logger.LogInformation("0004|Datenbank-Poller gestartet. Nutze Stored Procedures. Intervall: {Interval}s", PollInterval.TotalSeconds);
 
          while (!stoppingToken.IsCancellationRequested)
          {
             try
             {
-               _logger.LogInformation("Datenbank-Poller works...");
+               _logger.LogInformation("0005|Datenbank-Poller works...");
 
 
 
                // 1. Prüfen, ob aktuell bereits ein Auftrag aktiv bearbeitet wird
                if (IsAnyOrderInProgress())
                {
-                  _logger.LogInformation("Auftrag läuft noch...");
+                  _logger.LogInformation("0006|Auftrag läuft noch...");
 
                   // Ein Auftrag läuft -> Poller schläft sofort wieder, um Doppelungen zu vermeiden
                   await Task.Delay(PollInterval, stoppingToken);
@@ -56,14 +56,14 @@ namespace Falcom
 
                if (nextOrder is not null)
                {
-                  _logger.LogInformation("Neuen freigegebenen Auftrag gefunden: ID={OrderId}", nextOrder.AuftragsNummer);
+                  _logger.LogInformation("0007|Neuen freigegebenen Auftrag gefunden: ID={OrderId}", nextOrder.AuftragsNummer);
 
                   // 3. Status in der DB sofort auf 'IN_ARBEIT' (Zustand 2) setzen,
                   // damit dieser Poller beim nächsten Durchlauf sperrt.
                   if (UpdateOrderStatus(nextOrder.AuftragsNummer, 2))
                   {
                      // 4. Das Event in den C#-Kanal (Queue) pushen, damit der Dispatcher-Worker erwacht
-                     _logger.LogInformation("Feuere OrderReleasedEvent fuer Auftrag {OrderId} ab.", nextOrder.AuftragsNummer);
+                     _logger.LogInformation("0008|Feuere OrderReleasedEvent fuer Auftrag {OrderId} ab.", nextOrder.AuftragsNummer);
                      await _eventQueue.PushEventAsync(nextOrder);
                   }
                }
@@ -77,7 +77,7 @@ namespace Falcom
             {
                // Wir loggen ex.Message statt der ganzen ex-Instanz. 
                // Das schneidet den Callstack komplett ab!
-               _logger.LogError("Fehler beim Pollen der Auftragsdatenbank über Stored Procedures. Meldung: {Message}", ex.Message);
+               _logger.LogError("0009|Fehler beim Pollen der Auftragsdatenbank über Stored Procedures. Meldung: {Message}", ex.Message);
             }
 
             // Reguläre Pause vor dem nächsten Datenbank-Check
@@ -94,7 +94,7 @@ namespace Falcom
 
          if (query.Exception is not null)
          {
-            _logger.LogError(query.Exception, "Fehler bei FALCOM_IsOrderInProgress.");
+            _logger.LogError(query.Exception, "000A|Fehler bei FALCOM_IsOrderInProgress.");
             return true; // Im Fehlerfall blockieren wir sicherheitshalber den Start weiterer Aufträge
          }
 
@@ -116,7 +116,7 @@ namespace Falcom
 
          if (query.Exception is not null)
          {
-            _logger.LogError(query.Exception.Message, "Fehler bei FALCOM_GetNextReleasedOrder.");
+            _logger.LogError(query.Exception.Message, "000B|Fehler bei FALCOM_GetNextReleasedOrder.");
             return null;
          }
 
@@ -146,7 +146,7 @@ namespace Falcom
 
          if (query.Exception is not null)
          {
-            _logger.LogError(query.Exception, "Fehler bei FALCOM_UpdateOrderStatus fuer ID {OrderId}.", orderId);
+            _logger.LogError(query.Exception, "000C|Fehler bei FALCOM_UpdateOrderStatus fuer ID {OrderId}.", orderId);
             return false;
          }
 

@@ -13,18 +13,14 @@ public partial class KranfahrtView : UserControl
     private const double CraneRailHeight = 8.0;
     private const double HoistAnchorY = 7.35;
     private const double RaisedY = 6.55;
+    private const double BoxSize = 5.0;
+    private const double LeftBoxDepth = 15.0 / 4.0;
     private const double BoxWallHeight = 5.0;
     private const double BoxWallThickness = 0.18;
-    private const double StorageWidth = 25.0;
-    private const double StorageDepth = 10.0;
-    private const double LeftStorageWidth = 8.0;
-    private const double RightStorageColumnWidth = 8.5;
-    private const double LeftStorageRowDepth = 2.5;
-    private const double RightStorageRowDepth = StorageDepth / 3.0;
     private const double HomeX = 0.0;
     private const double HomeZ = 0.0;
-    private const double DefaultCameraHeight = 52.0;
-    private const double DefaultCameraDistance = 38.0;
+    private const double DefaultCameraHeight = 58.0;
+    private const double DefaultCameraDistance = 50.0;
     private const double DefaultCameraTargetHeight = 1.8;
 
     private readonly TranslateTransform3D bridgeTransform = new();
@@ -43,37 +39,37 @@ public partial class KranfahrtView : UserControl
     private static readonly IReadOnlyDictionary<string, CranePoint> CranePoints =
         new Dictionary<string, CranePoint>(StringComparer.OrdinalIgnoreCase)
         {
-            ["LKW1"] = new(-8, -9, 1.2),
-            ["LKW2"] = new(0, -9, 1.2),
-            ["LKW3"] = new(8, -9, 1.2),
-            ["BOX 1"] = new(-8.5, 3.75, 1.0),
-            ["BOX 2"] = new(-0.25, 10.0 / 3.0, 1.0),
-            ["BOX 3"] = new(8.25, 10.0 / 3.0, 1.0),
-            ["BOX 4"] = new(-8.5, 1.25, 1.0),
-            ["BOX 5"] = new(-0.25, 0, 1.0),
-            ["BOX 6"] = new(8.25, 0, 1.0),
-            ["BOX 7"] = new(-8.5, -1.25, 1.0),
-            ["BOX 8"] = new(-0.25, -10.0 / 3.0, 1.0),
-            ["BOX 9"] = new(8.25, -10.0 / 3.0, 1.0),
-            ["BOX 10"] = new(-8.5, -3.75, 1.0),
-            ["CW1"] = new(-8, 9, 1.25),
-            ["CW2"] = new(0, 9, 1.25),
-            ["CW3"] = new(8, 9, 1.25)
+            ["LKW1"] = new(-8, -14, 1.2),
+            ["LKW2"] = new(0, -14, 1.2),
+            ["LKW3"] = new(8, -14, 1.2),
+            ["BOX 1"] = new(-5, 5.625, 1.0),
+            ["BOX 2"] = new(0, 5, 1.0),
+            ["BOX 3"] = new(5, 5, 1.0),
+            ["BOX 4"] = new(-5, 1.875, 1.0),
+            ["BOX 5"] = new(0, 0, 1.0),
+            ["BOX 6"] = new(5, 0, 1.0),
+            ["BOX 7"] = new(-5, -1.875, 1.0),
+            ["BOX 8"] = new(0, -5, 1.0),
+            ["BOX 9"] = new(5, -5, 1.0),
+            ["BOX 10"] = new(-5, -5.625, 1.0),
+            ["CW1"] = new(-8, 14, 1.25),
+            ["CW2"] = new(0, 14, 1.25),
+            ["CW3"] = new(8, 14, 1.25)
         };
 
     private static readonly IReadOnlyDictionary<int, StorageBoxLayout> StorageBoxes =
         new Dictionary<int, StorageBoxLayout>
         {
-            [1] = new(-8.5, 3.75, LeftStorageWidth, LeftStorageRowDepth),
-            [2] = new(-0.25, 10.0 / 3.0, RightStorageColumnWidth, RightStorageRowDepth),
-            [3] = new(8.25, 10.0 / 3.0, RightStorageColumnWidth, RightStorageRowDepth),
-            [4] = new(-8.5, 1.25, LeftStorageWidth, LeftStorageRowDepth),
-            [5] = new(-0.25, 0, RightStorageColumnWidth, RightStorageRowDepth),
-            [6] = new(8.25, 0, RightStorageColumnWidth, RightStorageRowDepth),
-            [7] = new(-8.5, -1.25, LeftStorageWidth, LeftStorageRowDepth),
-            [8] = new(-0.25, -10.0 / 3.0, RightStorageColumnWidth, RightStorageRowDepth),
-            [9] = new(8.25, -10.0 / 3.0, RightStorageColumnWidth, RightStorageRowDepth),
-            [10] = new(-8.5, -3.75, LeftStorageWidth, LeftStorageRowDepth)
+            [1] = new(-5, 5.625, BoxSize, LeftBoxDepth),
+            [2] = new(0, 5, BoxSize, BoxSize),
+            [3] = new(5, 5, BoxSize, BoxSize),
+            [4] = new(-5, 1.875, BoxSize, LeftBoxDepth),
+            [5] = new(0, 0, BoxSize, BoxSize),
+            [6] = new(5, 0, BoxSize, BoxSize),
+            [7] = new(-5, -1.875, BoxSize, LeftBoxDepth),
+            [8] = new(0, -5, BoxSize, BoxSize),
+            [9] = new(5, -5, BoxSize, BoxSize),
+            [10] = new(-5, -5.625, BoxSize, LeftBoxDepth)
         };
 
     public KranfahrtView()
@@ -92,7 +88,7 @@ public partial class KranfahrtView : UserControl
         scene.Children.Add(new DirectionalLight(Colors.White, new Vector3D(-1, -2, -1)));
         scene.Children.Add(new DirectionalLight(Color.FromRgb(150, 170, 190), new Vector3D(1, -1, 1)));
 
-        scene.Children.Add(CreateBox(0, -0.25, 0, 30, 0.5, 24, Color.FromRgb(72, 76, 79)));
+        scene.Children.Add(CreateBox(0, -0.25, 0, 30, 0.5, 36, Color.FromRgb(72, 76, 79)));
         AddFloorMarkings();
         AddTrucks();
         AddStorageBoxes();
@@ -111,7 +107,7 @@ public partial class KranfahrtView : UserControl
             scene.Children.Add(CreateBox(x, 0.02, 0, 0.035, 0.025, 23.5, lineMaterial));
         }
 
-        for (int z = -11; z <= 11; z += 2)
+        for (int z = -17; z <= 17; z += 2)
         {
             scene.Children.Add(CreateBox(0, 0.025, z, 29.5, 0.03, 0.035, lineMaterial));
         }
@@ -119,9 +115,9 @@ public partial class KranfahrtView : UserControl
 
     private void AddTrucks()
     {
-        AddScrapPile(-8, -9, GetPositionLabel("LKW_PLATZ", 1, "LKW1"), 0);
-        AddScrapPile(0, -9, GetPositionLabel("LKW_PLATZ", 2, "LKW2"), 1);
-        AddScrapPile(8, -9, GetPositionLabel("LKW_PLATZ", 3, "LKW3"), 2);
+        AddScrapPile(-8, -14, GetPositionLabel("LKW_PLATZ", 1, "LKW1"), 0);
+        AddScrapPile(0, -14, GetPositionLabel("LKW_PLATZ", 2, "LKW2"), 1);
+        AddScrapPile(8, -14, GetPositionLabel("LKW_PLATZ", 3, "LKW3"), 2);
     }
 
     private void AddScrapPile(
@@ -183,44 +179,6 @@ public partial class KranfahrtView : UserControl
         Material steelMaterial = CreateMaterial(Color.FromRgb(104, 116, 120));
         Material darkSteelMaterial = CreateMaterial(Color.FromRgb(69, 80, 84));
 
-        double leftEdge = -StorageWidth / 2;
-        double rightEdge = StorageWidth / 2;
-        double backEdge = -StorageDepth / 2;
-        double frontEdge = StorageDepth / 2;
-        double leftDividerX = leftEdge + LeftStorageWidth;
-        double rightDividerX = leftDividerX + RightStorageColumnWidth;
-
-        // Außenwände der unverändert großen Lagerfläche.
-        AddStorageWallX(leftEdge, 0, StorageDepth, darkSteelMaterial);
-        AddStorageWallX(rightEdge, 0, StorageDepth, darkSteelMaterial);
-        AddStorageWallZ(0, backEdge, StorageWidth, darkSteelMaterial);
-        AddStorageWallZ(0, frontEdge, StorageWidth, darkSteelMaterial);
-
-        // Unterteilung exakt nach Anlagenplan:
-        // links vier Boxen, rechts zwei Spalten mit jeweils drei Boxen.
-        AddStorageWallX(leftDividerX, 0, StorageDepth, steelMaterial);
-        AddStorageWallX(rightDividerX, 0, StorageDepth, steelMaterial);
-
-        for (int divider = 1; divider <= 3; divider++)
-        {
-            double z = backEdge + divider * LeftStorageRowDepth;
-            AddStorageWallZ(
-                leftEdge + LeftStorageWidth / 2,
-                z,
-                LeftStorageWidth,
-                steelMaterial);
-        }
-
-        for (int divider = 1; divider <= 2; divider++)
-        {
-            double z = backEdge + divider * RightStorageRowDepth;
-            AddStorageWallZ(
-                leftDividerX + (StorageWidth - LeftStorageWidth) / 2,
-                z,
-                StorageWidth - LeftStorageWidth,
-                steelMaterial);
-        }
-
         Color[] scrapColors =
         [
             Color.FromRgb(116, 80, 55),
@@ -232,6 +190,31 @@ public partial class KranfahrtView : UserControl
         for (int index = 1; index <= 10; index++)
         {
             StorageBoxLayout box = StorageBoxes[index];
+            Material wallMaterial = index is 1 or 3 or 10
+                ? darkSteelMaterial
+                : steelMaterial;
+
+            AddStorageWallX(
+                box.X - BoxSize / 2,
+                box.Z,
+                box.Depth,
+                wallMaterial);
+            AddStorageWallX(
+                box.X + BoxSize / 2,
+                box.Z,
+                box.Depth,
+                wallMaterial);
+            AddStorageWallZ(
+                box.X,
+                box.Z - box.Depth / 2,
+                BoxSize,
+                wallMaterial);
+            AddStorageWallZ(
+                box.X,
+                box.Z + box.Depth / 2,
+                BoxSize,
+                wallMaterial);
+
             double fillHeight = 0.55 + (index % 4) * 0.22;
             scene.Children.Add(CreateBox(
                 box.X,
@@ -287,9 +270,9 @@ public partial class KranfahrtView : UserControl
 
     private void AddChargingCars()
     {
-        AddChargingCar(-8, 9, GetPositionLabel("CHARGIERWAGEN", 1, "CW1"));
-        AddChargingCar(0, 9, GetPositionLabel("CHARGIERWAGEN", 2, "CW2"));
-        AddChargingCar(8, 9, GetPositionLabel("CHARGIERWAGEN", 3, "CW3"));
+        AddChargingCar(-8, 14, GetPositionLabel("CHARGIERWAGEN", 1, "CW1"));
+        AddChargingCar(0, 14, GetPositionLabel("CHARGIERWAGEN", 2, "CW2"));
+        AddChargingCar(8, 14, GetPositionLabel("CHARGIERWAGEN", 3, "CW3"));
     }
 
     private void AddChargingCar(double x, double z, string label)
@@ -412,12 +395,12 @@ public partial class KranfahrtView : UserControl
         Material darkMaterial = CreateMaterial(Color.FromRgb(36, 41, 44));
 
         const double runwayX = 13.35;
-        const double runwayLength = 22.5;
+        const double runwayLength = 34.0;
         double columnHeight = CraneRailHeight;
 
         foreach (double x in new[] { -runwayX, runwayX })
         {
-            foreach (double z in new[] { -10.5, 0.0, 10.5 })
+            foreach (double z in new[] { -16.0, 0.0, 16.0 })
             {
                 scene.Children.Add(CreateBox(
                     x,

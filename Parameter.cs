@@ -32,14 +32,14 @@ namespace Falcom
                   }
                   catch(Exception e)
                   {
-                     _logger.LogError(e, "Tabelle FALCOM_PARAMETER konnte für OpcServer nicht gelesen werden.");
+                     _logger.LogError(e, "000F|Tabelle FALCOM_PARAMETER konnte für OpcServer nicht gelesen werden.");
                   }
                }
             }
          }
          catch (Exception e)
          {
-            _logger.LogError(e, "Tabelle FALCOM_PARAMETER konnte nicht geladen werden.");
+            _logger.LogError(e, "0010|Tabelle FALCOM_PARAMETER konnte nicht geladen werden.");
          }
 	   }
 	}

@@ -41,7 +41,7 @@ namespace Falcom
          // Client-Instanz das erste Mal erstellen
          CreateClientInstance();
 
-         _logger.LogInformation("OPC_Client_Crane initialisiert fuer {OpcServerEndpoint}. Bereit fuer Connect().", opcServerEndpoint);
+         _logger.LogInformation("0011|OPC_Client_Crane initialisiert fuer {OpcServerEndpoint}. Bereit fuer Connect().", opcServerEndpoint);
       }
 
       /// <summary>
@@ -74,10 +74,10 @@ namespace Falcom
 
             try
             {
-               _logger.LogInformation("OPC-Verbindungsversuch {Attempt} wird gestartet.", attempt);
+               _logger.LogInformation("0012|OPC-Verbindungsversuch {Attempt} wird gestartet.", attempt);
                ConnectOnce();
                ValidateWatchdogRead();
-               _logger.LogInformation("OPC-Verbindungsversuch {Attempt} erfolgreich abgeschlossen.", attempt);
+               _logger.LogInformation("0013|OPC-Verbindungsversuch {Attempt} erfolgreich abgeschlossen.", attempt);
                return;
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -86,7 +86,7 @@ namespace Falcom
             }
             catch (Exception ex)
             {
-               _logger.LogError(ex, "OPC-Verbindungsversuch {Attempt} fehlgeschlagen. Naechster Versuch in {DelaySeconds} Sekunden.", attempt, ConnectRetryDelay.TotalSeconds);
+               _logger.LogError(ex, "0014|OPC-Verbindungsversuch {Attempt} fehlgeschlagen. Naechster Versuch in {DelaySeconds} Sekunden.", attempt, ConnectRetryDelay.TotalSeconds);
                attempt++;
                await Task.Delay(ConnectRetryDelay, cancellationToken);
             }
@@ -108,7 +108,7 @@ namespace Falcom
                if (spsDataUnavailable)
                {
                   spsDataUnavailable = false;
-                  _logger.LogInformation("SPS-Daten sind wieder lesbar. OPC-Subscription is wieder aktiv.");
+                  _logger.LogInformation("0015|SPS-Daten sind wieder lesbar. OPC-Subscription is wieder aktiv.");
                }
 
                return;
@@ -120,13 +120,13 @@ namespace Falcom
             catch (Exception ex)
             {
                spsDataUnavailable = true;
-               _logger.LogError(ex, "SPS-Datenpruefung fehlgeschlagen. Wiederherstellungsversuch {Attempt} in {DelaySeconds} Sekunden.", attempt, ConnectRetryDelay.TotalSeconds);
+               _logger.LogError(ex, "0016|SPS-Datenpruefung fehlgeschlagen. Wiederherstellungsversuch {Attempt} in {DelaySeconds} Sekunden.", attempt, ConnectRetryDelay.TotalSeconds);
 
                await Task.Delay(ConnectRetryDelay, cancellationToken);
 
                try
                {
-                  _logger.LogInformation("OPC-Wiederherstellungsversuch {Attempt} wird gestartet (Radikaler Reconnect).", attempt);
+                  _logger.LogInformation("0017|OPC-Wiederherstellungsversuch {Attempt} wird gestartet (Radikaler Reconnect).", attempt);
 
                   lock (_syncRoot)
                   {
@@ -147,11 +147,11 @@ namespace Falcom
                      ConnectOnce();
                   }
 
-                  _logger.LogInformation("OPC-Wiederherstellungsversuch {Attempt} abgeschlossen. SPS-Daten werden erneut geprueft.", attempt);
+                  _logger.LogInformation("0018|OPC-Wiederherstellungsversuch {Attempt} abgeschlossen. SPS-Daten werden erneut geprueft.", attempt);
                }
                catch (Exception reconnectEx)
                {
-                  _logger.LogError(reconnectEx, "OPC-Wiederherstellungsversuch {Attempt} fehlgeschlagen.", attempt);
+                  _logger.LogError(reconnectEx, "0019|OPC-Wiederherstellungsversuch {Attempt} fehlgeschlagen.", attempt);
                }
 
                attempt++;
@@ -170,7 +170,7 @@ namespace Falcom
          {
             ResetSubscription();
 
-            _logger.LogInformation("Verbindung zu {OpcServerEndpoint} wird aufgebaut.", opcServerEndpoint);
+            _logger.LogInformation("001A|Verbindung zu {OpcServerEndpoint} wird aufgebaut.", opcServerEndpoint);
             client?.Connect();
 
             subscription = client?.SubscribeNodes();
@@ -180,7 +180,7 @@ namespace Falcom
                throw new InvalidOperationException("OPC-Kanal 'Zaehler' konnte nicht registriert werden.");
             }
 
-            _logger.LogInformation("OPC-Verbindung und Kanalregistrierung sind bereit.");
+            _logger.LogInformation("001B|OPC-Verbindung und Kanalregistrierung sind bereit.");
          }
       }
 
@@ -205,7 +205,7 @@ namespace Falcom
                throw new InvalidOperationException($"Watchdog-Node ist nicht sauber lesbar. Status={watchdogValue.Status.Code}, Wert={watchdogValue.Value}");
             }
 
-            _logger.LogInformation("Watchdog-Node erfolgreich gelesen. Status={Status}, Wert={Value}", watchdogValue.Status.Code, watchdogValue.Value);
+            _logger.LogInformation("001C|Watchdog-Node erfolgreich gelesen. Status={Status}, Wert={Value}", watchdogValue.Status.Code, watchdogValue.Value);
          }
       }
 
@@ -220,7 +220,7 @@ namespace Falcom
 
             try
             {
-               _logger.LogInformation("OPC_Client_Crane wird heruntergefahren.");
+               _logger.LogInformation("001D|OPC_Client_Crane wird heruntergefahren.");
 
                ResetSubscription();
 
@@ -230,11 +230,11 @@ namespace Falcom
                   client.Disconnect();
                }
 
-               _logger.LogInformation("OPC_Client_Crane wurde getrennt.");
+               _logger.LogInformation("001E|OPC_Client_Crane wurde getrennt.");
             }
             catch (Exception ex)
             {
-               _logger.LogError(ex, "Fehler beim Herunterfahren des OPC_Client_Crane.");
+               _logger.LogError(ex, "001F|Fehler beim Herunterfahren des OPC_Client_Crane.");
             }
          }
       }
@@ -280,7 +280,7 @@ namespace Falcom
             }
             catch (Exception ex)
             {
-               _logger.LogDebug(ex, "Alte Subscription konnte wegen totem Kanal nicht sauber entfernt werden. Wird erzwungen.");
+               _logger.LogDebug(ex, "0020|Alte Subscription konnte wegen totem Kanal nicht sauber entfernt werden. Wird erzwungen.");
             }
 
             monitoredItems.Clear();
@@ -305,7 +305,7 @@ namespace Falcom
 
          subscription.ApplyChanges();
 
-         _logger.LogInformation("Kanal 'Zähler' erfolgreich registriert.");
+         _logger.LogInformation("0021|Kanal 'Zähler' erfolgreich registriert.");
          return true;
       }
 
@@ -323,7 +323,7 @@ namespace Falcom
          monitoredItems.Add(item);
          subscription.ApplyChanges();
 
-         _logger.LogInformation("Kanal 'Watchdog' erfolgreich registriert.");
+         _logger.LogInformation("0022|Kanal 'Watchdog' erfolgreich registriert.");
          return true;
       }
 
@@ -334,7 +334,7 @@ namespace Falcom
          try
          {
             var neuerZaehlerWert = e.Item.Value.Value;
-            _logger.LogInformation("Event ausgelöst von [{Node}]. Wert: {Z}", e.MonitoredItem.NodeId, neuerZaehlerWert);
+            _logger.LogInformation("0023|Event ausgelöst von [{Node}]. Wert: {Z}", e.MonitoredItem.NodeId, neuerZaehlerWert);
 
             if (e.MonitoredItem.NodeId.ToString().Contains("ns=1;s=LagerV.DataBlocks.Count_DB_1.Static.OPC.Zaehler"))
             {
@@ -344,7 +344,7 @@ namespace Falcom
                var cmdStop = client.ReadNode($"{baseNode}Comands.Stop")?.Value;
                var statusRun = client.ReadNode($"{baseNode}Status.Run")?.Value;
 
-               _logger.LogInformation("Werte erfolgreich nachgelesen - Start: {Start}, Stop: {Stop}, Run: {Run}", cmdStart, cmdStop, statusRun);
+               _logger.LogInformation("0024|Werte erfolgreich nachgelesen - Start: {Start}, Stop: {Stop}, Run: {Run}", cmdStart, cmdStop, statusRun);
 
                if (statusRun is bool isRunning && isRunning)
                {
@@ -358,11 +358,11 @@ namespace Falcom
             {
                if (e.Item.Value.Value is not bool isStopped || !isStopped)
                {
-                  _logger.LogDebug("Stop-Signal wurde zurueckgesetzt.");
+                  _logger.LogDebug("0025|Stop-Signal wurde zurueckgesetzt.");
                   return;
                }
 
-               _logger.LogInformation("Kranfahrt beendet");
+               _logger.LogInformation("0026|Kranfahrt beendet");
                int auftragId = Convert.ToInt32(client.ReadNode(KranfahrtBeendetEvent.AuftragsNummerOPCNode).Value);
                int teilfahrtID = Convert.ToInt32(client.ReadNode(KranfahrtBeendetEvent.TeilfahrtIDOPCNode).Value);
                string kranQuelle = Convert.ToString(client.ReadNode(KranfahrtBeendetEvent.KranQuelleOPCNode).Value) ?? string.Empty;
@@ -384,18 +384,18 @@ namespace Falcom
 
                if (!_eventQueue.Writer.TryWrite(kranEvent))
                {
-                  _logger.LogError("KranfahrtBeendetEvent konnte nicht in die Event-Queue geschrieben werden.");
+                  _logger.LogError("0027|KranfahrtBeendetEvent konnte nicht in die Event-Queue geschrieben werden.");
                   return;
                }
 
                _logger.LogInformation(
-                  "KranfahrtBeendetEvent eingereiht: Auftrag={AuftragId}, Quelle={Quelle}, Ziel={Ziel}, Toleranz={Toleranz}, IstGewicht={IstGewicht}, Fehlercode={Fehlercode}",
+                  "0028|KranfahrtBeendetEvent eingereiht: Auftrag={AuftragId}, Quelle={Quelle}, Ziel={Ziel}, Toleranz={Toleranz}, IstGewicht={IstGewicht}, Fehlercode={Fehlercode}",
                   auftragId, kranQuelle, kranZiel, toleranz, istGewicht, fehlercode);
             }
          }
          catch (Exception ex)
          {
-            _logger.LogError(ex, "Fehler im HandleDataChange beim Nachlesen der SPS-Daten.");
+            _logger.LogError(ex, "0029|Fehler im HandleDataChange beim Nachlesen der SPS-Daten.");
          }
       }
 
@@ -403,19 +403,19 @@ namespace Falcom
 
       private void OnClientStateChanged(object? sender, OpcClientStateChangedEventArgs e)
       {
-         _logger.LogDebug("OPC Client Zustand geändert von {OldState} zu {NewState}", e.OldState, e.NewState);
+         _logger.LogDebug("002A|OPC Client Zustand geändert von {OldState} zu {NewState}", e.OldState, e.NewState);
 
          if (e.NewState == OpcClientState.Connected)
          {
-            _logger.LogWarning("OPC UA Client erfolgreich verbunden / wiederverbunden!");
+            _logger.LogWarning("002B|OPC UA Client erfolgreich verbunden / wiederverbunden!");
          }
          else if (e.NewState == OpcClientState.Disconnected)
          {
-            _logger.LogError("Die Verbindung zum OPC UA Server wurde getrennt!");
+            _logger.LogError("002C|Die Verbindung zum OPC UA Server wurde getrennt!");
          }
          else if (e.NewState == OpcClientState.Reconnecting)
          {
-            _logger.LogInformation("Verbindung verloren. Auto-Reconnect versucht gerade die Wiederverbindung...");
+            _logger.LogInformation("002D|Verbindung verloren. Auto-Reconnect versucht gerade die Wiederverbindung...");
          }
       }
 

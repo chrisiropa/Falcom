@@ -1,4 +1,4 @@
-using Microsoft.Extensions.Hosting;
+ï»¿using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Opc.UaFx.Client;
 using System;
@@ -20,7 +20,7 @@ namespace Falcom
           ILogger<Worker> logger,
           ConfigManager configManager,
           OPC_Client_Crane opcClientCrane,
-          FalcomEventQueue eventQueue) // NEU: Im Konstruktor übergeben
+          FalcomEventQueue eventQueue) // NEU: Im Konstruktor Ã¼bergeben
       {
          _logger = logger;
          _configManager = configManager;
@@ -30,7 +30,7 @@ namespace Falcom
 
       protected override async Task ExecuteAsync(CancellationToken stoppingToken)
       {
-         _logger.LogInformation("State machine started.");
+         _logger.LogInformation("002E|State machine started.");
 
          try
          {
@@ -40,7 +40,7 @@ namespace Falcom
             ProcessState? lastLoggedState = null;
 
             // NEU: Die Schleife wartet jetzt reaktiv, bis ein Event in der Queue landet.
-            // WaitToReadAsync lässt den Thread schlafen, solange die Queue leer ist (0% CPU Last).
+            // WaitToReadAsync lÃ¤sst den Thread schlafen, solange die Queue leer ist (0% CPU Last).
             while (await _eventQueue.Reader.WaitToReadAsync(stoppingToken))
             {
                // Verarbeite alle aktuell in der Queue liegenden Events der Reihe nach (FIFO)
@@ -51,23 +51,23 @@ namespace Falcom
                      // 1. Datenfluss zur SPS sicherstellen
                      await _opcClientCrane.EnsureDataFlowAsync(stoppingToken);
 
-                     // 2. Zustandsänderung loggen
+                     // 2. ZustandsÃ¤nderung loggen
                      if (_currentState != lastLoggedState)
                      {
                         if (_logger.IsEnabled(LogLevel.Information))
                         {
-                           _logger.LogInformation("State changed: {previousState} -> {currentState}",
+                           _logger.LogInformation("002F|State changed: {previousState} -> {currentState}",
                               lastLoggedState?.ToString() ?? "INITIAL", _currentState);
                         }
                         lastLoggedState = _currentState;
                      }
 
-                     _logger.LogDebug("Dispatcher verarbeitet Event {EventId} von Quelle {Source}.", falcomEvent.EventId, falcomEvent.Source);
+                     _logger.LogDebug("0030|Dispatcher verarbeitet Event {EventId} von Quelle {Source}.", falcomEvent.EventId, falcomEvent.Source);
 
                      // 3. NEU: Unterscheidung zwischen Haupt- (StateTrigger) und Neben-Events
                      if (falcomEvent.IsStateTrigger)
                      {
-                        _logger.LogInformation("[HAUPT-EVENT] Trigger fuer State Machine erkannt: {EventType}", falcomEvent.GetType().Name);
+                        _logger.LogInformation("0031|[HAUPT-EVENT] Trigger fuer State Machine erkannt: {EventType}", falcomEvent.GetType().Name);
 
                         // State Machine Logik (Dein bestehender Switch-Block, jetzt ereignisgesteuert!)
                         switch (_currentState)
@@ -79,12 +79,12 @@ namespace Falcom
                               break;
 
                            case ProcessState.ConnectionLost:
-                              _logger.LogInformation("OPC-Verbindung stabilisiert. Kehre zurück zu Idle.");
+                              _logger.LogInformation("0032|OPC-Verbindung stabilisiert. Kehre zurÃ¼ck zu Idle.");
                               _currentState = ProcessState.Idle;
                               break;
 
                            default:
-                              _logger.LogError("Unhandled state: {state}. Resetting to Idle.", _currentState);
+                              _logger.LogError("0033|Unhandled state: {state}. Resetting to Idle.", _currentState);
                               _currentState = ProcessState.Idle;
                               break;
                         }
@@ -92,12 +92,12 @@ namespace Falcom
                      else
                      {
                         // Neben-Events: Gehen komplett an der State Machine vorbei
-                        _logger.LogInformation("[NEBEN-EVENT] Datentelemetrie direkt in DB/Cache schreiben: {EventType}", falcomEvent.GetType().Name);
+                        _logger.LogInformation("0034|[NEBEN-EVENT] Datentelemetrie direkt in DB/Cache schreiben: {EventType}", falcomEvent.GetType().Name);
 
-                        // TODO: Direkt in DB-Historie wegschreiben, ohne den Kran-Ablauf zu stören
+                        // TODO: Direkt in DB-Historie wegschreiben, ohne den Kran-Ablauf zu stÃ¶ren
                      }
 
-                     // Optionale Überwachungsausgabe
+                     // Optionale Ãœberwachungsausgabe
                      //LogOpenCraneQueueOrdersIfChanged();
                   }
                   catch (OperationCanceledException)
@@ -106,7 +106,7 @@ namespace Falcom
                   }
                   catch (Exception ex)
                   {
-                     _logger.LogError(ex, "Fehler im State-Machine-Zyklus (z.B. OPC-Verbindungsverlust). Zustand war: {state}", _currentState);
+                     _logger.LogError(ex, "0035|Fehler im State-Machine-Zyklus (z.B. OPC-Verbindungsverlust). Zustand war: {state}", _currentState);
 
                      _currentState = ProcessState.ConnectionLost;
                      lastLoggedState = null;
@@ -115,7 +115,7 @@ namespace Falcom
                      await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
 
                      // Da ein Fehler auftrat, brechen wir die innere TryRead-Schleife ab,
-                     // um den Datenfluss im nächsten Hauptdurchlauf frisch zu prüfen.
+                     // um den Datenfluss im nÃ¤chsten Hauptdurchlauf frisch zu prÃ¼fen.
                      break;
                   }
                }
@@ -123,22 +123,22 @@ namespace Falcom
          }
          catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
          {
-            _logger.LogInformation("State machine stopping via CancellationToken.");
+            _logger.LogInformation("0036|State machine stopping via CancellationToken.");
          }
          catch (Exception ex)
          {
-            _logger.LogCritical(ex, "Schwerwiegender Fehler außerhalb der Hauptschleife. Dienst wird beendet!");
+            _logger.LogCritical(ex, "0037|Schwerwiegender Fehler auÃŸerhalb der Hauptschleife. Dienst wird beendet!");
          }
          finally
          {
-            _logger.LogInformation("Disconnecting from OPC Server...");
+            _logger.LogInformation("0038|Disconnecting from OPC Server...");
             _opcClientCrane.Disconnect();
          }
       }
 
       public override async Task StopAsync(CancellationToken cancellationToken)
       {
-         _logger.LogInformation("Windows-Dienst Stop angefordert.");
+         _logger.LogInformation("0039|Windows-Dienst Stop angefordert.");
          await base.StopAsync(cancellationToken);
       }
 

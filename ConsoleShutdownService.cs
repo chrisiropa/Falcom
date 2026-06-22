@@ -40,18 +40,18 @@ namespace Falcom
       {
          try
          {
-            _logger.LogInformation("Konsolenmodus aktiv. Enter druecken, um FALCOM geordnet zu beenden.");
+            _logger.LogInformation("0001|Konsolenmodus aktiv. Enter druecken, um FALCOM geordnet zu beenden.");
             Console.ReadLine();
 
             if (Interlocked.Exchange(ref stopRequested, 1) == 0)
             {
-               _logger.LogInformation("Enter erkannt. FALCOM wird geordnet beendet.");
+               _logger.LogInformation("0002|Enter erkannt. FALCOM wird geordnet beendet.");
                _applicationLifetime.StopApplication();
             }
          }
          catch (Exception ex)
          {
-            _logger.LogDebug(ex, "Konsolen-Beenden per Enter ist nicht verfuegbar.");
+            _logger.LogDebug(ex, "0003|Konsolen-Beenden per Enter ist nicht verfuegbar.");
          }
       }
    }
