@@ -15,8 +15,10 @@
   <ItemGroup>
     <Compile Remove="FalcomSimulator\**\*.cs" />
     <Compile Remove="KranSimulator\**\*.cs" />
+    <Compile Remove="KranSPS_Simulator\**\*.cs" />
     <None Remove="FalcomSimulator\**\*" />
     <None Remove="KranSimulator\**\*" />
+    <None Remove="KranSPS_Simulator\**\*" />
   </ItemGroup>
 
   <ItemGroup>

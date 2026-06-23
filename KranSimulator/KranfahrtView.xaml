@@ -22,6 +22,10 @@
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="8" />
                 <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="8" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="8" />
+                <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
 
             <StackPanel Grid.Column="0">
@@ -86,7 +90,24 @@
                     Click="BtnResetSimulation_Click"
                     VerticalAlignment="Bottom" />
 
-            <Button Grid.Column="10"
+            <Button x:Name="BtnAutomaticSimulation"
+                    Grid.Column="10"
+                    Content="Simulation"
+                    Click="BtnAutomaticSimulation_Click"
+                    VerticalAlignment="Bottom"
+                    Background="#E37400"
+                    BorderBrush="#E37400"
+                    Foreground="White" />
+
+            <Button x:Name="BtnPauseSimulation"
+                    Grid.Column="12"
+                    Content="Pause"
+                    Click="BtnPauseSimulation_Click"
+                    IsEnabled="False"
+                    VerticalAlignment="Bottom" />
+
+            <Button x:Name="BtnChangeView"
+                    Grid.Column="14"
                     Content="Ansicht wechseln"
                     Click="BtnChangeView_Click"
                     VerticalAlignment="Bottom" />
@@ -135,10 +156,36 @@
                         Background="#D9202124"
                         BorderBrush="#5F6368"
                         BorderThickness="1">
-                    <TextBlock x:Name="TxtSimulationStatus"
-                               Text="Bereit"
+                    <StackPanel>
+                        <TextBlock x:Name="TxtSimulationStatus"
+                                   Text="Bereit"
+                                   Foreground="White"
+                                   FontSize="14" />
+                        <TextBlock x:Name="TxtCraneCoordinates"
+                                   Text="x=12500 mm  y=12000 mm  z=200 mm"
+                                   Foreground="#8AB4F8"
+                                   FontFamily="Consolas"
+                                   FontSize="16"
+                                   FontWeight="SemiBold"
+                                   Margin="0,6,0,0" />
+                    </StackPanel>
+                </Border>
+
+                <Border x:Name="SimulationModeBanner"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Top"
+                        Margin="16"
+                        Padding="18,9"
+                        Background="#E37400"
+                        BorderBrush="#FFD180"
+                        BorderThickness="2"
+                        CornerRadius="4"
+                        Visibility="Collapsed">
+                    <TextBlock x:Name="TxtSimulationModeBanner"
+                               Text="AUTOMATIK-SIMULATION AKTIV"
                                Foreground="White"
-                               FontSize="14" />
+                               FontSize="17"
+                               FontWeight="Bold" />
                 </Border>
 
                 <TextBlock HorizontalAlignment="Left"

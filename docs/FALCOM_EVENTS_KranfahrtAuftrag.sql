@@ -1,0 +1,84 @@
+USE [FG];
+GO
+
+SET XACT_ABORT ON;
+GO
+
+BEGIN TRY
+   BEGIN TRANSACTION;
+
+   MERGE dbo.FALCOM_EVENTS AS target
+   USING (VALUES
+      (
+         N'KranfahrtAuftrag',
+         N'FALCOM->KRAN_SPS',
+         N'Fahrauftrag von FALCOM an die Kran-SPS. OPC-Node-IDs sind noch zu konfigurieren.',
+         CAST(0 AS bit)
+      )
+   ) AS source (EventName, Direction, Description, IsActive)
+   ON target.EventName = source.EventName
+   WHEN MATCHED THEN
+      UPDATE SET
+         target.Direction = source.Direction,
+         target.Description = source.Description,
+         target.IsActive = source.IsActive
+   WHEN NOT MATCHED THEN
+      INSERT (EventName, Direction, Description, IsActive)
+      VALUES (
+         source.EventName,
+         source.Direction,
+         source.Description,
+         source.IsActive
+      );
+
+   DECLARE @EventID bigint =
+      (SELECT ID
+       FROM dbo.FALCOM_EVENTS
+       WHERE EventName = N'KranfahrtAuftrag');
+
+   MERGE dbo.FALCOM_EVENT_OPC_NODES AS target
+   USING (VALUES
+      (N'AuftragNummer',    N'NOCH_ZU_KONFIGURIEREN.AuftragNummer',    N'Payload', N'Int32'),
+      (N'AuftragTeilfahrt', N'NOCH_ZU_KONFIGURIEREN.AuftragTeilfahrt', N'Payload', N'Int32'),
+      (N'Quelle',           N'NOCH_ZU_KONFIGURIEREN.Quelle',           N'Payload', N'String'),
+      (N'Ziel',             N'NOCH_ZU_KONFIGURIEREN.Ziel',             N'Payload', N'String'),
+      (N'SollMasse',        N'NOCH_ZU_KONFIGURIEREN.SollMasse',        N'Payload', N'Double'),
+      (N'Toleranz',         N'NOCH_ZU_KONFIGURIEREN.Toleranz',         N'Payload', N'Double'),
+      (N'aktiv',            N'NOCH_ZU_KONFIGURIEREN.aktiv',            N'Payload', N'Boolean'),
+      (N'TelegrammNummer',  N'NOCH_ZU_KONFIGURIEREN.TelegrammNummer',  N'Trigger', N'Int32')
+   ) AS source (NodeName, OPC_Node, NodeRole, DataType)
+   ON target.EventID = @EventID
+      AND target.NodeName = source.NodeName
+   WHEN MATCHED THEN
+      UPDATE SET
+         target.OPC_Node = source.OPC_Node,
+         target.NodeRole = source.NodeRole,
+         target.DataType = source.DataType,
+         target.IsRequired = 1
+   WHEN NOT MATCHED THEN
+      INSERT (
+         EventID,
+         NodeName,
+         OPC_Node,
+         NodeRole,
+         DataType,
+         IsRequired
+      )
+      VALUES (
+         @EventID,
+         source.NodeName,
+         source.OPC_Node,
+         source.NodeRole,
+         source.DataType,
+         1
+      );
+
+   COMMIT TRANSACTION;
+END TRY
+BEGIN CATCH
+   IF @@TRANCOUNT > 0
+      ROLLBACK TRANSACTION;
+
+   THROW;
+END CATCH;
+GO

@@ -36,6 +36,7 @@
             INNER JOIN dbo.FALCOM_EVENT_OPC_NODES AS nodes
                ON nodes.EventID = events.ID
             WHERE events.EventName = '{EventName}'
+              AND events.Direction = 'KRAN_SPS->FALCOM'
               AND events.IsActive = 1
             """);
 
@@ -55,7 +56,7 @@
 
          ÄnderungsZaehlerOPCNode = GetRequiredOpcNode(opcNodes, "AenderungsZaehler");
          AuftragsNummerOPCNode = GetRequiredOpcNode(opcNodes, "AuftragsNummer");
-         TeilfahrtIDOPCNode = GetRequiredOpcNode(opcNodes, "TeilfahrtID");
+         TeilfahrtIDOPCNode = GetRequiredOpcNode(opcNodes, "AuftragTeilfahrt");
          KranQuelleOPCNode = GetRequiredOpcNode(opcNodes, "KranQuelle");
          KranZielOPCNode = GetRequiredOpcNode(opcNodes, "KranZiel");
          ToleranzOPCNode = GetRequiredOpcNode(opcNodes, "Toleranz");

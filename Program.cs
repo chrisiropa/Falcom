@@ -18,6 +18,7 @@ builder.Services.AddSingleton<Lager>();;
 builder.Services.AddSingleton<OPC_Client_Crane>();
 builder.Services.AddSingleton<FalcomEventQueue>();
 builder.Services.AddHostedService<DatabaseOrderPoller>();
+builder.Services.AddHostedService<WatchdogSender>();
 builder.Services.AddHostedService<Worker>();
 builder.Services.AddHostedService<ConsoleShutdownService>();
 

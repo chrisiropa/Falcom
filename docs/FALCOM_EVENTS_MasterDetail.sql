@@ -34,12 +34,16 @@ BEGIN TRY
       (
          ID          bigint IDENTITY(1, 1) NOT NULL,
          EventName   nvarchar(128) NOT NULL,
-         Source      nvarchar(128) NULL,
+         Direction   nvarchar(128) NOT NULL,
          Description nvarchar(512) NULL,
          IsActive    bit NOT NULL
             CONSTRAINT DF_FALCOM_EVENTS_IsActive DEFAULT (1),
          CONSTRAINT PK_FALCOM_EVENTS PRIMARY KEY CLUSTERED (ID),
-         CONSTRAINT UQ_FALCOM_EVENTS_EventName UNIQUE (EventName)
+         CONSTRAINT UQ_FALCOM_EVENTS_EventName UNIQUE (EventName),
+         CONSTRAINT CK_FALCOM_EVENTS_Direction CHECK (
+            Direction IN (
+               N'FALCOM->KRAN_SPS',
+               N'KRAN_SPS->FALCOM'))
       );
 
       CREATE TABLE dbo.FALCOM_EVENT_OPC_NODES
@@ -62,17 +66,14 @@ BEGIN TRY
             CHECK (NodeRole IN (N'Trigger', N'Payload'))
       );
 
-      INSERT INTO dbo.FALCOM_EVENTS (EventName, Source, Description)
+      INSERT INTO dbo.FALCOM_EVENTS (EventName, Direction, Description)
       SELECT DISTINCT
          CASE
             WHEN CHARINDEX(N'.', legacy.EventName) > 0
                THEN LEFT(legacy.EventName, CHARINDEX(N'.', legacy.EventName) - 1)
             ELSE legacy.EventName
          END,
-         CASE
-            WHEN legacy.EventName LIKE N'Kranfahrt%' THEN N'Kran-SPS'
-            ELSE NULL
-         END,
+         N'KRAN_SPS->FALCOM',
          NULL
       FROM dbo.FALCOM_EVENTS_LEGACY AS legacy;
 
@@ -123,12 +124,16 @@ BEGIN TRY
       (
          ID          bigint IDENTITY(1, 1) NOT NULL,
          EventName   nvarchar(128) NOT NULL,
-         Source      nvarchar(128) NULL,
+         Direction   nvarchar(128) NOT NULL,
          Description nvarchar(512) NULL,
          IsActive    bit NOT NULL
             CONSTRAINT DF_FALCOM_EVENTS_IsActive DEFAULT (1),
          CONSTRAINT PK_FALCOM_EVENTS PRIMARY KEY CLUSTERED (ID),
-         CONSTRAINT UQ_FALCOM_EVENTS_EventName UNIQUE (EventName)
+         CONSTRAINT UQ_FALCOM_EVENTS_EventName UNIQUE (EventName),
+         CONSTRAINT CK_FALCOM_EVENTS_Direction CHECK (
+            Direction IN (
+               N'FALCOM->KRAN_SPS',
+               N'KRAN_SPS->FALCOM'))
       );
    END;
 
@@ -158,17 +163,17 @@ BEGIN TRY
    EXEC sys.sp_executesql N'
       MERGE dbo.FALCOM_EVENTS AS target
       USING (VALUES
-         (N''KranfahrtBeendet'', N''Kran-SPS'', N''Signalisiert das Ende einer physischen Kranfahrt.'', CAST(1 AS bit))
-      ) AS source (EventName, Source, Description, IsActive)
+         (N''KranfahrtBeendet'', N''KRAN_SPS->FALCOM'', N''Signalisiert das Ende einer physischen Kranfahrt.'', CAST(1 AS bit))
+      ) AS source (EventName, Direction, Description, IsActive)
       ON target.EventName = source.EventName
       WHEN MATCHED THEN
          UPDATE SET
-            target.Source = source.Source,
+            target.Direction = source.Direction,
             target.Description = source.Description,
             target.IsActive = source.IsActive
       WHEN NOT MATCHED THEN
-         INSERT (EventName, Source, Description, IsActive)
-         VALUES (source.EventName, source.Source, source.Description, source.IsActive);';
+         INSERT (EventName, Direction, Description, IsActive)
+         VALUES (source.EventName, source.Direction, source.Description, source.IsActive);';
 
    DECLARE @KranfahrtBeendetEventID bigint =
       (SELECT ID FROM dbo.FALCOM_EVENTS WHERE EventName = N'KranfahrtBeendet');

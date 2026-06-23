@@ -2,7 +2,6 @@ using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
-using System.Windows.Media.Animation;
 using System.Windows.Media.Media3D;
 using Microsoft.Data.SqlClient;
 
@@ -12,13 +11,10 @@ public partial class KranfahrtView : UserControl
 {
     private const double CraneRailHeight = 8.0;
     private const double HoistAnchorY = 7.35;
-    private const double RaisedY = 6.55;
     private const double BoxSize = 5.0;
     private const double LeftBoxDepth = 15.0 / 4.0;
     private const double BoxWallHeight = 5.0;
     private const double BoxWallThickness = 0.18;
-    private const double HomeX = 0.0;
-    private const double HomeZ = 0.0;
     private const double DefaultCameraHeight = 58.0;
     private const double DefaultCameraDistance = 50.0;
     private const double DefaultCameraTargetHeight = 1.8;
@@ -27,35 +23,36 @@ public partial class KranfahrtView : UserControl
     private readonly TranslateTransform3D trolleyTransform = new();
     private readonly TranslateTransform3D magnetTransform = new();
     private readonly TranslateTransform3D cableTransform = new();
-    private readonly ScaleTransform3D cableScale = new(1, HoistAnchorY - RaisedY, 1);
+    private readonly ScaleTransform3D cableScale = new(
+        1,
+        HoistAnchorY - CraneSimulation.RaisedSceneZ,
+        1);
     private readonly TranslateTransform3D loadTransform = new();
     private readonly Model3DGroup scene = new();
     private readonly Model3DGroup loadGroup = new();
+    private readonly CraneSimulation craneSimulation = new();
     private readonly IReadOnlyDictionary<string, string> positionLabels;
     private GeometryModel3D? loadModel;
+    private CancellationTokenSource? operationCancellation;
     private bool isRunning;
+    private bool isAutomaticSimulation;
     private int cameraIndex;
 
-    private static readonly IReadOnlyDictionary<string, CranePoint> CranePoints =
-        new Dictionary<string, CranePoint>(StringComparer.OrdinalIgnoreCase)
-        {
-            ["LKW1"] = new(-8, -14, 1.2),
-            ["LKW2"] = new(0, -14, 1.2),
-            ["LKW3"] = new(8, -14, 1.2),
-            ["BOX 1"] = new(-5, 5.625, 1.0),
-            ["BOX 2"] = new(0, 5, 1.0),
-            ["BOX 3"] = new(5, 5, 1.0),
-            ["BOX 4"] = new(-5, 1.875, 1.0),
-            ["BOX 5"] = new(0, 0, 1.0),
-            ["BOX 6"] = new(5, 0, 1.0),
-            ["BOX 7"] = new(-5, -1.875, 1.0),
-            ["BOX 8"] = new(0, -5, 1.0),
-            ["BOX 9"] = new(5, -5, 1.0),
-            ["BOX 10"] = new(-5, -5.625, 1.0),
-            ["CW1"] = new(-8, 14, 1.25),
-            ["CW2"] = new(0, 14, 1.25),
-            ["CW3"] = new(8, 14, 1.25)
-        };
+    private static readonly string[] TruckSources =
+    [
+        "LKW1", "LKW2", "LKW3"
+    ];
+
+    private static readonly string[] StoragePositions =
+    [
+        "BOX 1", "BOX 2", "BOX 3", "BOX 4", "BOX 5",
+        "BOX 6", "BOX 7", "BOX 8", "BOX 9", "BOX 10"
+    ];
+
+    private static readonly string[] ChargingCarTargets =
+    [
+        "CW1", "CW2", "CW3"
+    ];
 
     private static readonly IReadOnlyDictionary<int, StorageBoxLayout> StorageBoxes =
         new Dictionary<int, StorageBoxLayout>
@@ -76,6 +73,7 @@ public partial class KranfahrtView : UserControl
     {
         InitializeComponent();
         positionLabels = LoadPositionLabels();
+        craneSimulation.StatusChanged += OnCraneStatusChanged;
         BuildScene();
         ResetCrane();
         SetDefaultCamera();
@@ -115,14 +113,15 @@ public partial class KranfahrtView : UserControl
 
     private void AddTrucks()
     {
-        AddScrapPile(-8, -14, GetPositionLabel("LKW_PLATZ", 1, "LKW1"), 0);
-        AddScrapPile(0, -14, GetPositionLabel("LKW_PLATZ", 2, "LKW2"), 1);
-        AddScrapPile(8, -14, GetPositionLabel("LKW_PLATZ", 3, "LKW3"), 2);
+        AddScrapPile(-8, -14, "LKW1", GetPositionLabel("LKW_PLATZ", 1, "LKW1"), 0);
+        AddScrapPile(0, -14, "LKW2", GetPositionLabel("LKW_PLATZ", 2, "LKW2"), 1);
+        AddScrapPile(8, -14, "LKW3", GetPositionLabel("LKW_PLATZ", 3, "LKW3"), 2);
     }
 
     private void AddScrapPile(
         double x,
         double z,
+        string positionName,
         string label,
         int colorOffset)
     {
@@ -164,14 +163,16 @@ public partial class KranfahrtView : UserControl
             scene.Children.Add(scrapPiece);
         }
 
-        scene.Children.Add(CreateLabelPlate(
+        scene.Children.Add(CreatePositionLabelPlate(
             label,
+            craneSimulation.TargetPositions[positionName],
             x,
             2.35,
             z - 2.15,
             6.2,
             1.45,
-            68));
+            54,
+            28));
     }
 
     private void AddStorageBoxes()
@@ -225,14 +226,16 @@ public partial class KranfahrtView : UserControl
                 box.Depth - 0.45,
                 scrapColors[(index - 1) % scrapColors.Length]));
 
-            scene.Children.Add(CreateLabelPlate(
+            scene.Children.Add(CreatePositionLabelPlate(
                 GetPositionLabel("LAGERBOX", index, $"BOX {index}"),
+                craneSimulation.TargetPositions[$"BOX {index}"],
                 box.X,
                 4.25,
                 box.Z + box.Depth / 2 + 0.12,
                 Math.Min(box.Width - 0.35, 6.4),
                 1.35,
-                76));
+                56,
+                27));
         }
     }
 
@@ -270,12 +273,16 @@ public partial class KranfahrtView : UserControl
 
     private void AddChargingCars()
     {
-        AddChargingCar(-8, 14, GetPositionLabel("CHARGIERWAGEN", 1, "CW1"));
-        AddChargingCar(0, 14, GetPositionLabel("CHARGIERWAGEN", 2, "CW2"));
-        AddChargingCar(8, 14, GetPositionLabel("CHARGIERWAGEN", 3, "CW3"));
+        AddChargingCar(-8, 14, "CW1", GetPositionLabel("CHARGIERWAGEN", 1, "CW1"));
+        AddChargingCar(0, 14, "CW2", GetPositionLabel("CHARGIERWAGEN", 2, "CW2"));
+        AddChargingCar(8, 14, "CW3", GetPositionLabel("CHARGIERWAGEN", 3, "CW3"));
     }
 
-    private void AddChargingCar(double x, double z, string label)
+    private void AddChargingCar(
+        double x,
+        double z,
+        string positionName,
+        string label)
     {
         Material frameMaterial = CreateMaterial(Color.FromRgb(37, 72, 89));
         Material bodyMaterial = CreateMaterial(Color.FromRgb(69, 137, 174));
@@ -322,14 +329,16 @@ public partial class KranfahrtView : UserControl
             }
         }
 
-        scene.Children.Add(CreateLabelPlate(
+        scene.Children.Add(CreatePositionLabelPlate(
             label,
+            craneSimulation.TargetPositions[positionName],
             x,
             2.25,
             z - 3.15,
             5.6,
             1.25,
-            56));
+            44,
+            25));
     }
 
     private static IReadOnlyDictionary<string, string> LoadPositionLabels()
@@ -475,7 +484,7 @@ public partial class KranfahrtView : UserControl
 
     private async void BtnStartSimulation_Click(object sender, RoutedEventArgs e)
     {
-        if (isRunning)
+        if (isRunning || isAutomaticSimulation)
         {
             return;
         }
@@ -495,44 +504,203 @@ public partial class KranfahrtView : UserControl
             return;
         }
 
-        if (!CranePoints.TryGetValue(source, out CranePoint sourcePoint)
-            || !CranePoints.TryGetValue(target, out CranePoint targetPoint))
-        {
-            TxtSimulationStatus.Text = "Position nicht verfügbar";
-            return;
-        }
-
         isRunning = true;
-        SetControlsEnabled(false);
+        operationCancellation = new CancellationTokenSource();
+        SetManualOperationControls();
 
         try
         {
-            double speedFactor = GetSpeedFactor();
-            TxtSimulationStatus.Text = $"Fahrt zu {source}";
-            await MoveCraneAsync(sourcePoint, speedFactor);
-
-            TxtSimulationStatus.Text = $"Materialaufnahme an {source}";
-            await MoveHoistAsync(sourcePoint.PickY, speedFactor);
-            SetLoadVisible(true);
-            await PauseAsync(300, speedFactor);
-            await MoveHoistAsync(RaisedY, speedFactor);
-
-            TxtSimulationStatus.Text = $"Transport zu {target}";
-            await MoveCraneAsync(targetPoint, speedFactor);
-
-            TxtSimulationStatus.Text = $"Materialabgabe an {target}";
-            await MoveHoistAsync(targetPoint.PickY, speedFactor);
-            SetLoadVisible(false);
-            await PauseAsync(300, speedFactor);
-            await MoveHoistAsync(RaisedY, speedFactor);
-
-            TxtSimulationStatus.Text = $"Abgeschlossen: {source} → {target}";
+            await ExecuteCraneOrderAsync(
+                source,
+                target,
+                GetSpeedFactor(),
+                operationCancellation.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            TxtSimulationStatus.Text = "Fahrt abgebrochen";
         }
         finally
         {
+            craneSimulation.Resume();
+            operationCancellation.Dispose();
+            operationCancellation = null;
             isRunning = false;
-            SetControlsEnabled(true);
+            SetIdleControls();
         }
+    }
+
+    private async void BtnAutomaticSimulation_Click(object sender, RoutedEventArgs e)
+    {
+        if (isAutomaticSimulation)
+        {
+            TxtSimulationStatus.Text = "Automatik-Simulation wird beendet...";
+            operationCancellation?.Cancel();
+            BtnAutomaticSimulation.IsEnabled = false;
+            return;
+        }
+
+        if (isRunning)
+        {
+            return;
+        }
+
+        isAutomaticSimulation = true;
+        operationCancellation = new CancellationTokenSource();
+        SetAutomaticSimulationControls();
+
+        try
+        {
+            while (!operationCancellation.IsCancellationRequested)
+            {
+                (string source, string target) = CreatePlausibleSimulationOrder();
+
+                SelectComboBoxValue(CmbSimulationSource, source);
+                SelectComboBoxValue(CmbSimulationTarget, target);
+
+                await ExecuteCraneOrderAsync(
+                    source,
+                    target,
+                    GetSpeedFactor(),
+                    operationCancellation.Token);
+
+                TxtSimulationStatus.Text = $"Nächster Auftrag folgt: {source} → {target}";
+                await PausableDelayAsync(
+                    TimeSpan.FromMilliseconds(700),
+                    operationCancellation.Token);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            TxtSimulationStatus.Text = "Automatik-Simulation beendet";
+        }
+        finally
+        {
+            craneSimulation.Resume();
+            operationCancellation.Dispose();
+            operationCancellation = null;
+            isAutomaticSimulation = false;
+            isRunning = false;
+            SetLoadVisible(false);
+            SetIdleControls();
+        }
+    }
+
+    private void BtnPauseSimulation_Click(object sender, RoutedEventArgs e)
+    {
+        if (!isRunning && !isAutomaticSimulation)
+        {
+            return;
+        }
+
+        if (craneSimulation.IsPaused)
+        {
+            craneSimulation.Resume();
+            BtnPauseSimulation.Content = "Pause";
+            TxtSimulationModeBanner.Text = isAutomaticSimulation
+                ? "AUTOMATIK-SIMULATION AKTIV"
+                : "FAHRT AKTIV";
+            SimulationModeBanner.Background = new SolidColorBrush(
+                isAutomaticSimulation
+                    ? Color.FromRgb(227, 116, 0)
+                    : Color.FromRgb(25, 103, 210));
+            TxtSimulationStatus.Text = isAutomaticSimulation
+                ? "Automatik-Simulation fortgesetzt"
+                : "Fahrt fortgesetzt";
+        }
+        else
+        {
+            craneSimulation.Pause();
+            BtnPauseSimulation.Content = "Fortsetzen";
+            TxtSimulationModeBanner.Text = isAutomaticSimulation
+                ? "AUTOMATIK-SIMULATION PAUSIERT"
+                : "FAHRT PAUSIERT";
+            SimulationModeBanner.Background = new SolidColorBrush(
+                Color.FromRgb(197, 34, 31));
+            TxtSimulationStatus.Text = "Pausiert";
+        }
+    }
+
+    private async Task ExecuteCraneOrderAsync(
+        string source,
+        string target,
+        double speedFactor,
+        CancellationToken cancellationToken)
+    {
+        if (!craneSimulation.TryGetTarget(source, out CraneTargetPosition sourcePoint)
+            || !craneSimulation.TryGetTarget(target, out CraneTargetPosition targetPoint))
+        {
+            throw new InvalidOperationException(
+                $"Position für {source} oder {target} ist nicht verfügbar.");
+        }
+
+        isRunning = true;
+        TxtSimulationStatus.Text = $"Fahrt zu {source}";
+        await craneSimulation.MoveHorizontalAsync(
+            sourcePoint,
+            speedFactor,
+            cancellationToken);
+
+        TxtSimulationStatus.Text = $"Materialaufnahme an {source}";
+        await craneSimulation.MoveHoistAsync(
+            sourcePoint.PosHubZ,
+            speedFactor,
+            cancellationToken);
+        SetLoadVisible(true);
+        await PausableDelayAsync(
+            TimeSpan.FromMilliseconds(300 * speedFactor),
+            cancellationToken);
+        await craneSimulation.MoveHoistAsync(
+            CraneSimulation.MinPosHubZ,
+            speedFactor,
+            cancellationToken);
+
+        TxtSimulationStatus.Text = $"Transport zu {target}";
+        await craneSimulation.MoveHorizontalAsync(
+            targetPoint,
+            speedFactor,
+            cancellationToken);
+
+        TxtSimulationStatus.Text = $"Materialabgabe an {target}";
+        await craneSimulation.MoveHoistAsync(
+            targetPoint.PosHubZ,
+            speedFactor,
+            cancellationToken);
+        SetLoadVisible(false);
+        await PausableDelayAsync(
+            TimeSpan.FromMilliseconds(300 * speedFactor),
+            cancellationToken);
+        await craneSimulation.MoveHoistAsync(
+            CraneSimulation.MinPosHubZ,
+            speedFactor,
+            cancellationToken);
+
+        TxtSimulationStatus.Text = $"Abgeschlossen: {source} → {target}";
+        isRunning = false;
+    }
+
+    private static (string Source, string Target) CreatePlausibleSimulationOrder()
+    {
+        int routeType = Random.Shared.Next(100);
+
+        if (routeType < 45)
+        {
+            return (
+                TruckSources[Random.Shared.Next(TruckSources.Length)],
+                StoragePositions[Random.Shared.Next(StoragePositions.Length)]);
+        }
+
+        if (routeType < 90)
+        {
+            return (
+                StoragePositions[Random.Shared.Next(StoragePositions.Length)],
+                ChargingCarTargets[Random.Shared.Next(ChargingCarTargets.Length)]);
+        }
+
+        // Ausnahme: Material darf direkt vom LKW zum Chargierwagen gehen.
+        return (
+            TruckSources[Random.Shared.Next(TruckSources.Length)],
+            ChargingCarTargets[Random.Shared.Next(ChargingCarTargets.Length)]);
     }
 
     private void BtnResetSimulation_Click(object sender, RoutedEventArgs e)
@@ -576,62 +744,39 @@ public partial class KranfahrtView : UserControl
         return (position, target - position);
     }
 
-    private async Task MoveCraneAsync(CranePoint point, double speedFactor)
-    {
-        double distance = Math.Sqrt(
-            Math.Pow(point.X - trolleyTransform.OffsetX, 2)
-            + Math.Pow(point.Z - trolleyTransform.OffsetZ, 2));
-        double seconds = Math.Max(0.45, distance / 6.5) * speedFactor;
-
-        await Task.WhenAll(
-            AnimateAsync(bridgeTransform, TranslateTransform3D.OffsetZProperty, point.Z, seconds),
-            AnimateAsync(trolleyTransform, TranslateTransform3D.OffsetXProperty, point.X, seconds),
-            AnimateAsync(trolleyTransform, TranslateTransform3D.OffsetZProperty, point.Z, seconds),
-            AnimateAsync(magnetTransform, TranslateTransform3D.OffsetXProperty, point.X, seconds),
-            AnimateAsync(magnetTransform, TranslateTransform3D.OffsetZProperty, point.Z, seconds),
-            AnimateAsync(cableTransform, TranslateTransform3D.OffsetXProperty, point.X, seconds),
-            AnimateAsync(cableTransform, TranslateTransform3D.OffsetZProperty, point.Z, seconds),
-            AnimateAsync(loadTransform, TranslateTransform3D.OffsetXProperty, point.X, seconds),
-            AnimateAsync(loadTransform, TranslateTransform3D.OffsetZProperty, point.Z, seconds));
-    }
-
-    private async Task MoveHoistAsync(double targetY, double speedFactor)
-    {
-        double cableLength = HoistAnchorY - targetY;
-        double cableCenterY = targetY + cableLength / 2;
-        double seconds = Math.Max(0.35, Math.Abs(targetY - magnetTransform.OffsetY) / 3.5) * speedFactor;
-
-        await Task.WhenAll(
-            AnimateAsync(magnetTransform, TranslateTransform3D.OffsetYProperty, targetY, seconds),
-            AnimateAsync(loadTransform, TranslateTransform3D.OffsetYProperty, targetY - 0.55, seconds),
-            AnimateAsync(cableScale, ScaleTransform3D.ScaleYProperty, cableLength, seconds),
-            AnimateAsync(cableTransform, TranslateTransform3D.OffsetYProperty, cableCenterY, seconds));
-    }
-
     private void ResetCrane()
     {
-        StopAnimations(bridgeTransform);
-        StopAnimations(trolleyTransform);
-        StopAnimations(magnetTransform);
-        StopAnimations(cableTransform);
-        StopAnimations(cableScale);
-        StopAnimations(loadTransform);
-
-        bridgeTransform.OffsetZ = HomeZ;
-        trolleyTransform.OffsetX = HomeX;
-        trolleyTransform.OffsetZ = HomeZ;
-        magnetTransform.OffsetX = HomeX;
-        magnetTransform.OffsetY = RaisedY;
-        magnetTransform.OffsetZ = HomeZ;
-        cableScale.ScaleY = HoistAnchorY - RaisedY;
-        cableTransform.OffsetX = HomeX;
-        cableTransform.OffsetY = RaisedY + cableScale.ScaleY / 2;
-        cableTransform.OffsetZ = HomeZ;
-        loadTransform.OffsetX = HomeX;
-        loadTransform.OffsetY = RaisedY - 0.55;
-        loadTransform.OffsetZ = HomeZ;
+        craneSimulation.Reset();
         SetLoadVisible(false);
         TxtSimulationStatus.Text = "Bereit";
+    }
+
+    private void OnCraneStatusChanged(
+        object? sender,
+        CraneStatus status)
+    {
+        double sceneX = CraneSimulation.MapPosKranXToScene(status.PosKranX);
+        double sceneY = CraneSimulation.MapPosKatzeYToScene(status.PosKatzeY);
+        double sceneZ = CraneSimulation.MapPosHubZToScene(status.PosHubZ);
+        double cableLength = HoistAnchorY - sceneZ;
+        double cableCenterY = sceneZ + cableLength / 2;
+
+        bridgeTransform.OffsetZ = sceneY;
+        trolleyTransform.OffsetX = sceneX;
+        trolleyTransform.OffsetZ = sceneY;
+        magnetTransform.OffsetX = sceneX;
+        magnetTransform.OffsetY = sceneZ;
+        magnetTransform.OffsetZ = sceneY;
+        cableScale.ScaleY = cableLength;
+        cableTransform.OffsetX = sceneX;
+        cableTransform.OffsetY = cableCenterY;
+        cableTransform.OffsetZ = sceneY;
+        loadTransform.OffsetX = sceneX;
+        loadTransform.OffsetY = sceneZ - 0.55;
+        loadTransform.OffsetZ = sceneY;
+
+        TxtCraneCoordinates.Text =
+            $"x={status.PosKranX} mm  y={status.PosKatzeY} mm  z={status.PosHubZ} mm";
     }
 
     private void SetLoadVisible(bool visible)
@@ -650,41 +795,6 @@ public partial class KranfahrtView : UserControl
         {
             loadGroup.Children.Remove(loadModel);
         }
-    }
-
-    private static Task AnimateAsync(
-        Animatable target,
-        DependencyProperty property,
-        double value,
-        double seconds)
-    {
-        var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var animation = new DoubleAnimation
-        {
-            To = value,
-            Duration = TimeSpan.FromSeconds(seconds),
-            AccelerationRatio = 0.18,
-            DecelerationRatio = 0.18,
-            FillBehavior = FillBehavior.HoldEnd
-        };
-
-        animation.Completed += (_, _) =>
-        {
-            target.BeginAnimation(property, null);
-            target.SetValue(property, value);
-            completion.TrySetResult();
-        };
-
-        target.BeginAnimation(property, animation);
-        return completion.Task;
-    }
-
-    private static void StopAnimations(Animatable target)
-    {
-        target.BeginAnimation(TranslateTransform3D.OffsetXProperty, null);
-        target.BeginAnimation(TranslateTransform3D.OffsetYProperty, null);
-        target.BeginAnimation(TranslateTransform3D.OffsetZProperty, null);
-        target.BeginAnimation(ScaleTransform3D.ScaleYProperty, null);
     }
 
     private static GeometryModel3D CreateBox(
@@ -837,6 +947,68 @@ public partial class KranfahrtView : UserControl
         return new GeometryModel3D(mesh, material) { BackMaterial = material };
     }
 
+    private static GeometryModel3D CreatePositionLabelPlate(
+        string title,
+        CraneTargetPosition position,
+        double x,
+        double y,
+        double z,
+        double width,
+        double height,
+        double titleFontSize,
+        double coordinateFontSize)
+    {
+        var label = new StackPanel
+        {
+            Width = 900,
+            Height = 180,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        label.Children.Add(new TextBlock
+        {
+            Text = title,
+            Foreground = Brushes.White,
+            FontFamily = new FontFamily("Segoe UI"),
+            FontWeight = FontWeights.SemiBold,
+            FontSize = titleFontSize,
+            TextAlignment = TextAlignment.Center
+        });
+        label.Children.Add(new TextBlock
+        {
+            Text = $"X={position.PosKranX}  Y={position.PosKatzeY}  Z={position.PosHubZ} mm",
+            Foreground = new SolidColorBrush(Color.FromRgb(138, 180, 248)),
+            FontFamily = new FontFamily("Consolas"),
+            FontWeight = FontWeights.SemiBold,
+            FontSize = coordinateFontSize,
+            TextAlignment = TextAlignment.Center,
+            Margin = new Thickness(0, 6, 0, 0)
+        });
+        label.Measure(new Size(900, 180));
+        label.Arrange(new Rect(0, 0, 900, 180));
+
+        Material material = new DiffuseMaterial(new VisualBrush(label));
+        double halfWidth = width / 2;
+        double halfHeight = height / 2;
+        var mesh = new MeshGeometry3D
+        {
+            Positions = new Point3DCollection
+            {
+                new(x - halfWidth, y - halfHeight, z),
+                new(x + halfWidth, y - halfHeight, z),
+                new(x + halfWidth, y + halfHeight, z),
+                new(x - halfWidth, y + halfHeight, z)
+            },
+            TextureCoordinates = new PointCollection
+            {
+                new(0, 1), new(1, 1), new(1, 0), new(0, 0)
+            },
+            TriangleIndices = new Int32Collection { 0, 1, 2, 0, 2, 3 }
+        };
+
+        return new GeometryModel3D(mesh, material) { BackMaterial = material };
+    }
+
     private static Material CreateMaterial(Color color)
     {
         var group = new MaterialGroup();
@@ -865,21 +1037,90 @@ public partial class KranfahrtView : UserControl
         return 1.0;
     }
 
-    private void SetControlsEnabled(bool enabled)
+    private void SetIdleControls()
     {
-        CmbSimulationSource.IsEnabled = enabled;
-        CmbSimulationTarget.IsEnabled = enabled;
-        CmbSimulationSpeed.IsEnabled = enabled;
-        BtnStartSimulation.IsEnabled = enabled;
-        BtnResetSimulation.IsEnabled = enabled;
+        CmbSimulationSource.IsEnabled = true;
+        CmbSimulationTarget.IsEnabled = true;
+        CmbSimulationSpeed.IsEnabled = true;
+        BtnStartSimulation.IsEnabled = true;
+        BtnResetSimulation.IsEnabled = true;
+        BtnAutomaticSimulation.IsEnabled = true;
+        BtnAutomaticSimulation.Content = "Simulation";
+        BtnPauseSimulation.IsEnabled = false;
+        BtnPauseSimulation.Content = "Pause";
+        BtnChangeView.IsEnabled = true;
+        SimulationModeBanner.Visibility = Visibility.Collapsed;
     }
 
-    private static Task PauseAsync(int milliseconds, double speedFactor)
+    private void SetManualOperationControls()
     {
-        return Task.Delay(TimeSpan.FromMilliseconds(milliseconds * speedFactor));
+        CmbSimulationSource.IsEnabled = false;
+        CmbSimulationTarget.IsEnabled = false;
+        CmbSimulationSpeed.IsEnabled = false;
+        BtnStartSimulation.IsEnabled = false;
+        BtnResetSimulation.IsEnabled = false;
+        BtnAutomaticSimulation.IsEnabled = false;
+        BtnPauseSimulation.IsEnabled = true;
+        BtnChangeView.IsEnabled = false;
+        TxtSimulationModeBanner.Text = "FAHRT AKTIV";
+        SimulationModeBanner.Background = new SolidColorBrush(
+            Color.FromRgb(25, 103, 210));
+        SimulationModeBanner.Visibility = Visibility.Visible;
     }
 
-    private readonly record struct CranePoint(double X, double Z, double PickY);
+    private void SetAutomaticSimulationControls()
+    {
+        CmbSimulationSource.IsEnabled = false;
+        CmbSimulationTarget.IsEnabled = false;
+        CmbSimulationSpeed.IsEnabled = false;
+        BtnStartSimulation.IsEnabled = false;
+        BtnResetSimulation.IsEnabled = false;
+        BtnAutomaticSimulation.IsEnabled = true;
+        BtnAutomaticSimulation.Content = "Simulation stoppen";
+        BtnPauseSimulation.IsEnabled = true;
+        BtnChangeView.IsEnabled = false;
+        TxtSimulationModeBanner.Text = "AUTOMATIK-SIMULATION AKTIV";
+        SimulationModeBanner.Background = new SolidColorBrush(
+            Color.FromRgb(227, 116, 0));
+        SimulationModeBanner.Visibility = Visibility.Visible;
+    }
+
+    private async Task PausableDelayAsync(
+        TimeSpan duration,
+        CancellationToken cancellationToken)
+    {
+        TimeSpan elapsed = TimeSpan.Zero;
+        TimeSpan interval = TimeSpan.FromMilliseconds(50);
+
+        while (elapsed < duration)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            await craneSimulation.WaitWhilePausedAsync(cancellationToken);
+            TimeSpan delay = duration - elapsed < interval
+                ? duration - elapsed
+                : interval;
+            await Task.Delay(delay, cancellationToken);
+            elapsed += delay;
+        }
+    }
+
+    private static void SelectComboBoxValue(
+        ComboBox comboBox,
+        string value)
+    {
+        foreach (object item in comboBox.Items)
+        {
+            if (item is ComboBoxItem comboBoxItem
+                && string.Equals(
+                    comboBoxItem.Content?.ToString(),
+                    value,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                comboBox.SelectedItem = comboBoxItem;
+                return;
+            }
+        }
+    }
 
     private readonly record struct StorageBoxLayout(
         double X,

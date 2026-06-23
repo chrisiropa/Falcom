@@ -15,12 +15,26 @@ namespace Falcom
       private float s;
       private float mg;
       private string bezeichnung = string.Empty;
+      private string schrottsorte = string.Empty;
+      private int toleranz;
 
       public Lagerplatz()
       {
       }
 
-      public Lagerplatz(int lagerplatzNr, bool active, int restmenge, float cu, float mn, float c, float si, float s, float mg, string bezeichnung)
+      public Lagerplatz(
+         int lagerplatzNr,
+         bool active,
+         int restmenge,
+         float cu,
+         float mn,
+         float c,
+         float si,
+         float s,
+         float mg,
+         string bezeichnung,
+         string schrottsorte,
+         int toleranz)
       {
          this.lagerplatzNr = lagerplatzNr;
          this.active = active;
@@ -32,6 +46,8 @@ namespace Falcom
          this.s = s;
          this.mg = mg;
          this.bezeichnung = bezeichnung;
+         this.schrottsorte = schrottsorte;
+         this.toleranz = toleranz;
       }
 
       public override string ToString()
@@ -45,7 +61,9 @@ namespace Falcom
                 $"Si: {si}\n" +
                 $"S: {s}\n" +
                 $"Mg: {mg}\n" +
-                $"Bezeichnung: {bezeichnung}";
+                $"Bezeichnung: {bezeichnung}\n" +
+                $"Schrottsorte: {schrottsorte}\n" +
+                $"Toleranz: {toleranz} kg";
       }
 
       public int LagerplatzNr
@@ -107,6 +125,18 @@ namespace Falcom
          get { return bezeichnung; }
          set { bezeichnung = value; }
       }
+
+      public string Schrottsorte
+      {
+         get { return schrottsorte; }
+         set { schrottsorte = value; }
+      }
+
+      public int Toleranz
+      {
+         get { return toleranz; }
+         set { toleranz = value; }
+      }
    }
 
    public class Lager
@@ -137,12 +167,30 @@ namespace Falcom
                      float mn = (float)Math.Round(Convert.ToSingle(row["Mn"]), 3);
                      float c = (float)Math.Round(Convert.ToSingle(row["C"]), 3);
                      float si = (float)Math.Round(Convert.ToSingle(row["Si"]), 3);
-                     float s = (float)Math.Round(Convert.ToSingle(row["S"]), 3);
-                     float mg = (float)Math.Round(Convert.ToSingle(row["Mg"]), 3);
+                     float s = row.TryGetValue("S", out object? sValue)
+                        ? (float)Math.Round(Convert.ToSingle(sValue), 3)
+                        : 0;
+                     float mg = row.TryGetValue("Mg", out object? mgValue)
+                        ? (float)Math.Round(Convert.ToSingle(mgValue), 3)
+                        : 0;
 
                      string bezeichnung = Convert.ToString(row["Bezeichnung"]) ?? string.Empty;
+                     string schrottsorte = Convert.ToString(row["Schrottsorte"]) ?? "Unbekannt";
+                     int toleranz = Convert.ToInt32(row["Toleranz"]);
 
-                     Lagerplatz platz = new(lagerplatz, active, restmenge, cu, mn, c, si, s, mg, bezeichnung);
+                     Lagerplatz platz = new(
+                        lagerplatz,
+                        active,
+                        restmenge,
+                        cu,
+                        mn,
+                        c,
+                        si,
+                        s,
+                        mg,
+                        bezeichnung,
+                        schrottsorte,
+                        toleranz);
                      lagerplätze.Add(lagerplatz, platz);
                   }
                   catch (Exception e)

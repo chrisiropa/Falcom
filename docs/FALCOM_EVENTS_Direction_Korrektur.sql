@@ -1,0 +1,41 @@
+USE [FG];
+GO
+
+SET XACT_ABORT ON;
+GO
+
+BEGIN TRY
+   BEGIN TRANSACTION;
+
+   IF OBJECT_ID(
+      N'dbo.CK_FALCOM_EVENTS_Direction',
+      N'C') IS NOT NULL
+   BEGIN
+      ALTER TABLE dbo.FALCOM_EVENTS
+         DROP CONSTRAINT CK_FALCOM_EVENTS_Direction;
+   END;
+
+   UPDATE dbo.FALCOM_EVENTS
+   SET Direction =
+      CASE Direction
+         WHEN N'FALCOM->KRANS_SPS' THEN N'FALCOM->KRAN_SPS'
+         WHEN N'KRANS_SPS->FALCOM' THEN N'KRAN_SPS->FALCOM'
+         ELSE Direction
+      END;
+
+   ALTER TABLE dbo.FALCOM_EVENTS
+      ADD CONSTRAINT CK_FALCOM_EVENTS_Direction
+      CHECK (
+         Direction IN (
+            N'FALCOM->KRAN_SPS',
+            N'KRAN_SPS->FALCOM'));
+
+   COMMIT TRANSACTION;
+END TRY
+BEGIN CATCH
+   IF @@TRANCOUNT > 0
+      ROLLBACK TRANSACTION;
+
+   THROW;
+END CATCH;
+GO
