@@ -15,6 +15,7 @@
     <Content Include="..\Images\Falke-Transparent.ico"
              Link="Falke-Transparent.ico"
              CopyToOutputDirectory="PreserveNewest" />
+    <Resource Include="IROPA.png" />
     <PackageReference Include="Microsoft.Data.SqlClient" Version="6.1.3" />
     <PackageReference Include="Opc.UaFx.Client" Version="2.53.1" />
   </ItemGroup>
