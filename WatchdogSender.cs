@@ -1,23 +1,23 @@
-using System.Security.Cryptography;
 using Opc.UaFx;
 using Opc.UaFx.Client;
 
 namespace Falcom
 {
-   public sealed class WatchdogSender : BackgroundService
+   public sealed class WatchdogSender : IDisposable
    {
-      private static readonly TimeSpan SendInterval = TimeSpan.FromSeconds(1);
       private static readonly TimeSpan ConfigurationRetryDelay = TimeSpan.FromSeconds(5);
-      private const string EventName = "Watchdog";
-      private const string NodeName = "LebensZaehler";
-      private const string Direction = "FALCOM->KRAN_SPS";
+      private static readonly TimeSpan ConfigurationRefreshInterval = TimeSpan.FromSeconds(60);
       private const string PlaceholderPrefix = "NOCH_ZU_KONFIGURIEREN.";
 
       private readonly ILogger<WatchdogSender> _logger;
       private readonly ConfigManager _configManager;
       private readonly Parameter _parameter;
-      private int counter = RandomNumberGenerator.GetInt32(1, int.MaxValue);
+      private readonly SemaphoreSlim sendLock = new(1, 1);
       private string? lastConfigurationIssue;
+      private WatchdogConfiguration? configuration;
+      private OpcClient? client;
+      private DateTime nextConfigurationReadUtc = DateTime.MinValue;
+      private bool initialValueLogged;
 
       public WatchdogSender(
          ILogger<WatchdogSender> logger,
@@ -29,58 +29,98 @@ namespace Falcom
          _parameter = parameter;
       }
 
-      protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+      public async Task SendAsync(
+         int lebensZaehler,
+         CancellationToken stoppingToken)
       {
-         _logger.LogInformation(
-            "003A|Watchdog-Sender gestartet. Initialer DINT-Lebenszaehler={Counter}.",
-            counter);
+         await sendLock.WaitAsync(stoppingToken);
 
-         while (!stoppingToken.IsCancellationRequested)
+         try
          {
-            _logger.LogInformation(
-               "0043|Watchdog-Versandversuch wird gestartet.");
+            if (!initialValueLogged)
+            {
+               _logger.LogInformation(
+                  "003A|Watchdog-Verarbeitung im Dispatcher gestartet. Initialer DINT-Lebenszaehler={LebensZaehler}.",
+                  lebensZaehler);
+               initialValueLogged = true;
+            }
 
-            WatchdogConfiguration? configuration = LoadConfiguration();
+            if (DateTime.UtcNow >= nextConfigurationReadUtc)
+            {
+               WatchdogConfiguration? newConfiguration = LoadConfiguration();
+
+               if (newConfiguration is null)
+               {
+                  configuration = null;
+                  Disconnect();
+                  nextConfigurationReadUtc = DateTime.UtcNow + ConfigurationRetryDelay;
+                  return;
+               }
+
+               if (configuration is not null && configuration != newConfiguration)
+               {
+                  _logger.LogInformation(
+                     "003F|Watchdog-Konfiguration wurde geaendert. OPC-Verbindung wird neu aufgebaut.");
+                  Disconnect();
+               }
+
+               configuration = newConfiguration;
+               nextConfigurationReadUtc = DateTime.UtcNow + ConfigurationRefreshInterval;
+
+               if (lastConfigurationIssue is not null)
+               {
+                  _logger.LogInformation(
+                     "0041|Watchdog-Konfiguration ist jetzt gueltig. Der Versand wird gestartet.");
+                  lastConfigurationIssue = null;
+               }
+            }
 
             if (configuration is null)
             {
-               await Task.Delay(ConfigurationRetryDelay, stoppingToken);
-               continue;
-            }
-
-            if (lastConfigurationIssue is not null)
-            {
-               _logger.LogInformation(
-                  "0041|Watchdog-Konfiguration ist jetzt gueltig. Der Versand wird gestartet.");
-               lastConfigurationIssue = null;
+               return;
             }
 
             try
             {
-               await SendUntilConfigurationChangesAsync(
-                  configuration,
-                  stoppingToken);
-            }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-            {
-               throw;
+               EnsureConnected(configuration);
+               OpcStatus status = client!.WriteNode(
+                  configuration.NodeId,
+                  lebensZaehler);
+
+               if (status.IsBad)
+               {
+                  throw new InvalidOperationException(
+                     $"OPC-Schreiben fehlgeschlagen. Status={status.Code}, Beschreibung={status.Description}");
+               }
+
+               _logger.LogDebug(
+                  "003E|Watchdog LebensZaehler={Counter} an {Node} gesendet.",
+                  lebensZaehler,
+                  configuration.NodeId);
             }
             catch (Exception ex)
             {
                _logger.LogError(
                   ex,
-                  "003C|Watchdog-Lebenszaehler konnte nicht an die SPS gesendet werden. Neuer Versuch in {DelaySeconds} Sekunden.",
-                  ConfigurationRetryDelay.TotalSeconds);
-               await Task.Delay(ConfigurationRetryDelay, stoppingToken);
+                  "003C|Watchdog-Lebenszaehler konnte beim Dispatcher-Aufruf nicht an die SPS gesendet werden.");
+               Disconnect();
+               nextConfigurationReadUtc = DateTime.UtcNow + ConfigurationRetryDelay;
             }
+         }
+         finally
+         {
+            sendLock.Release();
          }
       }
 
-      private async Task SendUntilConfigurationChangesAsync(
-         WatchdogConfiguration configuration,
-         CancellationToken stoppingToken)
+      private void EnsureConnected(WatchdogConfiguration currentConfiguration)
       {
-         using var client = new OpcClient(configuration.OpcEndpoint)
+         if (client is not null)
+         {
+            return;
+         }
+
+         client = new OpcClient(currentConfiguration.OpcEndpoint)
          {
             OperationTimeout = 5_000,
             SessionTimeout = 5_000,
@@ -90,44 +130,8 @@ namespace Falcom
          client.Connect();
          _logger.LogInformation(
             "003D|Watchdog mit SPS verbunden. Endpoint={Endpoint}, Node={Node}.",
-            configuration.OpcEndpoint,
-            configuration.NodeId);
-
-         using var timer = new PeriodicTimer(SendInterval);
-         var configurationCheckCounter = 0;
-
-         while (await timer.WaitForNextTickAsync(stoppingToken))
-         {
-            counter = GetNextCounter(counter);
-            OpcStatus status = client.WriteNode(configuration.NodeId, counter);
-
-            if (status.IsBad)
-            {
-               throw new InvalidOperationException(
-                  $"OPC-Schreiben fehlgeschlagen. Status={status.Code}, Beschreibung={status.Description}");
-            }
-
-            _logger.LogDebug(
-               "003E|Watchdog LebensZaehler={Counter} an {Node} gesendet.",
-               counter,
-               configuration.NodeId);
-
-            configurationCheckCounter++;
-            if (configurationCheckCounter < 60)
-            {
-               continue;
-            }
-
-            configurationCheckCounter = 0;
-            WatchdogConfiguration? currentConfiguration = LoadConfiguration();
-
-            if (currentConfiguration != configuration)
-            {
-               _logger.LogInformation(
-                  "003F|Watchdog-Konfiguration wurde geaendert. OPC-Verbindung wird neu aufgebaut.");
-               return;
-            }
-         }
+            currentConfiguration.OpcEndpoint,
+            currentConfiguration.NodeId);
       }
 
       private WatchdogConfiguration? LoadConfiguration()
@@ -135,14 +139,12 @@ namespace Falcom
          const string sql = """
             SELECT TOP (1)
                nodes.OPC_Node,
-               nodes.DataType,
-               events.IsActive
+               nodes.DataType
             FROM dbo.FALCOM_EVENTS AS events
             INNER JOIN dbo.FALCOM_EVENT_OPC_NODES AS nodes
                ON nodes.EventID = events.ID
             WHERE events.EventName = N'Watchdog'
               AND events.Direction = N'FALCOM->KRAN_SPS'
-              AND nodes.NodeName = N'LebensZaehler'
               AND nodes.IsRequired = 1;
             """;
 
@@ -166,27 +168,12 @@ namespace Falcom
          Dictionary<string, object> row = query.QueryResult[0];
          string nodeId = Convert.ToString(row["OPC_Node"])?.Trim() ?? string.Empty;
          string dataType = Convert.ToString(row["DataType"])?.Trim() ?? string.Empty;
-         bool isActive = Convert.ToBoolean(row["IsActive"]);
-
-         if (!isActive)
-         {
-            LogConfigurationIssue(
-               "Event Watchdog ist in FALCOM_EVENTS deaktiviert.");
-            return null;
-         }
 
          if (string.IsNullOrWhiteSpace(nodeId)
              || nodeId.StartsWith(PlaceholderPrefix, StringComparison.OrdinalIgnoreCase))
          {
             LogConfigurationIssue(
                $"OPC-Node ist noch nicht konfiguriert. Aktuell='{nodeId}'.");
-            return null;
-         }
-
-         if (!nodeId.EndsWith(NodeName, StringComparison.OrdinalIgnoreCase))
-         {
-            LogConfigurationIssue(
-               $"OPC-Node muss auf '{NodeName}' enden. Aktuell='{nodeId}'.");
             return null;
          }
 
@@ -226,18 +213,30 @@ namespace Falcom
             ConfigurationRetryDelay.TotalSeconds);
       }
 
-      private static int GetNextCounter(int current)
+      private void Disconnect()
       {
-         return current == int.MaxValue
-            ? 1
-            : current + 1;
+         if (client is null)
+         {
+            return;
+         }
+
+         try
+         {
+            client.Disconnect();
+         }
+         finally
+         {
+            client.Dispose();
+            client = null;
+         }
       }
 
-      public override async Task StopAsync(CancellationToken cancellationToken)
+      public void Dispose()
       {
+         Disconnect();
+         sendLock.Dispose();
          _logger.LogInformation(
             "0042|Watchdog-Sender wird beendet.");
-         await base.StopAsync(cancellationToken);
       }
 
       private sealed record WatchdogConfiguration(

@@ -7,10 +7,12 @@ public sealed class FalcomLoggerProvider : ILoggerProvider
    private readonly FalcomFileSink _fileSink;
    private readonly FalcomConsoleSink _consoleSink;
 
-   public FalcomLoggerProvider(string logFilePath)
+   public FalcomLoggerProvider(
+      FalcomFileSink fileSink,
+      FalcomConsoleSink consoleSink)
    {
-      _fileSink = new FalcomFileSink(logFilePath);
-      _consoleSink = new FalcomConsoleSink();
+      _fileSink = fileSink;
+      _consoleSink = consoleSink;
    }
 
    public ILogger CreateLogger(string categoryName)

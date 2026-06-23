@@ -14,29 +14,35 @@ namespace Falcom
       private readonly ConfigManager _configManager;
       private readonly OPC_Client_Crane _opcClientCrane;
       private readonly FalcomEventQueue _eventQueue; // NEU: Die Event-Queue injizieren
+      private readonly WatchdogSender _watchdogSender;
       private ProcessState _currentState;
+      private int watchdogEventPending;
+      private int watchdogValue;
 
       public Worker(
           ILogger<Worker> logger,
           ConfigManager configManager,
           OPC_Client_Crane opcClientCrane,
-          FalcomEventQueue eventQueue) // NEU: Im Konstruktor übergeben
+          FalcomEventQueue eventQueue,
+          WatchdogSender watchdogSender) // NEU: Im Konstruktor übergeben
       {
          _logger = logger;
          _configManager = configManager;
          _opcClientCrane = opcClientCrane;
          _eventQueue = eventQueue; // NEU
+         _watchdogSender = watchdogSender;
       }
 
       protected override async Task ExecuteAsync(CancellationToken stoppingToken)
       {
          _logger.LogInformation("002E|State machine started.");
+         using var watchdogTimerCancellation =
+            CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+         Task watchdogTimer = ScheduleWatchdogEventsAsync(
+            watchdogTimerCancellation.Token);
 
          try
          {
-            // Erstverbindung beim Start des Dienstes
-            await _opcClientCrane.ConnectUntilConnectedAsync(stoppingToken);
-
             ProcessState? lastLoggedState = null;
 
             // NEU: Die Schleife wartet jetzt reaktiv, bis ein Event in der Queue landet.
@@ -48,6 +54,29 @@ namespace Falcom
                {
                   try
                   {
+                     _logger.LogDebug("0030|Dispatcher verarbeitet Event {EventId} von Quelle {Source}.", falcomEvent.EventId, falcomEvent.Source);
+
+                     if (falcomEvent is WatchdogEvent watchdogEvent)
+                     {
+                        try
+                        {
+                           _logger.LogInformation(
+                              "0043|Dispatcher wirft zeitgesteuertes WatchdogEvent mit LebensZaehler={LebensZaehler}.",
+                              watchdogEvent.LebensZaehler);
+                           await _watchdogSender.SendAsync(
+                              watchdogEvent.LebensZaehler,
+                              stoppingToken);
+                        }
+                        finally
+                        {
+                           Interlocked.Exchange(
+                              ref watchdogEventPending,
+                              0);
+                        }
+
+                        continue;
+                     }
+
                      // 1. Datenfluss zur SPS sicherstellen
                      await _opcClientCrane.EnsureDataFlowAsync(stoppingToken);
 
@@ -61,8 +90,6 @@ namespace Falcom
                         }
                         lastLoggedState = _currentState;
                      }
-
-                     _logger.LogDebug("0030|Dispatcher verarbeitet Event {EventId} von Quelle {Source}.", falcomEvent.EventId, falcomEvent.Source);
 
                      // 3. NEU: Unterscheidung zwischen Haupt- (StateTrigger) und Neben-Events
                      if (falcomEvent.IsStateTrigger)
@@ -131,8 +158,42 @@ namespace Falcom
          }
          finally
          {
+            watchdogTimerCancellation.Cancel();
+
+            try
+            {
+               await watchdogTimer;
+            }
+            catch (OperationCanceledException)
+            {
+            }
+
             _logger.LogInformation("0038|Disconnecting from OPC Server...");
             _opcClientCrane.Disconnect();
+         }
+      }
+
+      private async Task ScheduleWatchdogEventsAsync(CancellationToken stoppingToken)
+      {
+         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
+
+         while (await timer.WaitForNextTickAsync(stoppingToken))
+         {
+            if (Interlocked.CompareExchange(
+               ref watchdogEventPending,
+               1,
+               0) != 0)
+            {
+               continue;
+            }
+
+            await _eventQueue.Writer.WriteAsync(
+               new WatchdogEvent(watchdogValue),
+               stoppingToken);
+
+            watchdogValue = watchdogValue == int.MaxValue
+               ? 0
+               : watchdogValue + 1;
          }
       }
 

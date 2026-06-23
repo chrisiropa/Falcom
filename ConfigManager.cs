@@ -54,8 +54,6 @@ namespace Falcom
 
             connectionString = csb.ConnectionString;
 
-            Console.WriteLine("ConnectionString = {0}", connectionString);
-
          }
          catch (Exception e)
          {
