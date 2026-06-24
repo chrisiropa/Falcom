@@ -16,6 +16,7 @@ namespace Falcom
       private readonly FalcomEventQueue _eventQueue; // NEU: Die Event-Queue injizieren
       private readonly WatchdogSender _watchdogSender;
       private readonly AktuelleFahrtRepository _aktuelleFahrtRepository;
+      private readonly FalcomRuntimeStatus _runtimeStatus;
       private ProcessState _currentState;
       private int watchdogEventPending;
       private int watchdogValue;
@@ -28,7 +29,8 @@ namespace Falcom
           OPC_Client_Crane opcClientCrane,
           FalcomEventQueue eventQueue,
           WatchdogSender watchdogSender,
-          AktuelleFahrtRepository aktuelleFahrtRepository) // NEU: Im Konstruktor übergeben
+          AktuelleFahrtRepository aktuelleFahrtRepository,
+          FalcomRuntimeStatus runtimeStatus) // NEU: Im Konstruktor übergeben
       {
          _logger = logger;
          _configManager = configManager;
@@ -36,6 +38,7 @@ namespace Falcom
          _eventQueue = eventQueue; // NEU
          _watchdogSender = watchdogSender;
          _aktuelleFahrtRepository = aktuelleFahrtRepository;
+         _runtimeStatus = runtimeStatus;
       }
 
       protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -110,6 +113,7 @@ namespace Falcom
 
                         if (result.Success)
                         {
+                           _runtimeStatus.SetAktuelleFahrt(result);
                            await _opcClientCrane.SendKranfahrtAuftragAsync(
                               result,
                               auftragTeilfahrt: 1,

@@ -1,0 +1,55 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <ApplicationIcon>..\Images\Falke-Transparent.ico</ApplicationIcon>
+    <Product>FALCOM Diagnose</Product>
+    <Authors>Christof Goletzko</Authors>
+    <Company>IROPA Elektrotechnik GMBH</Company>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Content Include="..\appsettings.json" Link="appsettings.json" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\appsettings.Development.json" Link="appsettings.Development.json" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\Images\Falke-Transparent.ico" Link="Falke-Transparent.ico" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\AktuelleFahrtRepository.cs" Link="Falcom\AktuelleFahrtRepository.cs" />
+    <Compile Include="..\AssemblyInfoWrapper.cs" Link="Falcom\AssemblyInfoWrapper.cs" />
+    <Compile Include="..\ConfigManager.cs" Link="Falcom\ConfigManager.cs" />
+    <Compile Include="..\DatabaseOrderPoller.cs" Link="Falcom\DatabaseOrderPoller.cs" />
+    <Compile Include="..\Enums.cs" Link="Falcom\Enums.cs" />
+    <Compile Include="..\Events_Database.cs" Link="Falcom\Events_Database.cs" />
+    <Compile Include="..\Events_Kran.cs" Link="Falcom\Events_Kran.cs" />
+    <Compile Include="..\Events_Kran_LebensZaehler.cs" Link="Falcom\Events_Kran_LebensZaehler.cs" />
+    <Compile Include="..\Events_System.cs" Link="Falcom\Events_System.cs" />
+    <Compile Include="..\FalcomConsoleSink.cs" Link="Falcom\FalcomConsoleSink.cs" />
+    <Compile Include="..\FalcomEventQueue.cs" Link="Falcom\FalcomEventQueue.cs" />
+    <Compile Include="..\FalcomFileSink.cs" Link="Falcom\FalcomFileSink.cs" />
+    <Compile Include="..\FalcomLogger.cs" Link="Falcom\FalcomLogger.cs" />
+    <Compile Include="..\FalcomLoggerProvider.cs" Link="Falcom\FalcomLoggerProvider.cs" />
+    <Compile Include="..\FalcomLoggingExtensions.cs" Link="Falcom\FalcomLoggingExtensions.cs" />
+    <Compile Include="..\FalcomRuntimeStatus.cs" Link="Falcom\FalcomRuntimeStatus.cs" />
+    <Compile Include="..\FalcomUiLogSink.cs" Link="Falcom\FalcomUiLogSink.cs" />
+    <Compile Include="..\IFalcomEvent.cs" Link="Falcom\IFalcomEvent.cs" />
+    <Compile Include="..\Lager.cs" Link="Falcom\Lager.cs" />
+    <Compile Include="..\OPC_Client_Crane.cs" Link="Falcom\OPC_Client_Crane.cs" />
+    <Compile Include="..\Parameter.cs" Link="Falcom\Parameter.cs" />
+    <Compile Include="..\SimpleSqlExecute.cs" Link="Falcom\SimpleSqlExecute.cs" />
+    <Compile Include="..\SimpleSqlQuery.cs" Link="Falcom\SimpleSqlQuery.cs" />
+    <Compile Include="..\SqlExecute.cs" Link="Falcom\SqlExecute.cs" />
+    <Compile Include="..\WatchdogSender.cs" Link="Falcom\WatchdogSender.cs" />
+    <Compile Include="..\Worker.cs" Link="Falcom\Worker.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.SqlClient" Version="6.1.3" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.0" />
+    <PackageReference Include="Opc.UaFx.Client" Version="2.53.1" />
+  </ItemGroup>
+</Project>

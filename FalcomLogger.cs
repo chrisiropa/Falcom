@@ -7,12 +7,18 @@ public sealed class FalcomLogger : ILogger
    private readonly string _categoryName;
    private readonly FalcomFileSink _fileSink;
    private readonly FalcomConsoleSink _consoleSink;
+   private readonly FalcomUiLogSink _uiLogSink;
 
-   public FalcomLogger(string categoryName, FalcomFileSink fileSink, FalcomConsoleSink consoleSink)
+   public FalcomLogger(
+      string categoryName,
+      FalcomFileSink fileSink,
+      FalcomConsoleSink consoleSink,
+      FalcomUiLogSink uiLogSink)
    {
       _categoryName = categoryName;
       _fileSink = fileSink;
       _consoleSink = consoleSink;
+      _uiLogSink = uiLogSink;
    }
 
    public IDisposable BeginScope<TState>(TState state) where TState : notnull
@@ -46,6 +52,7 @@ public sealed class FalcomLogger : ILogger
       var line = FormatLine(logLevel, message, exception);
       _fileSink.Write(line);
       _consoleSink.Write(logLevel, line);
+      _uiLogSink.Write(logLevel, line);
    }
 
    private string FormatLine(LogLevel logLevel, string message, Exception? exception)

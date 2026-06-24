@@ -1,5 +1,6 @@
 <Solution>
   <Project Path="Falcom.csproj" />
+  <Project Path="FalcomWpf/FalcomWpf.csproj" />
   <Project Path="KranSimulator/KranSimulator.csproj" />
   <Project Path="KranSPS_Simulator/KranSPS_Simulator.csproj" />
 </Solution>

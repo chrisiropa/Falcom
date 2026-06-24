@@ -27,9 +27,11 @@
 
   <ItemGroup>
     <Compile Remove="FalcomSimulator\**\*.cs" />
+    <Compile Remove="FalcomWpf\**\*.cs" />
     <Compile Remove="KranSimulator\**\*.cs" />
     <Compile Remove="KranSPS_Simulator\**\*.cs" />
     <None Remove="FalcomSimulator\**\*" />
+    <None Remove="FalcomWpf\**\*" />
     <None Remove="KranSimulator\**\*" />
     <None Remove="KranSPS_Simulator\**\*" />
   </ItemGroup>

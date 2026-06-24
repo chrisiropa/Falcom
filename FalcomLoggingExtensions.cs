@@ -15,6 +15,7 @@ public static class FalcomLoggingExtensions
          return new FalcomFileSink(appSettings.LogfilePath);
       });
       loggingBuilder.Services.AddSingleton<FalcomConsoleSink>();
+      loggingBuilder.Services.AddSingleton<FalcomUiLogSink>();
       loggingBuilder.Services.AddSingleton<ILoggerProvider, FalcomLoggerProvider>();
 
       loggingBuilder.AddConfiguration(configuration.GetSection("Logging"));

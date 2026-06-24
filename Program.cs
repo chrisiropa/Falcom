@@ -16,6 +16,7 @@ builder.Logging.AddFalcomLogging(builder.Configuration);
 
 builder.Services.Configure<Appsettings>(builder.Configuration.GetSection("Appsettings"));
 builder.Services.AddSingleton<ConfigManager>();
+builder.Services.AddSingleton<FalcomRuntimeStatus>();
 builder.Services.AddSingleton<Parameter>();
 builder.Services.AddSingleton<Lager>();;
 builder.Services.AddSingleton<OPC_Client_Crane>();

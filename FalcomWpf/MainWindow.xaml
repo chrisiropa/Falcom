@@ -1,0 +1,172 @@
+<Window x:Class="FalcomWpf.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="FALCOM Diagnose"
+        Width="1280"
+        Height="820"
+        MinWidth="980"
+        MinHeight="640"
+        Background="#111827">
+   <Window.Resources>
+      <Style x:Key="Card" TargetType="Border">
+         <Setter Property="Background" Value="#1F2937" />
+         <Setter Property="CornerRadius" Value="10" />
+         <Setter Property="Padding" Value="14" />
+         <Setter Property="Margin" Value="8" />
+      </Style>
+      <Style x:Key="Caption" TargetType="TextBlock">
+         <Setter Property="Foreground" Value="#9CA3AF" />
+         <Setter Property="FontSize" Value="13" />
+      </Style>
+      <Style x:Key="Value" TargetType="TextBlock">
+         <Setter Property="Foreground" Value="#F9FAFB" />
+         <Setter Property="FontSize" Value="18" />
+         <Setter Property="FontWeight" Value="SemiBold" />
+      </Style>
+   </Window.Resources>
+
+   <Grid Margin="16">
+      <Grid.RowDefinitions>
+         <RowDefinition Height="Auto" />
+         <RowDefinition Height="Auto" />
+         <RowDefinition Height="*" />
+      </Grid.RowDefinitions>
+
+      <DockPanel Grid.Row="0" Margin="0,0,0,12">
+         <StackPanel DockPanel.Dock="Left">
+            <TextBlock Text="FALCOM Diagnose"
+                       Foreground="#F9FAFB"
+                       FontSize="30"
+                       FontWeight="Bold" />
+            <TextBlock Text="Status, Watchdog, SPS-Lebenszeichen, OPC- und Ablauf-Log"
+                       Foreground="#9CA3AF"
+                       FontSize="14" />
+         </StackPanel>
+         <TextBlock x:Name="LastRefreshText"
+                    DockPanel.Dock="Right"
+                    Foreground="#9CA3AF"
+                    VerticalAlignment="Center"
+                    FontSize="14" />
+      </DockPanel>
+
+      <UniformGrid Grid.Row="1" Columns="4">
+         <Border Style="{StaticResource Card}">
+            <Grid>
+               <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="Auto" />
+                  <ColumnDefinition Width="*" />
+               </Grid.ColumnDefinitions>
+               <Ellipse x:Name="OpcLamp" Width="22" Height="22" Fill="#DC2626" Margin="0,4,12,0" />
+               <StackPanel Grid.Column="1">
+                  <TextBlock Style="{StaticResource Caption}" Text="OPC Kran-SPS" />
+                  <TextBlock x:Name="OpcStatusText" Style="{StaticResource Value}" Text="Unbekannt" />
+                  <TextBlock x:Name="OpcStatusTimeText" Style="{StaticResource Caption}" />
+               </StackPanel>
+            </Grid>
+         </Border>
+
+         <Border Style="{StaticResource Card}">
+            <Grid>
+               <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="Auto" />
+                  <ColumnDefinition Width="*" />
+               </Grid.ColumnDefinitions>
+               <Ellipse x:Name="WatchdogLamp" Width="22" Height="22" Fill="#DC2626" Margin="0,4,12,0" />
+               <StackPanel Grid.Column="1">
+                  <TextBlock Style="{StaticResource Caption}" Text="Watchdog Falcom → SPS" />
+                  <TextBlock x:Name="WatchdogValueText" Style="{StaticResource Value}" Text="-" />
+                  <TextBlock x:Name="WatchdogTimeText" Style="{StaticResource Caption}" />
+               </StackPanel>
+            </Grid>
+         </Border>
+
+         <Border Style="{StaticResource Card}">
+            <Grid>
+               <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="Auto" />
+                  <ColumnDefinition Width="*" />
+               </Grid.ColumnDefinitions>
+               <Ellipse x:Name="SpsLifeLamp" Width="22" Height="22" Fill="#DC2626" Margin="0,4,12,0" />
+               <StackPanel Grid.Column="1">
+                  <TextBlock Style="{StaticResource Caption}" Text="Lebenszähler SPS → Falcom" />
+                  <TextBlock x:Name="SpsLifeValueText" Style="{StaticResource Value}" Text="-" />
+                  <TextBlock x:Name="SpsLifeTimeText" Style="{StaticResource Caption}" />
+               </StackPanel>
+            </Grid>
+         </Border>
+
+         <Border Style="{StaticResource Card}">
+            <StackPanel>
+               <TextBlock Style="{StaticResource Caption}" Text="Aktuelle Fahrt" />
+               <TextBlock x:Name="CurrentRideText" Style="{StaticResource Value}" Text="Keine Fahrt" />
+               <TextBlock x:Name="CurrentRideDetailText" Style="{StaticResource Caption}" TextWrapping="Wrap" />
+            </StackPanel>
+         </Border>
+      </UniformGrid>
+
+      <Grid Grid.Row="2" Margin="0,12,0,0">
+         <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="2*" />
+            <ColumnDefinition Width="*" />
+         </Grid.ColumnDefinitions>
+
+         <Border Grid.Column="0" Style="{StaticResource Card}">
+            <DockPanel>
+               <TextBlock DockPanel.Dock="Top"
+                          Text="Ablauf-Logging"
+                          Foreground="#F9FAFB"
+                          FontSize="20"
+                          FontWeight="SemiBold"
+                          Margin="0,0,0,10" />
+               <ListBox x:Name="LogList"
+                        Background="#0B1220"
+                        Foreground="#E5E7EB"
+                        BorderThickness="0"
+                        FontFamily="Consolas"
+                        FontSize="12" />
+            </DockPanel>
+         </Border>
+
+         <Grid Grid.Column="1">
+            <Grid.RowDefinitions>
+               <RowDefinition Height="*" />
+               <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <Border Grid.Row="0" Style="{StaticResource Card}">
+               <DockPanel>
+                  <TextBlock DockPanel.Dock="Top"
+                             Text="OPC Senden"
+                             Foreground="#F9FAFB"
+                             FontSize="20"
+                             FontWeight="SemiBold"
+                             Margin="0,0,0,10" />
+                  <ListBox x:Name="OpcSendList"
+                           Background="#0B1220"
+                           Foreground="#E5E7EB"
+                           BorderThickness="0"
+                           FontFamily="Consolas"
+                           FontSize="12" />
+               </DockPanel>
+            </Border>
+
+            <Border Grid.Row="1" Style="{StaticResource Card}">
+               <DockPanel>
+                  <TextBlock DockPanel.Dock="Top"
+                             Text="OPC Empfang"
+                             Foreground="#F9FAFB"
+                             FontSize="20"
+                             FontWeight="SemiBold"
+                             Margin="0,0,0,10" />
+                  <ListBox x:Name="OpcReceiveList"
+                           Background="#0B1220"
+                           Foreground="#E5E7EB"
+                           BorderThickness="0"
+                           FontFamily="Consolas"
+                           FontSize="12" />
+               </DockPanel>
+            </Border>
+         </Grid>
+      </Grid>
+   </Grid>
+</Window>

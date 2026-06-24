@@ -14,6 +14,7 @@ namespace Falcom
       private readonly ILogger<WatchdogSender> _logger;
       private readonly ConfigManager _configManager;
       private readonly Parameter _parameter;
+      private readonly FalcomRuntimeStatus _runtimeStatus;
       private readonly SemaphoreSlim sendLock = new(1, 1);
       private string? lastConfigurationIssue;
       private WatchdogConfiguration? configuration;
@@ -25,11 +26,13 @@ namespace Falcom
       public WatchdogSender(
          ILogger<WatchdogSender> logger,
          ConfigManager configManager,
-         Parameter parameter)
+         Parameter parameter,
+         FalcomRuntimeStatus runtimeStatus)
       {
          _logger = logger;
          _configManager = configManager;
          _parameter = parameter;
+         _runtimeStatus = runtimeStatus;
       }
 
       public async Task SendAsync(
@@ -97,6 +100,7 @@ namespace Falcom
                }
 
                nextSendErrorLogUtc = DateTime.MinValue;
+               _runtimeStatus.SetWatchdogSent(lebensZaehler);
 
                _logger.LogDebug(
                   "003E|Watchdog LebensZaehler={Counter} an {Node} gesendet.",
@@ -113,6 +117,7 @@ namespace Falcom
                   nextSendErrorLogUtc = DateTime.UtcNow + ConfigurationRefreshInterval;
                }
 
+               _runtimeStatus.SetWatchdogError("Sendefehler");
                Disconnect();
                nextConfigurationReadUtc = DateTime.UtcNow + ConfigurationRetryDelay;
             }
