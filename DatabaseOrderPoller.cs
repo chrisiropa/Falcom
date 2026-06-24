@@ -1,28 +1,31 @@
-﻿using Microsoft.Extensions.Hosting;
+using Microsoft.Data.SqlClient;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using System;
-using System.Collections.Generic;
-using System.Threading;
-using System.Threading.Tasks;
+using System.Data;
 
 namespace Falcom
 {
    /// <summary>
-   /// Dieser Hintergrunddienst überwacht zyklisch die SQL-Datenbank auf neue, freigegebene
-   /// Chargieraufträge und schleust diese bei freier Bahn in die interne Event-Queue ein.
+   /// Überwacht zyklisch die SQL-Datenbank auf neue, freigegebene Chargieraufträge
+   /// und schleust diese bei freier Bahn in die interne Event-Queue ein.
    /// </summary>
    public sealed class DatabaseOrderPoller : BackgroundService
    {
       private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(2);
+      private static readonly TimeSpan PollSummaryInterval = TimeSpan.FromMinutes(1);
 
       private readonly ILogger<DatabaseOrderPoller> _logger;
       private readonly ConfigManager _configManager;
       private readonly FalcomEventQueue _eventQueue;
+      private int pollCount;
+      private int blockedPollCount;
+      private int idlePollCount;
+      private DateTime nextPollSummaryUtc = DateTime.UtcNow.Add(PollSummaryInterval);
 
       public DatabaseOrderPoller(
-          ILogger<DatabaseOrderPoller> logger,
-          ConfigManager configManager,
-          FalcomEventQueue eventQueue)
+         ILogger<DatabaseOrderPoller> logger,
+         ConfigManager configManager,
+         FalcomEventQueue eventQueue)
       {
          _logger = logger;
          _configManager = configManager;
@@ -31,132 +34,182 @@ namespace Falcom
 
       protected override async Task ExecuteAsync(CancellationToken stoppingToken)
       {
-         _logger.LogInformation("0004|Datenbank-Poller gestartet. Nutze Stored Procedures. Intervall: {Interval}s", PollInterval.TotalSeconds);
+         _logger.LogInformation(
+            "0004|Datenbank-Poller gestartet. Nutze Stored Procedures. Intervall: {Interval}s",
+            PollInterval.TotalSeconds);
 
          while (!stoppingToken.IsCancellationRequested)
          {
             try
             {
-               _logger.LogInformation("0005|Datenbank-Poller works...");
+               pollCount++;
 
-
-
-               // 1. Prüfen, ob aktuell bereits ein Auftrag aktiv bearbeitet wird
                if (IsAnyOrderInProgress())
                {
-                  _logger.LogInformation("0006|Auftrag läuft noch...");
-
-                  // Ein Auftrag läuft -> Poller schläft sofort wieder, um Doppelungen zu vermeiden
+                  blockedPollCount++;
+                  LogPollSummaryIfDue();
                   await Task.Delay(PollInterval, stoppingToken);
                   continue;
                }
 
-               // 2. Wenn die Luft rein ist: Den ältesten freigegebenen Auftrag via SP ermitteln
-               var nextOrder = FetchNextReleasedOrder();
+               OrderReleasedEvent? nextOrder = FetchNextReleasedOrder();
 
                if (nextOrder is not null)
                {
-                  _logger.LogInformation("0007|Neuen freigegebenen Auftrag gefunden: ID={OrderId}", nextOrder.AuftragsNummer);
+                  _logger.LogInformation(
+                     "0007|Neuen freigegebenen Auftrag gefunden: ID={OrderId}",
+                     nextOrder.AuftragsNummer);
 
-                  // 3. Status in der DB sofort auf 'IN_ARBEIT' (Zustand 2) setzen,
-                  // damit dieser Poller beim nächsten Durchlauf sperrt.
                   if (UpdateOrderStatus(nextOrder.AuftragsNummer, 2))
                   {
-                     // 4. Das Event in den C#-Kanal (Queue) pushen, damit der Dispatcher-Worker erwacht
-                     _logger.LogInformation("0008|Feuere OrderReleasedEvent fuer Auftrag {OrderId} ab.", nextOrder.AuftragsNummer);
+                     _logger.LogInformation(
+                        "0008|Feuere OrderReleasedEvent fuer Auftrag {OrderId} ab.",
+                        nextOrder.AuftragsNummer);
                      await _eventQueue.PushEventAsync(nextOrder);
                   }
                }
+               else
+               {
+                  idlePollCount++;
+               }
+
+               LogPollSummaryIfDue();
             }
             catch (OperationCanceledException)
             {
-               // Dienst wird regulär beendet
                throw;
             }
             catch (Exception ex)
             {
-               // Wir loggen ex.Message statt der ganzen ex-Instanz. 
-               // Das schneidet den Callstack komplett ab!
-               _logger.LogError("0009|Fehler beim Pollen der Auftragsdatenbank über Stored Procedures. Meldung: {Message}", ex.Message);
+               _logger.LogError(
+                  "0009|Fehler beim Pollen der Auftragsdatenbank über Stored Procedures. Meldung: {Message}",
+                  ex.Message);
             }
 
-            // Reguläre Pause vor dem nächsten Datenbank-Check
             await Task.Delay(PollInterval, stoppingToken);
          }
       }
 
-      /// <summary>
-      /// Ruft die SP 'FALCOM_IsOrderInProgress' auf, um zu prüfen, ob ein Auftrag mit Status 2 existiert.
-      /// </summary>
+      private void LogPollSummaryIfDue()
+      {
+         DateTime nowUtc = DateTime.UtcNow;
+
+         if (nowUtc < nextPollSummaryUtc)
+         {
+            return;
+         }
+
+         _logger.LogInformation(
+            "0005|Datenbank-Poller aktiv. In den letzten {Seconds:N0} Sekunden: Polls={PollCount}, blockiert={BlockedPollCount}, ohne neuen Auftrag={IdlePollCount}.",
+            PollSummaryInterval.TotalSeconds,
+            pollCount,
+            blockedPollCount,
+            idlePollCount);
+
+         pollCount = 0;
+         blockedPollCount = 0;
+         idlePollCount = 0;
+         nextPollSummaryUtc = nowUtc.Add(PollSummaryInterval);
+      }
+
       private bool IsAnyOrderInProgress()
       {
-         SimpleSqlQuery query = new(_configManager.ConnectionString, "EXEC dbo.FALCOM_IsOrderInProgress");
-
-         if (query.Exception is not null)
+         try
          {
-            _logger.LogError(query.Exception, "000A|Fehler bei FALCOM_IsOrderInProgress.");
-            return true; // Im Fehlerfall blockieren wir sicherheitshalber den Start weiterer Aufträge
-         }
+            using SqlConnection connection = new(_configManager.ConnectionString);
+            using SqlCommand command = CreateStoredProcedureCommand(
+               connection,
+               "dbo.FALCOM_IsOrderInProgress");
 
-         if (query.QueryResult is not null && query.QueryResult.Count > 0)
-         {
-            var isActive = Convert.ToInt32(query.QueryResult[0]["IsActive"]);
+            connection.Open();
+            using SqlDataReader reader = command.ExecuteReader();
+
+            if (!reader.Read())
+            {
+               return false;
+            }
+
+            int isActive = Convert.ToInt32(reader["IsActive"]);
             return isActive == 1;
          }
-
-         return false;
+         catch (Exception ex)
+         {
+            _logger.LogError(ex, "000A|Fehler bei FALCOM_IsOrderInProgress.");
+            return true;
+         }
       }
 
-      /// <summary>
-      /// Ruft die SP 'FALCOM_GetNextReleasedOrder' auf und wandelt das Ergebnis in ein C#-Event um.
-      /// </summary>
       private OrderReleasedEvent? FetchNextReleasedOrder()
       {
-         SimpleSqlQuery query = new(_configManager.ConnectionString, "EXEC dbo.FALCOM_GetNextReleasedOrder");
-
-         if (query.Exception is not null)
+         try
          {
-            _logger.LogError(query.Exception.Message, "000B|Fehler bei FALCOM_GetNextReleasedOrder.");
+            using SqlConnection connection = new(_configManager.ConnectionString);
+            using SqlCommand command = CreateStoredProcedureCommand(
+               connection,
+               "dbo.FALCOM_GetNextReleasedOrder");
+
+            connection.Open();
+            using SqlDataReader reader = command.ExecuteReader();
+
+            if (!reader.Read())
+            {
+               return null;
+            }
+
+            return new OrderReleasedEvent(
+               auftragsNummer: Convert.ToInt32(reader["ID"]),
+               eisensorteId: reader["EisensorteID"]?.ToString() ?? "UNBEKANNT",
+               zielGewichtKg: Convert.ToDouble(reader["ZielgewichtKg"]));
+         }
+         catch (Exception ex)
+         {
+            _logger.LogError(ex, "000B|Fehler bei FALCOM_GetNextReleasedOrder.");
             return null;
          }
-
-         if (query.QueryResult is not null && query.QueryResult.Count > 0)
-         {
-            var row = query.QueryResult[0];
-
-            // Instanziierung des Events mit den echten angepassten Spaltennamen aus eurer DB
-            return new OrderReleasedEvent(
-               auftragsNummer: Convert.ToInt32(row["ID"]),
-               eisensorteId: row["EisensorteID"]?.ToString() ?? "UNBEKANNT",
-               zielGewichtKg: Convert.ToDouble(row["ZielgewichtKg"])
-            );
-         }
-
-         return null;
       }
 
-      /// <summary>
-      /// Ruft die SP 'FALCOM_UpdateOrderStatus' auf, um den Zustand eines Auftrags fortzuschreiben.
-      /// </summary>
       private bool UpdateOrderStatus(int orderId, int newStatus)
       {
-         string sql = $"EXEC dbo.FALCOM_UpdateOrderStatus @OrderId = {orderId}, @NewStatus = {newStatus}";
-
-         SimpleSqlQuery query = new(_configManager.ConnectionString, sql);
-
-         if (query.Exception is not null)
+         try
          {
-            _logger.LogError(query.Exception, "000C|Fehler bei FALCOM_UpdateOrderStatus fuer ID {OrderId}.", orderId);
-            return false;
-         }
+            using SqlConnection connection = new(_configManager.ConnectionString);
+            using SqlCommand command = CreateStoredProcedureCommand(
+               connection,
+               "dbo.FALCOM_UpdateOrderStatus");
 
-         if (query.QueryResult is not null && query.QueryResult.Count > 0)
-         {
-            var rowsAffected = Convert.ToInt32(query.QueryResult[0]["RowsAffected"]);
+            command.Parameters.Add("@OrderId", SqlDbType.BigInt).Value = orderId;
+            command.Parameters.Add("@NewStatus", SqlDbType.Int).Value = newStatus;
+
+            connection.Open();
+            using SqlDataReader reader = command.ExecuteReader();
+
+            if (!reader.Read())
+            {
+               return true;
+            }
+
+            int rowsAffected = Convert.ToInt32(reader["RowsAffected"]);
             return rowsAffected > 0;
          }
+         catch (Exception ex)
+         {
+            _logger.LogError(
+               ex,
+               "000C|Fehler bei FALCOM_UpdateOrderStatus fuer ID {OrderId}.",
+               orderId);
+            return false;
+         }
+      }
 
-         return true;
+      private static SqlCommand CreateStoredProcedureCommand(
+         SqlConnection connection,
+         string procedureName)
+      {
+         return new SqlCommand(procedureName, connection)
+         {
+            CommandType = CommandType.StoredProcedure,
+            CommandTimeout = 30
+         };
       }
    }
 }

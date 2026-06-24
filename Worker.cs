@@ -15,22 +15,27 @@ namespace Falcom
       private readonly OPC_Client_Crane _opcClientCrane;
       private readonly FalcomEventQueue _eventQueue; // NEU: Die Event-Queue injizieren
       private readonly WatchdogSender _watchdogSender;
+      private readonly AktuelleFahrtRepository _aktuelleFahrtRepository;
       private ProcessState _currentState;
       private int watchdogEventPending;
       private int watchdogValue;
+      private int watchdogEventsInCurrentMinute;
+      private DateTime nextWatchdogSummaryUtc = DateTime.UtcNow.AddMinutes(1);
 
       public Worker(
           ILogger<Worker> logger,
           ConfigManager configManager,
           OPC_Client_Crane opcClientCrane,
           FalcomEventQueue eventQueue,
-          WatchdogSender watchdogSender) // NEU: Im Konstruktor übergeben
+          WatchdogSender watchdogSender,
+          AktuelleFahrtRepository aktuelleFahrtRepository) // NEU: Im Konstruktor übergeben
       {
          _logger = logger;
          _configManager = configManager;
          _opcClientCrane = opcClientCrane;
          _eventQueue = eventQueue; // NEU
          _watchdogSender = watchdogSender;
+         _aktuelleFahrtRepository = aktuelleFahrtRepository;
       }
 
       protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -60,9 +65,9 @@ namespace Falcom
                      {
                         try
                         {
-                           _logger.LogInformation(
-                              "0043|Dispatcher wirft zeitgesteuertes WatchdogEvent mit LebensZaehler={LebensZaehler}.",
-                              watchdogEvent.LebensZaehler);
+                           watchdogEventsInCurrentMinute++;
+                           LogWatchdogSummaryIfDue(watchdogEvent.LebensZaehler);
+
                            await _watchdogSender.SendAsync(
                               watchdogEvent.LebensZaehler,
                               stoppingToken);
@@ -75,6 +80,40 @@ namespace Falcom
                         }
 
                         continue;
+                     }
+
+                     if (falcomEvent is OrderReleasedEvent orderReleasedEvent)
+                     {
+                        AktuelleFahrtResult result =
+                           _aktuelleFahrtRepository.TryCreateNextAktuelleFahrt(
+                              orderReleasedEvent.AuftragsNummer);
+
+                        _logger.LogInformation(
+                           "0045|Aktuelle Fahrt aus Auftrag erzeugt: Erfolg={Success}, Grund={Reason}, AktuelleFahrtID={AktuelleFahrtID}, AuftragID={AuftragID}, Typ={AuftragsTyp}, Quelle={Quelle}, Ziel={Ziel}, SollMengeKg={SollMengeKg}.",
+                           result.Success,
+                           result.Reason,
+                           result.AktuelleFahrtID,
+                           result.AuftragID,
+                           result.AuftragsTyp,
+                           result.Quelle,
+                           result.Ziel,
+                           result.SollMengeKg);
+                     }
+
+                     if (falcomEvent is KranfahrtBeendetEvent kranfahrtBeendetEvent)
+                     {
+                        AktuelleFahrtResult result =
+                           _aktuelleFahrtRepository.CompleteAktuelleFahrt(
+                              kranfahrtBeendetEvent);
+
+                        _logger.LogInformation(
+                           "0046|KranfahrtBeendet verarbeitet: Erfolg={Success}, Grund={Reason}, AktuelleFahrtID={AktuelleFahrtID}, AuftragID={AuftragID}, Typ={AuftragsTyp}, IstMengeKg={IstMengeKg}.",
+                           result.Success,
+                           result.Reason,
+                           result.AktuelleFahrtID,
+                           result.AuftragID,
+                           result.AuftragsTyp,
+                           result.IstMengeKg);
                      }
 
                      // 1. Datenfluss zur SPS sicherstellen
@@ -171,6 +210,24 @@ namespace Falcom
             _logger.LogInformation("0038|Disconnecting from OPC Server...");
             _opcClientCrane.Disconnect();
          }
+      }
+
+      private void LogWatchdogSummaryIfDue(int currentLebensZaehler)
+      {
+         DateTime nowUtc = DateTime.UtcNow;
+
+         if (nowUtc < nextWatchdogSummaryUtc)
+         {
+            return;
+         }
+
+         _logger.LogInformation(
+            "0043|Watchdog aktiv. In den letzten 60 Sekunden wurden {WatchdogCount} Watchdog-Events verarbeitet. Aktueller LebensZaehler={LebensZaehler}.",
+            watchdogEventsInCurrentMinute,
+            currentLebensZaehler);
+
+         watchdogEventsInCurrentMinute = 0;
+         nextWatchdogSummaryUtc = nowUtc.AddMinutes(1);
       }
 
       private async Task ScheduleWatchdogEventsAsync(CancellationToken stoppingToken)

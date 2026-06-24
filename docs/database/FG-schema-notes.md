@@ -125,9 +125,9 @@ Wichtige Felder:
 - `Bezeichnung` nvarchar(128)
 - `Bemerkung` nvarchar(512), Default leerer String
 
-### `dbo.FALCOM_KRAN_QUEUE`
+### `dbo.FALCOM_AKTUELLE_FAHRT`
 
-Queue fuer Kran-Fahrbefehle.
+Aktuelle Fahrt beziehungsweise aktuell anstehender Kran-Fahrbefehl.
 
 Wichtige Felder:
 

@@ -4,17 +4,16 @@ namespace Falcom;
 
 public sealed class FalcomFileSink
 {
-   private const long MaxLogfileEntries = 200000;
+   private const long MaxLogfileBytes = 20L * 1024L * 1024L;
    private readonly object _sync = new();
    private readonly string _logfilePath;
-   private long _logfileEntryCounter;
    private bool _firstError = true;
 
    public FalcomFileSink(string logfilePath)
    {
       _logfilePath = logfilePath;
       EnsureDirectoryAndFile();
-      InitEntryCounter();
+      StartNewLogfile();
    }
 
    public void Write(string line)
@@ -28,18 +27,13 @@ public sealed class FalcomFileSink
          {
             try
             {
-               RotateIfNeeded();
+               RotateIfNeeded(line);
 
                using var streamWriter = new StreamWriter(_logfilePath, true, Encoding.UTF8);
                streamWriter.WriteLine(line);
 
                written = true;
-               _logfileEntryCounter++;
-
-               if ((_logfileEntryCounter % 100) == 0)
-               {
-                  DeleteOldLogFiles();
-               }
+               DeleteOldLogFiles();
             }
             catch (Exception exception)
             {
@@ -74,52 +68,78 @@ public sealed class FalcomFileSink
       }
    }
 
-   private void InitEntryCounter()
+   private void StartNewLogfile()
    {
       if (!File.Exists(_logfilePath))
-      {
-         _logfileEntryCounter = 0;
-         return;
-      }
-
-      using var reader = new StreamReader(_logfilePath);
-      _logfileEntryCounter = 0;
-
-      while (!reader.EndOfStream)
-      {
-         reader.ReadLine();
-         _logfileEntryCounter++;
-      }
-   }
-
-   private void RotateIfNeeded()
-   {
-      if (_logfileEntryCounter <= MaxLogfileEntries)
       {
          return;
       }
 
       try
       {
-         if (!File.Exists(_logfilePath))
+         FileInfo fileInfo = new(_logfilePath);
+
+         if (fileInfo.Length <= 0)
          {
-            _logfileEntryCounter = 0;
             return;
          }
 
-         var extension = Path.GetExtension(_logfilePath);
-         var filenameWithoutExtension = Path.GetFileNameWithoutExtension(_logfilePath);
-         var directory = Path.GetDirectoryName(_logfilePath) ?? string.Empty;
-         var historyFile = Path.Combine(directory, $"{filenameWithoutExtension} {DateTime.Now:ddMMyyyyHHmmssfff}{extension}");
+         RotateCurrentFile();
+      }
+      catch (Exception exception)
+      {
+         Console.Error.WriteLine($"FalcomFileSink startup rotation failed: {exception.Message}");
+      }
+   }
 
-         File.Move(_logfilePath, historyFile, true);
-         _logfileEntryCounter = 0;
+   private void RotateIfNeeded(string nextLine)
+   {
+      if (!File.Exists(_logfilePath))
+      {
+         return;
+      }
+
+      try
+      {
+         FileInfo fileInfo = new(_logfilePath);
+         long nextWriteBytes =
+            Encoding.UTF8.GetByteCount(nextLine)
+            + Encoding.UTF8.GetByteCount(Environment.NewLine);
+
+         if (fileInfo.Length + nextWriteBytes <= MaxLogfileBytes)
+         {
+            return;
+         }
+
+         RotateCurrentFile();
       }
       catch (Exception exception)
       {
          Console.Error.WriteLine($"FalcomFileSink rotation failed: {exception.Message}");
-         _logfileEntryCounter = 0;
       }
+   }
+
+   private void RotateCurrentFile()
+   {
+      if (!File.Exists(_logfilePath))
+      {
+         return;
+      }
+
+      var extension = Path.GetExtension(_logfilePath);
+      var filenameWithoutExtension = Path.GetFileNameWithoutExtension(_logfilePath);
+      var directory = Path.GetDirectoryName(_logfilePath) ?? string.Empty;
+      var historyFile = Path.Combine(
+         directory,
+         $"{filenameWithoutExtension} {DateTime.Now:yyyyMMdd-HHmmss-fff}{extension}");
+
+      File.Move(_logfilePath, historyFile, true);
+
+      using var fileStream = new FileStream(
+         _logfilePath,
+         FileMode.Create,
+         FileAccess.Write,
+         FileShare.ReadWrite);
    }
 
    private void DeleteOldLogFiles()
