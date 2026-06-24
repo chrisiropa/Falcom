@@ -104,44 +104,21 @@
          </Border>
       </UniformGrid>
 
-      <Grid Grid.Row="2" Margin="0,12,0,0">
-         <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="2*" />
-            <ColumnDefinition Width="*" />
-         </Grid.ColumnDefinitions>
-
-         <Border Grid.Column="0" Style="{StaticResource Card}">
-            <DockPanel>
-               <TextBlock DockPanel.Dock="Top"
-                          Text="Ablauf-Logging"
-                          Foreground="#F9FAFB"
-                          FontSize="20"
-                          FontWeight="SemiBold"
-                          Margin="0,0,0,10" />
-               <ListBox x:Name="LogList"
-                        Background="#0B1220"
-                        Foreground="#E5E7EB"
-                        BorderThickness="0"
-                        FontFamily="Consolas"
-                        FontSize="12" />
-            </DockPanel>
-         </Border>
-
-         <Grid Grid.Column="1">
-            <Grid.RowDefinitions>
-               <RowDefinition Height="*" />
-               <RowDefinition Height="*" />
-            </Grid.RowDefinitions>
-
-            <Border Grid.Row="0" Style="{StaticResource Card}">
+      <TabControl Grid.Row="2"
+                  Margin="0,12,0,0"
+                  Background="#111827"
+                  BorderBrush="#374151"
+                  Foreground="#F9FAFB">
+         <TabItem Header="Ablauf">
+            <Border Style="{StaticResource Card}">
                <DockPanel>
                   <TextBlock DockPanel.Dock="Top"
-                             Text="OPC Senden"
+                             Text="Ablauf-Logging"
                              Foreground="#F9FAFB"
                              FontSize="20"
                              FontWeight="SemiBold"
                              Margin="0,0,0,10" />
-                  <ListBox x:Name="OpcSendList"
+                  <ListBox x:Name="LogList"
                            Background="#0B1220"
                            Foreground="#E5E7EB"
                            BorderThickness="0"
@@ -149,24 +126,50 @@
                            FontSize="12" />
                </DockPanel>
             </Border>
+         </TabItem>
 
-            <Border Grid.Row="1" Style="{StaticResource Card}">
-               <DockPanel>
-                  <TextBlock DockPanel.Dock="Top"
-                             Text="OPC Empfang"
-                             Foreground="#F9FAFB"
-                             FontSize="20"
-                             FontWeight="SemiBold"
-                             Margin="0,0,0,10" />
-                  <ListBox x:Name="OpcReceiveList"
-                           Background="#0B1220"
-                           Foreground="#E5E7EB"
-                           BorderThickness="0"
-                           FontFamily="Consolas"
-                           FontSize="12" />
-               </DockPanel>
-            </Border>
-         </Grid>
-      </Grid>
+         <TabItem Header="OPC">
+            <Grid>
+               <Grid.RowDefinitions>
+                  <RowDefinition Height="*" />
+                  <RowDefinition Height="*" />
+               </Grid.RowDefinitions>
+
+               <Border Grid.Row="0" Style="{StaticResource Card}">
+                  <DockPanel>
+                     <TextBlock DockPanel.Dock="Top"
+                                Text="OPC Senden"
+                                Foreground="#F9FAFB"
+                                FontSize="20"
+                                FontWeight="SemiBold"
+                                Margin="0,0,0,10" />
+                     <ListBox x:Name="OpcSendList"
+                              Background="#0B1220"
+                              Foreground="#E5E7EB"
+                              BorderThickness="0"
+                              FontFamily="Consolas"
+                              FontSize="12" />
+                  </DockPanel>
+               </Border>
+
+               <Border Grid.Row="1" Style="{StaticResource Card}">
+                  <DockPanel>
+                     <TextBlock DockPanel.Dock="Top"
+                                Text="OPC Empfang"
+                                Foreground="#F9FAFB"
+                                FontSize="20"
+                                FontWeight="SemiBold"
+                                Margin="0,0,0,10" />
+                     <ListBox x:Name="OpcReceiveList"
+                              Background="#0B1220"
+                              Foreground="#E5E7EB"
+                              BorderThickness="0"
+                              FontFamily="Consolas"
+                              FontSize="12" />
+                  </DockPanel>
+               </Border>
+            </Grid>
+         </TabItem>
+      </TabControl>
    </Grid>
 </Window>

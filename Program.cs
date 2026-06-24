@@ -14,17 +14,7 @@ builder.Services.AddWindowsService(options =>
 builder.Logging.ClearProviders();
 builder.Logging.AddFalcomLogging(builder.Configuration);
 
-builder.Services.Configure<Appsettings>(builder.Configuration.GetSection("Appsettings"));
-builder.Services.AddSingleton<ConfigManager>();
-builder.Services.AddSingleton<FalcomRuntimeStatus>();
-builder.Services.AddSingleton<Parameter>();
-builder.Services.AddSingleton<Lager>();;
-builder.Services.AddSingleton<OPC_Client_Crane>();
-builder.Services.AddSingleton<FalcomEventQueue>();
-builder.Services.AddSingleton<WatchdogSender>();
-builder.Services.AddSingleton<AktuelleFahrtRepository>();
-builder.Services.AddHostedService<DatabaseOrderPoller>();
-builder.Services.AddHostedService<Worker>();
+builder.Services.AddFalcomCore(builder.Configuration);
 builder.Services.AddHostedService<ConsoleShutdownService>();
 
 var host = builder.Build();

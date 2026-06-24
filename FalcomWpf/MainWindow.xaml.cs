@@ -57,7 +57,7 @@ public partial class MainWindow : Window
          ? "Keine Fahrt"
          : $"#{snapshot.AktuelleFahrtID} / Auftrag {snapshot.AktuellerAuftragID}";
       CurrentRideDetailText.Text = snapshot.AktuelleFahrtID is null
-         ? string.Empty
+         ? $"Letzte Prüfung auf freigegebenen Auftrag: {FormatTimestamp(snapshot.LetzteFreigabePruefungAm)}"
          : $"{snapshot.AktuellerAuftragsTyp}: {snapshot.AktuelleQuelle} → {snapshot.AktuellesZiel}, Soll {snapshot.AktuelleSollMengeKg:0.###} kg";
 
       RefreshLogs();
@@ -75,29 +75,32 @@ public partial class MainWindow : Window
       lastLogCount = entries.Count;
 
       LogList.ItemsSource = entries
+         .Where(entry => !IsRawOpcLog(entry.Line))
          .Select(entry => entry.Line)
-         .Reverse()
          .ToList();
+      ScrollToLastItem(LogList);
 
       OpcSendList.ItemsSource = entries
          .Where(entry =>
             entry.Line.Contains("Watchdog", StringComparison.OrdinalIgnoreCase)
             || entry.Line.Contains("KranfahrtAuftrag", StringComparison.OrdinalIgnoreCase)
+            || entry.Line.Contains("0051|", StringComparison.OrdinalIgnoreCase)
             || entry.Line.Contains("0047|", StringComparison.OrdinalIgnoreCase)
             || entry.Line.Contains("003E|", StringComparison.OrdinalIgnoreCase))
          .Select(entry => entry.Line)
-         .Reverse()
          .ToList();
+      ScrollToLastItem(OpcSendList);
 
       OpcReceiveList.ItemsSource = entries
          .Where(entry =>
             entry.Line.Contains("LebensZaehler", StringComparison.OrdinalIgnoreCase)
             || entry.Line.Contains("KranfahrtBeendet", StringComparison.OrdinalIgnoreCase)
+            || entry.Line.Contains("0050|", StringComparison.OrdinalIgnoreCase)
             || entry.Line.Contains("004E|", StringComparison.OrdinalIgnoreCase)
             || entry.Line.Contains("0026|", StringComparison.OrdinalIgnoreCase))
          .Select(entry => entry.Line)
-         .Reverse()
          .ToList();
+      ScrollToLastItem(OpcReceiveList);
    }
 
    private static string FormatTimestamp(DateTime? timestamp)
@@ -105,5 +108,21 @@ public partial class MainWindow : Window
       return timestamp is null
          ? string.Empty
          : timestamp.Value.ToString("dd.MM.yyyy HH:mm:ss");
+   }
+
+   private static bool IsRawOpcLog(string line)
+   {
+      return line.Contains("0050|", StringComparison.OrdinalIgnoreCase)
+             || line.Contains("0051|", StringComparison.OrdinalIgnoreCase);
+   }
+
+   private static void ScrollToLastItem(System.Windows.Controls.ListBox listBox)
+   {
+      if (listBox.Items.Count == 0)
+      {
+         return;
+      }
+
+      listBox.ScrollIntoView(listBox.Items[^1]);
    }
 }

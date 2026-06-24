@@ -4,18 +4,16 @@ namespace Falcom;
 
 public sealed class FalcomLogger : ILogger
 {
-   private readonly string _categoryName;
    private readonly FalcomFileSink _fileSink;
    private readonly FalcomConsoleSink _consoleSink;
    private readonly FalcomUiLogSink _uiLogSink;
 
    public FalcomLogger(
-      string categoryName,
+      string _,
       FalcomFileSink fileSink,
       FalcomConsoleSink consoleSink,
       FalcomUiLogSink uiLogSink)
    {
-      _categoryName = categoryName;
       _fileSink = fileSink;
       _consoleSink = consoleSink;
       _uiLogSink = uiLogSink;
@@ -58,8 +56,8 @@ public sealed class FalcomLogger : ILogger
    private string FormatLine(LogLevel logLevel, string message, Exception? exception)
    {
       var timestamp = DateTime.Now.ToString("dd.MM.yy HH:mm:ss.fff");
-      var levelText = logLevel.ToString().ToUpperInvariant();
-      var line = $"{timestamp} [{levelText}] {_categoryName}: {message}";
+      var levelText = ToShortLevelText(logLevel);
+      var line = $"{timestamp} [{levelText}] {message}";
 
       if (exception is not null)
       {
@@ -67,6 +65,20 @@ public sealed class FalcomLogger : ILogger
       }
 
       return line;
+   }
+
+   private static string ToShortLevelText(LogLevel logLevel)
+   {
+      return logLevel switch
+      {
+         LogLevel.Trace => "TRC",
+         LogLevel.Debug => "DBG",
+         LogLevel.Information => "INF",
+         LogLevel.Warning => "WRN",
+         LogLevel.Error => "ERR",
+         LogLevel.Critical => "CRT",
+         _ => "---"
+      };
    }
 
    private sealed class NullScope : IDisposable

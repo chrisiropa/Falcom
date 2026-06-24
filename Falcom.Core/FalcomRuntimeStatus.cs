@@ -23,6 +23,8 @@ public sealed class FalcomRuntimeStatus
    public string AktuellesZiel { get; private set; } = string.Empty;
    public decimal? AktuelleSollMengeKg { get; private set; }
    public DateTime? AktuelleFahrtAktualisiertAm { get; private set; }
+   public DateTime? LetzteAuftragsPollerPruefungAm { get; private set; }
+   public DateTime? LetzteFreigabePruefungAm { get; private set; }
 
    public void SetOpcKranSpsStatus(bool verbunden, string statusText)
    {
@@ -76,6 +78,22 @@ public sealed class FalcomRuntimeStatus
       }
    }
 
+   public void SetAuftragsPollerPruefung()
+   {
+      lock (sync)
+      {
+         LetzteAuftragsPollerPruefungAm = DateTime.Now;
+      }
+   }
+
+   public void SetFreigabePruefung()
+   {
+      lock (sync)
+      {
+         LetzteFreigabePruefungAm = DateTime.Now;
+      }
+   }
+
    public FalcomRuntimeStatusSnapshot Snapshot()
    {
       lock (sync)
@@ -96,7 +114,9 @@ public sealed class FalcomRuntimeStatus
             AktuelleQuelle,
             AktuellesZiel,
             AktuelleSollMengeKg,
-            AktuelleFahrtAktualisiertAm);
+            AktuelleFahrtAktualisiertAm,
+            LetzteAuftragsPollerPruefungAm,
+            LetzteFreigabePruefungAm);
       }
    }
 }
@@ -117,4 +137,6 @@ public sealed record FalcomRuntimeStatusSnapshot(
    string AktuelleQuelle,
    string AktuellesZiel,
    decimal? AktuelleSollMengeKg,
-   DateTime? AktuelleFahrtAktualisiertAm);
+   DateTime? AktuelleFahrtAktualisiertAm,
+   DateTime? LetzteAuftragsPollerPruefungAm,
+   DateTime? LetzteFreigabePruefungAm);

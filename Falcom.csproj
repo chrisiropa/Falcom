@@ -27,20 +27,28 @@
 
   <ItemGroup>
     <Compile Remove="FalcomSimulator\**\*.cs" />
+    <Compile Remove="Falcom.Core\**\*.cs" />
     <Compile Remove="FalcomWpf\**\*.cs" />
     <Compile Remove="KranSimulator\**\*.cs" />
     <Compile Remove="KranSPS_Simulator\**\*.cs" />
+    <Content Remove="Falcom.Core\**\*" />
+    <Content Remove="FalcomWpf\**\*" />
+    <Content Remove="KranSimulator\**\*" />
+    <Content Remove="KranSPS_Simulator\**\*" />
     <None Remove="FalcomSimulator\**\*" />
+    <None Remove="Falcom.Core\**\*" />
     <None Remove="FalcomWpf\**\*" />
     <None Remove="KranSimulator\**\*" />
     <None Remove="KranSPS_Simulator\**\*" />
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.Data.SqlClient" Version="6.1.3" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.0" />
     <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.0" />
-    <PackageReference Include="Opc.UaFx.Client" Version="2.53.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="Falcom.Core\Falcom.Core.csproj" />
   </ItemGroup>
 
   <Target

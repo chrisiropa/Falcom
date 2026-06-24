@@ -89,6 +89,10 @@ namespace Falcom
             try
             {
                EnsureConnected(configuration);
+               _logger.LogInformation(
+                  "0051|OPC Senden: Node={Node}, Wert={Value}",
+                  configuration.NodeId,
+                  lebensZaehler);
                OpcStatus status = client!.WriteNode(
                   configuration.NodeId,
                   lebensZaehler);

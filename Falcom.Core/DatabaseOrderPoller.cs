@@ -17,6 +17,7 @@ namespace Falcom
       private readonly ILogger<DatabaseOrderPoller> _logger;
       private readonly ConfigManager _configManager;
       private readonly FalcomEventQueue _eventQueue;
+      private readonly FalcomRuntimeStatus _runtimeStatus;
       private int pollCount;
       private int blockedPollCount;
       private int idlePollCount;
@@ -25,11 +26,13 @@ namespace Falcom
       public DatabaseOrderPoller(
          ILogger<DatabaseOrderPoller> logger,
          ConfigManager configManager,
-         FalcomEventQueue eventQueue)
+         FalcomEventQueue eventQueue,
+         FalcomRuntimeStatus runtimeStatus)
       {
          _logger = logger;
          _configManager = configManager;
          _eventQueue = eventQueue;
+         _runtimeStatus = runtimeStatus;
       }
 
       protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -43,6 +46,8 @@ namespace Falcom
             try
             {
                pollCount++;
+               _runtimeStatus.SetAuftragsPollerPruefung();
+               _runtimeStatus.SetFreigabePruefung();
 
                if (IsAnyOrderInProgress())
                {
@@ -148,6 +153,7 @@ namespace Falcom
                connection,
                "dbo.FALCOM_GetNextReleasedOrder");
 
+            _runtimeStatus.SetFreigabePruefung();
             connection.Open();
             using SqlDataReader reader = command.ExecuteReader();
 

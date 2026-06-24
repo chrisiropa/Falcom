@@ -397,6 +397,10 @@ namespace Falcom
 
       private void WriteRequiredNode(string nodeId, object value)
       {
+         _logger.LogInformation(
+            "0051|OPC Senden: Node={Node}, Wert={Value}",
+            nodeId,
+            value);
          OpcStatus status = client!.WriteNode(nodeId, value);
 
          if (status.IsBad)
@@ -609,6 +613,10 @@ namespace Falcom
          try
          {
             var neuerZaehlerWert = e.Item.Value.Value;
+            _logger.LogInformation(
+               "0050|OPC Empfang: Node={Node}, Wert={Value}",
+               e.MonitoredItem.NodeId,
+               neuerZaehlerWert);
 
             if (string.Equals(
                e.MonitoredItem.NodeId.ToString(),
@@ -629,8 +637,6 @@ namespace Falcom
                LogKranSpsLebensZaehlerSummaryIfDue(lebensZaehler);
                return;
             }
-            _logger.LogInformation("0023|Event ausgelöst von [{Node}]. Wert: {Z}", e.MonitoredItem.NodeId, neuerZaehlerWert);
-
             if (e.MonitoredItem.NodeId.ToString().Contains("ns=1;s=LagerV.DataBlocks.Count_DB_1.Static.OPC.Zaehler"))
             {
                /*
