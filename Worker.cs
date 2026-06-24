@@ -41,6 +41,10 @@ namespace Falcom
       protected override async Task ExecuteAsync(CancellationToken stoppingToken)
       {
          _logger.LogInformation("002E|State machine started.");
+         _logger.LogInformation("004C|Initialer Verbindungsaufbau zur Kran-SPS wird gestartet.");
+         await _opcClientCrane.ConnectUntilConnectedAsync(stoppingToken);
+         _logger.LogInformation("004D|Initialer Verbindungsaufbau zur Kran-SPS ist abgeschlossen.");
+
          using var watchdogTimerCancellation =
             CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
          Task watchdogTimer = ScheduleWatchdogEventsAsync(
@@ -82,6 +86,11 @@ namespace Falcom
                         continue;
                      }
 
+                     if (falcomEvent is KranSpsLebensZaehlerEvent)
+                     {
+                        continue;
+                     }
+
                      if (falcomEvent is OrderReleasedEvent orderReleasedEvent)
                      {
                         AktuelleFahrtResult result =
@@ -98,6 +107,16 @@ namespace Falcom
                            result.Quelle,
                            result.Ziel,
                            result.SollMengeKg);
+
+                        if (result.Success)
+                        {
+                           await _opcClientCrane.SendKranfahrtAuftragAsync(
+                              result,
+                              auftragTeilfahrt: 1,
+                              toleranzKg: 150m,
+                              aktiv: true,
+                              stoppingToken);
+                        }
                      }
 
                      if (falcomEvent is KranfahrtBeendetEvent kranfahrtBeendetEvent)

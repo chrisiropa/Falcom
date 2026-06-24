@@ -1,5 +1,7 @@
+using Microsoft.Data.SqlClient;
 using Opc.UaFx;
 using Opc.UaFx.Client;
+using System.Data;
 
 namespace Falcom
 {
@@ -17,6 +19,7 @@ namespace Falcom
       private WatchdogConfiguration? configuration;
       private OpcClient? client;
       private DateTime nextConfigurationReadUtc = DateTime.MinValue;
+      private DateTime nextSendErrorLogUtc = DateTime.MinValue;
       private bool initialValueLogged;
 
       public WatchdogSender(
@@ -93,6 +96,8 @@ namespace Falcom
                      $"OPC-Schreiben fehlgeschlagen. Status={status.Code}, Beschreibung={status.Description}");
                }
 
+               nextSendErrorLogUtc = DateTime.MinValue;
+
                _logger.LogDebug(
                   "003E|Watchdog LebensZaehler={Counter} an {Node} gesendet.",
                   lebensZaehler,
@@ -100,9 +105,14 @@ namespace Falcom
             }
             catch (Exception ex)
             {
-               _logger.LogError(
-                  ex,
-                  "003C|Watchdog-Lebenszaehler konnte beim Dispatcher-Aufruf nicht an die SPS gesendet werden.");
+               if (DateTime.UtcNow >= nextSendErrorLogUtc)
+               {
+                  _logger.LogError(
+                     ex,
+                     "003C|Watchdog-Lebenszaehler konnte beim Dispatcher-Aufruf nicht an die SPS gesendet werden. Weitere gleiche Sendefehler werden fuer 60 Sekunden gedrosselt.");
+                  nextSendErrorLogUtc = DateTime.UtcNow + ConfigurationRefreshInterval;
+               }
+
                Disconnect();
                nextConfigurationReadUtc = DateTime.UtcNow + ConfigurationRetryDelay;
             }
@@ -136,38 +146,52 @@ namespace Falcom
 
       private WatchdogConfiguration? LoadConfiguration()
       {
-         const string sql = """
-            SELECT TOP (1)
-               nodes.OPC_Node,
-               nodes.DataType
-            FROM dbo.FALCOM_EVENTS AS events
-            INNER JOIN dbo.FALCOM_EVENT_OPC_NODES AS nodes
-               ON nodes.EventID = events.ID
-            WHERE events.EventName = N'Watchdog'
-              AND events.Direction = N'FALCOM->KRAN_SPS'
-              AND nodes.IsRequired = 1;
-            """;
+         string nodeId = string.Empty;
+         string dataType = string.Empty;
 
-         SimpleSqlQuery query = new(_configManager.ConnectionString, sql);
+         try
+         {
+            using SqlConnection connection = new(_configManager.ConnectionString);
+            using SqlCommand command = new("dbo.FALCOM_GetEventOpcNodes", connection)
+            {
+               CommandType = CommandType.StoredProcedure,
+               CommandTimeout = 30
+            };
 
-         if (query.Exception is not null)
+            command.Parameters.Add("@EventName", SqlDbType.NVarChar, 128).Value = "Watchdog";
+            command.Parameters.Add("@Direction", SqlDbType.NVarChar, 64).Value = "FALCOM->KRAN_SPS";
+
+            connection.Open();
+            using SqlDataReader reader = command.ExecuteReader();
+
+            while (reader.Read())
+            {
+               string nodeName = Convert.ToString(reader["NodeName"])?.Trim() ?? string.Empty;
+
+               if (!string.Equals(nodeName, "LebensZaehler", StringComparison.OrdinalIgnoreCase))
+               {
+                  continue;
+               }
+
+               nodeId = Convert.ToString(reader["OPC_Node"])?.Trim() ?? string.Empty;
+               dataType = Convert.ToString(reader["DataType"])?.Trim() ?? string.Empty;
+               break;
+            }
+         }
+         catch (Exception ex)
          {
             _logger.LogError(
-               query.Exception,
+               ex,
                "0040|Watchdog-Konfiguration konnte nicht aus der Datenbank gelesen werden.");
             return null;
          }
 
-         if (query.QueryResult is null || query.QueryResult.Count == 0)
+         if (string.IsNullOrWhiteSpace(nodeId))
          {
             LogConfigurationIssue(
-               "Event Watchdog oder Detail LebensZaehler wurde nicht gefunden.");
+               "Event Watchdog Richtung FALCOM->KRAN_SPS oder Detail LebensZaehler wurde nicht gefunden.");
             return null;
          }
-
-         Dictionary<string, object> row = query.QueryResult[0];
-         string nodeId = Convert.ToString(row["OPC_Node"])?.Trim() ?? string.Empty;
-         string dataType = Convert.ToString(row["DataType"])?.Trim() ?? string.Empty;
 
          if (string.IsNullOrWhiteSpace(nodeId)
              || nodeId.StartsWith(PlaceholderPrefix, StringComparison.OrdinalIgnoreCase))

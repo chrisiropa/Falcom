@@ -1,5 +1,7 @@
+using Microsoft.Data.SqlClient;
 using Opc.UaFx;
 using Opc.UaFx.Client;
+using System.Data;
 
 namespace Falcom
 {
@@ -10,6 +12,7 @@ namespace Falcom
       private const string WatchdogNodeId = "ns=1;s=LagerV.DataBlocks.OPC_Daten_ORG.Static.Watchdog";
 
       private readonly ILogger<OPC_Client_Crane> _logger;
+      private readonly ConfigManager _configManager;
       private readonly FalcomEventQueue _eventQueue; // NEU: Privates Feld für die Queue
       private readonly object _syncRoot = new();
       private readonly List<OpcMonitoredItem> monitoredItems = new();
@@ -17,6 +20,11 @@ namespace Falcom
       private OpcClient? client = null;
       private OpcSubscription? subscription = null;
       private bool spsDataUnavailable;
+      private DateTime nextDataFlowErrorLogUtc = DateTime.MinValue;
+      private DateTime nextKranfahrtAuftragConfigurationLogUtc = DateTime.MinValue;
+      private DateTime nextKranSpsLebensZaehlerLogUtc = DateTime.UtcNow.AddMinutes(1);
+      private int kranfahrtAuftragTelegrammNummer;
+      private int kranSpsLebensZaehlerEventsInCurrentMinute;
       private bool disposed;
 
       // NEU: FalcomEventQueue im Konstruktor anfordern
@@ -27,6 +35,7 @@ namespace Falcom
          FalcomEventQueue eventQueue)
       {
          _logger = logger;
+         _configManager = configManager;
          _eventQueue = eventQueue; // NEU: Zuweisung für den späteren Zugriff
          TraegerLicense();
          KranfahrtBeendetEvent.LoadOpcNodes(configManager);
@@ -103,6 +112,7 @@ namespace Falcom
 
             try
             {
+               EnsureConnected();
                ValidateWatchdogRead();
 
                if (spsDataUnavailable)
@@ -120,7 +130,12 @@ namespace Falcom
             catch (Exception ex)
             {
                spsDataUnavailable = true;
-               _logger.LogError(ex, "0016|SPS-Datenpruefung fehlgeschlagen. Wiederherstellungsversuch {Attempt} in {DelaySeconds} Sekunden.", attempt, ConnectRetryDelay.TotalSeconds);
+
+               if (DateTime.UtcNow >= nextDataFlowErrorLogUtc)
+               {
+                  _logger.LogError(ex, "0016|SPS-Datenpruefung fehlgeschlagen. Wiederherstellungsversuch {Attempt} in {DelaySeconds} Sekunden. Weitere gleiche Datenflussfehler werden fuer 60 Sekunden gedrosselt.", attempt, ConnectRetryDelay.TotalSeconds);
+                  nextDataFlowErrorLogUtc = DateTime.UtcNow.AddMinutes(1);
+               }
 
                await Task.Delay(ConnectRetryDelay, cancellationToken);
 
@@ -159,6 +174,179 @@ namespace Falcom
          }
       }
 
+      public Task<bool> SendKranfahrtAuftragAsync(
+         AktuelleFahrtResult aktuelleFahrt,
+         int auftragTeilfahrt,
+         decimal toleranzKg,
+         bool aktiv,
+         CancellationToken cancellationToken)
+      {
+         cancellationToken.ThrowIfCancellationRequested();
+
+         KranfahrtAuftragOpcNodes? nodes = LoadKranfahrtAuftragOpcNodes();
+
+         if (nodes is null)
+         {
+            return Task.FromResult(false);
+         }
+
+         try
+         {
+            EnsureConnected();
+
+            int telegrammNummer = kranfahrtAuftragTelegrammNummer == int.MaxValue
+               ? 0
+               : kranfahrtAuftragTelegrammNummer + 1;
+
+            WriteRequiredNode(nodes.AuftragNummer, Convert.ToInt32(aktuelleFahrt.AuftragID ?? 0));
+            WriteRequiredNode(nodes.AuftragTeilfahrt, auftragTeilfahrt);
+            WriteRequiredNode(nodes.Quelle, aktuelleFahrt.Quelle);
+            WriteRequiredNode(nodes.Ziel, aktuelleFahrt.Ziel);
+            WriteRequiredNode(nodes.SollMasse, Convert.ToDouble(aktuelleFahrt.SollMengeKg ?? 0m));
+            WriteRequiredNode(nodes.Toleranz, Convert.ToDouble(toleranzKg));
+            WriteRequiredNode(nodes.Aktiv, aktiv);
+            WriteRequiredNode(nodes.TelegrammNummer, telegrammNummer);
+
+            kranfahrtAuftragTelegrammNummer = telegrammNummer;
+
+            _logger.LogInformation(
+               "0047|KranfahrtAuftrag an SPS gesendet: Auftrag={AuftragID}, Teilfahrt={AuftragTeilfahrt}, Quelle={Quelle}, Ziel={Ziel}, SollMasseKg={SollMasseKg}, ToleranzKg={ToleranzKg}, Aktiv={Aktiv}, TelegrammNummer={TelegrammNummer}.",
+               aktuelleFahrt.AuftragID,
+               auftragTeilfahrt,
+               aktuelleFahrt.Quelle,
+               aktuelleFahrt.Ziel,
+               aktuelleFahrt.SollMengeKg,
+               toleranzKg,
+               aktiv,
+               telegrammNummer);
+
+            return Task.FromResult(true);
+         }
+         catch (Exception ex)
+         {
+            _logger.LogError(
+               ex,
+               "0048|KranfahrtAuftrag konnte nicht an die SPS gesendet werden. Auftrag={AuftragID}, Quelle={Quelle}, Ziel={Ziel}.",
+               aktuelleFahrt.AuftragID,
+               aktuelleFahrt.Quelle,
+               aktuelleFahrt.Ziel);
+            return Task.FromResult(false);
+         }
+      }
+
+      private void EnsureConnected()
+      {
+         lock (_syncRoot)
+         {
+            if (client is { State: OpcClientState.Connected })
+            {
+               return;
+            }
+
+            _logger.LogInformation(
+               "0049|OPC-Kranclient ist nicht verbunden. Verbindung wird vor der SPS-Operation aufgebaut.");
+            ConnectOnce();
+         }
+      }
+
+      private KranfahrtAuftragOpcNodes? LoadKranfahrtAuftragOpcNodes()
+      {
+         Dictionary<string, string> opcNodes = new(StringComparer.OrdinalIgnoreCase);
+
+         try
+         {
+            using SqlConnection connection = new(_configManager.ConnectionString);
+            using SqlCommand command = new("dbo.FALCOM_GetEventOpcNodes", connection)
+            {
+               CommandType = CommandType.StoredProcedure,
+               CommandTimeout = 30
+            };
+
+            command.Parameters.Add("@EventName", SqlDbType.NVarChar, 128).Value = "KranfahrtAuftrag";
+            command.Parameters.Add("@Direction", SqlDbType.NVarChar, 64).Value = "FALCOM->KRAN_SPS";
+
+            connection.Open();
+            using SqlDataReader reader = command.ExecuteReader();
+
+            while (reader.Read())
+            {
+               string nodeName = Convert.ToString(reader["NodeName"]) ?? string.Empty;
+               string opcNode = Convert.ToString(reader["OPC_Node"]) ?? string.Empty;
+
+               if (!string.IsNullOrWhiteSpace(nodeName))
+               {
+                  opcNodes[nodeName] = opcNode;
+               }
+            }
+         }
+         catch (Exception ex)
+         {
+            _logger.LogError(
+               ex,
+               "004A|OPC-Nodes fuer KranfahrtAuftrag konnten nicht aus der Datenbank gelesen werden.");
+            return null;
+         }
+
+         string[] requiredNodeNames =
+         [
+            "AuftragNummer",
+            "AuftragTeilfahrt",
+            "Quelle",
+            "Ziel",
+            "SollMasse",
+            "Toleranz",
+            "aktiv",
+            "TelegrammNummer"
+         ];
+
+         foreach (string nodeName in requiredNodeNames)
+         {
+            if (!opcNodes.TryGetValue(nodeName, out string? opcNode)
+                || string.IsNullOrWhiteSpace(opcNode)
+                || opcNode.StartsWith("NOCH_ZU_KONFIGURIEREN.", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(opcNode, "Trigger Richtung SPS, einfach hochzählen", StringComparison.OrdinalIgnoreCase))
+            {
+               LogKranfahrtAuftragConfigurationIssue(
+                  $"Node '{nodeName}' ist noch nicht gueltig konfiguriert.");
+               return null;
+            }
+         }
+
+         return new KranfahrtAuftragOpcNodes(
+            opcNodes["AuftragNummer"].Trim(),
+            opcNodes["AuftragTeilfahrt"].Trim(),
+            opcNodes["Quelle"].Trim(),
+            opcNodes["Ziel"].Trim(),
+            opcNodes["SollMasse"].Trim(),
+            opcNodes["Toleranz"].Trim(),
+            opcNodes["aktiv"].Trim(),
+            opcNodes["TelegrammNummer"].Trim());
+      }
+
+      private void LogKranfahrtAuftragConfigurationIssue(string reason)
+      {
+         if (DateTime.UtcNow < nextKranfahrtAuftragConfigurationLogUtc)
+         {
+            return;
+         }
+
+         _logger.LogWarning(
+            "004B|KranfahrtAuftrag wird noch nicht an die SPS gesendet: {Reason} Neuer Hinweis fruehestens in 60 Sekunden.",
+            reason);
+         nextKranfahrtAuftragConfigurationLogUtc = DateTime.UtcNow.AddMinutes(1);
+      }
+
+      private void WriteRequiredNode(string nodeId, object value)
+      {
+         OpcStatus status = client!.WriteNode(nodeId, value);
+
+         if (status.IsBad)
+         {
+            throw new InvalidOperationException(
+               $"OPC-Schreiben fehlgeschlagen. Node={nodeId}, Status={status.Code}, Beschreibung={status.Description}");
+         }
+      }
+
       private void ConnectOnce()
       {
          if (disposed)
@@ -184,6 +372,16 @@ namespace Falcom
          }
       }
 
+      private sealed record KranfahrtAuftragOpcNodes(
+         string AuftragNummer,
+         string AuftragTeilfahrt,
+         string Quelle,
+         string Ziel,
+         string SollMasse,
+         string Toleranz,
+         string Aktiv,
+         string TelegrammNummer);
+
       private void ValidateWatchdogRead()
       {
          if (disposed)
@@ -205,7 +403,7 @@ namespace Falcom
                throw new InvalidOperationException($"Watchdog-Node ist nicht sauber lesbar. Status={watchdogValue.Status.Code}, Wert={watchdogValue.Value}");
             }
 
-            _logger.LogInformation("001C|Watchdog-Node erfolgreich gelesen. Status={Status}, Wert={Value}", watchdogValue.Status.Code, watchdogValue.Value);
+            _logger.LogDebug("001C|Watchdog-Node erfolgreich gelesen. Status={Status}, Wert={Value}", watchdogValue.Status.Code, watchdogValue.Value);
          }
       }
 
@@ -327,6 +525,24 @@ namespace Falcom
          return true;
       }
 
+      private void LogKranSpsLebensZaehlerSummaryIfDue(int currentLebensZaehler)
+      {
+         DateTime nowUtc = DateTime.UtcNow;
+
+         if (nowUtc < nextKranSpsLebensZaehlerLogUtc)
+         {
+            return;
+         }
+
+         _logger.LogInformation(
+            "004E|Kran-SPS LebensZaehler aktiv. In den letzten 60 Sekunden wurden {EventCount} LebensZaehler-Events empfangen. Aktueller LebensZaehler={LebensZaehler}.",
+            kranSpsLebensZaehlerEventsInCurrentMinute,
+            currentLebensZaehler);
+
+         kranSpsLebensZaehlerEventsInCurrentMinute = 0;
+         nextKranSpsLebensZaehlerLogUtc = nowUtc.AddMinutes(1);
+      }
+
       private void HandleDataChange(object sender, OpcDataChangeReceivedEventArgs e)
       {
          if (client == null) return;
@@ -334,10 +550,31 @@ namespace Falcom
          try
          {
             var neuerZaehlerWert = e.Item.Value.Value;
+
+            if (string.Equals(
+               e.MonitoredItem.NodeId.ToString(),
+               ZaehlerNodeId,
+               StringComparison.Ordinal))
+            {
+               int lebensZaehler = Convert.ToInt32(neuerZaehlerWert);
+               var lebensZaehlerEvent = new KranSpsLebensZaehlerEvent(lebensZaehler);
+
+               if (!_eventQueue.Writer.TryWrite(lebensZaehlerEvent))
+               {
+                  _logger.LogError("004F|KranSpsLebensZaehlerEvent konnte nicht in die Event-Queue geschrieben werden.");
+                  return;
+               }
+
+               kranSpsLebensZaehlerEventsInCurrentMinute++;
+               LogKranSpsLebensZaehlerSummaryIfDue(lebensZaehler);
+               return;
+            }
             _logger.LogInformation("0023|Event ausgelöst von [{Node}]. Wert: {Z}", e.MonitoredItem.NodeId, neuerZaehlerWert);
 
             if (e.MonitoredItem.NodeId.ToString().Contains("ns=1;s=LagerV.DataBlocks.Count_DB_1.Static.OPC.Zaehler"))
             {
+               /*
+               //TEST
                string baseNode = "ns=1;s=LagerV.DataBlocks.Count_DB_1.Static.OPC.";
 
                var cmdStart = client.ReadNode($"{baseNode}Comands.Start")?.Value;
@@ -350,6 +587,7 @@ namespace Falcom
                {
                   // Deine Kran-Logik
                }
+               */
             }
             else if (string.Equals(
                e.MonitoredItem.NodeId.ToString(),

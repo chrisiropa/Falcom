@@ -132,13 +132,16 @@ Aktuelle Fahrt beziehungsweise aktuell anstehender Kran-Fahrbefehl.
 Wichtige Felder:
 
 - `ID` bigint identity, Primary Key
-- `Reihenfolge` int
-- `Prioritaet` int, Default `100`
 - `AuftragsTyp` nvarchar(30), Check: `CHARGIEREN`, `EINLAGERN`
 - `AuftragID` bigint
 - `ErstelltDatumZeit` datetime, Default `sysdatetime()`
 - `FertigDatumZeit` datetime nullable
 - `Bemerkung` nvarchar(500)
+- `Status` nvarchar(30), Default `OFFEN`
+- `QuellePositionID` bigint, Verweis auf `FALCOM_KRAN_POSITION.ID`
+- `ZielPositionID` bigint, Verweis auf `FALCOM_KRAN_POSITION.ID`
+- `SollMengeKg` decimal
+- `IstMengeKg` decimal
 
 ### `dbo.FALCOM_LAGER`
 
