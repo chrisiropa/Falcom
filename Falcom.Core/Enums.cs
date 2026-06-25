@@ -6,7 +6,11 @@ namespace Falcom
 {
     public enum ProcessState
     {
-        Idle, 
-        ConnectionLost
+        Idle,
+        AuftragBereit,
+        FahrtAnSpsGesendet,
+        WarteAufSpsRueckmeldung,
+        FahrtAbgeschlossen,
+        Fehler
    }
 }

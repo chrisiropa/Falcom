@@ -35,6 +35,21 @@ namespace Falcom
             : AktuelleFahrtResult.Empty("FALCOM_TryCreateNextAktuelleFahrt lieferte kein Ergebnis.");
       }
 
+      public AktuelleFahrtResult GetAktuelleFahrt()
+      {
+         using SqlConnection connection = new(_configManager.ConnectionString);
+         using SqlCommand command = CreateStoredProcedureCommand(
+            connection,
+            "dbo.FALCOM_GetAktuelleFahrt");
+
+         connection.Open();
+         using SqlDataReader reader = command.ExecuteReader();
+
+         return reader.Read()
+            ? ReadAktuelleFahrtResult(reader)
+            : AktuelleFahrtResult.Empty("FALCOM_GetAktuelleFahrt lieferte kein Ergebnis.");
+      }
+
       public AktuelleFahrtResult CompleteAktuelleFahrt(KranfahrtBeendetEvent kranfahrtBeendetEvent)
       {
          using SqlConnection connection = new(_configManager.ConnectionString);
@@ -113,7 +128,7 @@ namespace Falcom
       private static AktuelleFahrtResult ReadAktuelleFahrtResult(SqlDataReader reader)
       {
          return new AktuelleFahrtResult(
-            GetBoolean(reader, "Created") || GetBoolean(reader, "Completed"),
+            GetBoolean(reader, "Created") || GetBoolean(reader, "Completed") || GetBoolean(reader, "IsCurrent"),
             GetString(reader, "Reason"),
             GetNullableInt64(reader, "AktuelleFahrtID"),
             GetNullableInt64(reader, "AuftragID"),

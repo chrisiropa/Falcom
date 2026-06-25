@@ -206,8 +206,14 @@ namespace Falcom
 
             WriteRequiredNode(nodes.AuftragNummer, Convert.ToInt32(kranfahrtAuftragEvent.AuftragNummer));
             WriteRequiredNode(nodes.AuftragTeilfahrt, kranfahrtAuftragEvent.AuftragTeilfahrt);
-            WriteRequiredNode(nodes.Quelle, Convert.ToInt32(kranfahrtAuftragEvent.QuellePositionID));
-            WriteRequiredNode(nodes.Ziel, Convert.ToInt32(kranfahrtAuftragEvent.ZielPositionID));
+            WriteRequiredNodeWithStringFallback(
+               nodes.Quelle,
+               Convert.ToInt32(kranfahrtAuftragEvent.QuellePositionID),
+               KranfahrtAuftragEvent.QuelleNodeName);
+            WriteRequiredNodeWithStringFallback(
+               nodes.Ziel,
+               Convert.ToInt32(kranfahrtAuftragEvent.ZielPositionID),
+               KranfahrtAuftragEvent.ZielNodeName);
             WriteRequiredNode(nodes.SollMasse, Convert.ToDouble(kranfahrtAuftragEvent.SollMasseKg));
             WriteRequiredNode(nodes.Toleranz, Convert.ToDouble(kranfahrtAuftragEvent.ToleranzKg));
             WriteRequiredNode(nodes.TelegrammNummer, telegrammNummer);
@@ -387,6 +393,30 @@ namespace Falcom
          _logger.LogWarning(
             "004B|KranfahrtAuftrag wird noch nicht an die SPS gesendet: {Reason}",
             reason);
+      }
+
+      private void WriteRequiredNodeWithStringFallback(
+         string nodeId,
+         int value,
+         string nodeName)
+      {
+         try
+         {
+            WriteRequiredNode(nodeId, value);
+         }
+         catch (Exception ex)
+         {
+            _logger.LogWarning(
+               "0053|OPC Senden: Node {NodeName} akzeptiert Int32 aktuell nicht. Sende denselben Wert tolerant als String. Node={Node}, Wert={Value}. Grund={Reason}",
+               nodeName,
+               nodeId,
+               value,
+               ex.Message);
+
+            WriteRequiredNode(
+               nodeId,
+               value.ToString(System.Globalization.CultureInfo.InvariantCulture));
+         }
       }
 
       private void WriteRequiredNode(string nodeId, object value)

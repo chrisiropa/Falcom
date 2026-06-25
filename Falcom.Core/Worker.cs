@@ -18,6 +18,7 @@ namespace Falcom
       private readonly AktuelleFahrtRepository _aktuelleFahrtRepository;
       private readonly FalcomRuntimeStatus _runtimeStatus;
       private ProcessState _currentState;
+      private ProcessState? _lastLoggedState;
       private int watchdogEventPending;
       private int watchdogValue;
       private int watchdogEventsInCurrentMinute;
@@ -55,10 +56,10 @@ namespace Falcom
 
          try
          {
-            ProcessState? lastLoggedState = null;
-
             // NEU: Die Schleife wartet jetzt reaktiv, bis ein Event in der Queue landet.
             // WaitToReadAsync lässt den Thread schlafen, solange die Queue leer ist (0% CPU Last).
+            InitializeStateFromDatabase();
+
             while (await _eventQueue.Reader.WaitToReadAsync(stoppingToken))
             {
                // Verarbeite alle aktuell in der Queue liegenden Events der Reihe nach (FIFO)
@@ -96,6 +97,8 @@ namespace Falcom
 
                      if (falcomEvent is OrderReleasedEvent orderReleasedEvent)
                      {
+                        SetState(ProcessState.AuftragBereit);
+
                         AktuelleFahrtResult result =
                            _aktuelleFahrtRepository.TryCreateNextAktuelleFahrt(
                               orderReleasedEvent.AuftragsNummer);
@@ -146,7 +149,18 @@ namespace Falcom
                                  failResult.AktuelleFahrtID,
                                  failResult.AuftragID,
                                  bemerkung);
+
+                              SetState(ProcessState.Fehler);
                            }
+                           else
+                           {
+                              SetState(ProcessState.FahrtAnSpsGesendet);
+                              SetState(ProcessState.WarteAufSpsRueckmeldung);
+                           }
+                        }
+                        else
+                        {
+                           SetState(ProcessState.Fehler);
                         }
                      }
 
@@ -164,54 +178,20 @@ namespace Falcom
                            result.AuftragID,
                            result.AuftragsTyp,
                            result.IstMengeKg);
+
+                        if (result.Success)
+                        {
+                           SetState(ProcessState.FahrtAbgeschlossen);
+                           SetState(ProcessState.Idle);
+                        }
+                        else
+                        {
+                           SetState(ProcessState.Fehler);
+                        }
                      }
 
                      // 1. Datenfluss zur SPS sicherstellen
                      await _opcClientCrane.EnsureDataFlowAsync(stoppingToken);
-
-                     // 2. Zustandsänderung loggen
-                     if (_currentState != lastLoggedState)
-                     {
-                        if (_logger.IsEnabled(LogLevel.Information))
-                        {
-                           _logger.LogInformation("002F|State changed: {previousState} -> {currentState}",
-                              lastLoggedState?.ToString() ?? "INITIAL", _currentState);
-                        }
-                        lastLoggedState = _currentState;
-                     }
-
-                     // 3. NEU: Unterscheidung zwischen Haupt- (StateTrigger) und Neben-Events
-                     if (falcomEvent.IsStateTrigger)
-                     {
-                        _logger.LogInformation("0031|[HAUPT-EVENT] Trigger fuer State Machine erkannt: {EventType}", falcomEvent.GetType().Name);
-
-                        // State Machine Logik (Dein bestehender Switch-Block, jetzt ereignisgesteuert!)
-                        switch (_currentState)
-                        {
-                           case ProcessState.Idle:
-                              // TODO: Hier kannst du gezielt auf das konkrete Event reagieren, 
-                              // z.B. wenn es ein OrderReleasedEvent ist:
-                              // if (falcomEvent is OrderReleasedEvent orderEvent) { ... }
-                              break;
-
-                           case ProcessState.ConnectionLost:
-                              _logger.LogInformation("0032|OPC-Verbindung stabilisiert. Kehre zurück zu Idle.");
-                              _currentState = ProcessState.Idle;
-                              break;
-
-                           default:
-                              _logger.LogError("0033|Unhandled state: {state}. Resetting to Idle.", _currentState);
-                              _currentState = ProcessState.Idle;
-                              break;
-                        }
-                     }
-                     else
-                     {
-                        // Neben-Events: Gehen komplett an der State Machine vorbei
-                        _logger.LogInformation("0034|[NEBEN-EVENT] Datentelemetrie direkt in DB/Cache schreiben: {EventType}", falcomEvent.GetType().Name);
-
-                        // TODO: Direkt in DB-Historie wegschreiben, ohne den Kran-Ablauf zu stören
-                     }
 
                      // Optionale Überwachungsausgabe
                      //LogOpenCraneQueueOrdersIfChanged();
@@ -224,8 +204,7 @@ namespace Falcom
                   {
                      _logger.LogError(ex, "0035|Fehler im State-Machine-Zyklus (z.B. OPC-Verbindungsverlust). Zustand war: {state}", _currentState);
 
-                     _currentState = ProcessState.ConnectionLost;
-                     lastLoggedState = null;
+                     SetState(ProcessState.Fehler);
 
                      // Dem System im Fehlerfall etwas Zeit zum Atmen geben
                      await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
@@ -278,6 +257,52 @@ namespace Falcom
 
          watchdogEventsInCurrentMinute = 0;
          nextWatchdogSummaryUtc = nowUtc.AddMinutes(1);
+      }
+
+      private void InitializeStateFromDatabase()
+      {
+         AktuelleFahrtResult aktuelleFahrt =
+            _aktuelleFahrtRepository.GetAktuelleFahrt();
+
+         if (aktuelleFahrt.Success && aktuelleFahrt.AktuelleFahrtID is not null)
+         {
+            _runtimeStatus.SetAktuelleFahrt(aktuelleFahrt);
+
+            _logger.LogInformation(
+               "0054|Programmstart: Aktuelle Fahrt aus Datenbank erkannt. Rekonstruiere Zustand WarteAufSpsRueckmeldung. AktuelleFahrtID={AktuelleFahrtID}, AuftragID={AuftragID}, Typ={AuftragsTyp}, QuellePositionID={QuellePositionID}, ZielPositionID={ZielPositionID}, Quelle={Quelle}, Ziel={Ziel}, SollMengeKg={SollMengeKg}.",
+               aktuelleFahrt.AktuelleFahrtID,
+               aktuelleFahrt.AuftragID,
+               aktuelleFahrt.AuftragsTyp,
+               aktuelleFahrt.QuellePositionID,
+               aktuelleFahrt.ZielPositionID,
+               aktuelleFahrt.Quelle,
+               aktuelleFahrt.Ziel,
+               aktuelleFahrt.SollMengeKg);
+
+            SetState(ProcessState.WarteAufSpsRueckmeldung);
+            return;
+         }
+
+         _logger.LogInformation(
+            "0055|Programmstart: Keine aktuelle Fahrt in FALCOM_AKTUELLE_FAHRT gefunden. Zustand Idle.");
+         SetState(ProcessState.Idle);
+      }
+
+      private void SetState(ProcessState nextState)
+      {
+         _currentState = nextState;
+
+         if (_lastLoggedState == nextState)
+         {
+            return;
+         }
+
+         _logger.LogInformation(
+            "002F|State changed: {previousState} -> {currentState}",
+            _lastLoggedState?.ToString() ?? "INITIAL",
+            nextState);
+
+         _lastLoggedState = nextState;
       }
 
       private async Task ScheduleWatchdogEventsAsync(CancellationToken stoppingToken)
