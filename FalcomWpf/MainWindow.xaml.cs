@@ -10,7 +10,7 @@ public partial class MainWindow : Window
    private readonly FalcomRuntimeStatus runtimeStatus;
    private readonly FalcomUiLogSink uiLogSink;
    private readonly DispatcherTimer refreshTimer = new();
-   private int lastLogCount;
+   private long lastLogChangeVersion;
 
    public MainWindow(
       FalcomRuntimeStatus runtimeStatus,
@@ -21,7 +21,7 @@ public partial class MainWindow : Window
 
       InitializeComponent();
 
-      refreshTimer.Interval = TimeSpan.FromSeconds(1);
+      refreshTimer.Interval = TimeSpan.FromMilliseconds(200);
       refreshTimer.Tick += (_, _) => RefreshView();
       refreshTimer.Start();
 
@@ -65,39 +65,26 @@ public partial class MainWindow : Window
 
    private void RefreshLogs()
    {
-      IReadOnlyList<FalcomUiLogEntry> entries = uiLogSink.Snapshot();
+      long changeVersion = uiLogSink.ChangeVersion;
 
-      if (entries.Count == lastLogCount)
+      if (changeVersion == lastLogChangeVersion)
       {
          return;
       }
 
-      lastLogCount = entries.Count;
+      lastLogChangeVersion = changeVersion;
 
-      LogList.ItemsSource = entries
-         .Where(entry => !IsRawOpcLog(entry.Line))
+      LogList.ItemsSource = uiLogSink.SnapshotAblauf()
          .Select(entry => entry.Line)
          .ToList();
       ScrollToLastItem(LogList);
 
-      OpcSendList.ItemsSource = entries
-         .Where(entry =>
-            entry.Line.Contains("Watchdog", StringComparison.OrdinalIgnoreCase)
-            || entry.Line.Contains("KranfahrtAuftrag", StringComparison.OrdinalIgnoreCase)
-            || entry.Line.Contains("0051|", StringComparison.OrdinalIgnoreCase)
-            || entry.Line.Contains("0047|", StringComparison.OrdinalIgnoreCase)
-            || entry.Line.Contains("003E|", StringComparison.OrdinalIgnoreCase))
+      OpcSendList.ItemsSource = uiLogSink.SnapshotOpcSend()
          .Select(entry => entry.Line)
          .ToList();
       ScrollToLastItem(OpcSendList);
 
-      OpcReceiveList.ItemsSource = entries
-         .Where(entry =>
-            entry.Line.Contains("LebensZaehler", StringComparison.OrdinalIgnoreCase)
-            || entry.Line.Contains("KranfahrtBeendet", StringComparison.OrdinalIgnoreCase)
-            || entry.Line.Contains("0050|", StringComparison.OrdinalIgnoreCase)
-            || entry.Line.Contains("004E|", StringComparison.OrdinalIgnoreCase)
-            || entry.Line.Contains("0026|", StringComparison.OrdinalIgnoreCase))
+      OpcReceiveList.ItemsSource = uiLogSink.SnapshotOpcReceive()
          .Select(entry => entry.Line)
          .ToList();
       ScrollToLastItem(OpcReceiveList);
@@ -108,12 +95,6 @@ public partial class MainWindow : Window
       return timestamp is null
          ? string.Empty
          : timestamp.Value.ToString("dd.MM.yyyy HH:mm:ss");
-   }
-
-   private static bool IsRawOpcLog(string line)
-   {
-      return line.Contains("0050|", StringComparison.OrdinalIgnoreCase)
-             || line.Contains("0051|", StringComparison.OrdinalIgnoreCase);
    }
 
    private static void ScrollToLastItem(System.Windows.Controls.ListBox listBox)

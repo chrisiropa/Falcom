@@ -40,11 +40,10 @@ BEGIN TRY
    USING (VALUES
       (N'AuftragNummer',    N'NOCH_ZU_KONFIGURIEREN.AuftragNummer',    N'Payload', N'Int32'),
       (N'AuftragTeilfahrt', N'NOCH_ZU_KONFIGURIEREN.AuftragTeilfahrt', N'Payload', N'Int32'),
-      (N'Quelle',           N'NOCH_ZU_KONFIGURIEREN.Quelle',           N'Payload', N'String'),
-      (N'Ziel',             N'NOCH_ZU_KONFIGURIEREN.Ziel',             N'Payload', N'String'),
+      (N'Quelle',           N'NOCH_ZU_KONFIGURIEREN.Quelle',           N'Payload', N'Int32'),
+      (N'Ziel',             N'NOCH_ZU_KONFIGURIEREN.Ziel',             N'Payload', N'Int32'),
       (N'SollMasse',        N'NOCH_ZU_KONFIGURIEREN.SollMasse',        N'Payload', N'Double'),
       (N'Toleranz',         N'NOCH_ZU_KONFIGURIEREN.Toleranz',         N'Payload', N'Double'),
-      (N'aktiv',            N'NOCH_ZU_KONFIGURIEREN.aktiv',            N'Payload', N'Boolean'),
       (N'TelegrammNummer',  N'NOCH_ZU_KONFIGURIEREN.TelegrammNummer',  N'Trigger', N'Int32')
    ) AS source (NodeName, OPC_Node, NodeRole, DataType)
    ON target.EventID = @EventID

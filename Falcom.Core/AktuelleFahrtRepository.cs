@@ -71,6 +71,34 @@ namespace Falcom
             : AktuelleFahrtResult.Empty("FALCOM_CompleteAktuelleFahrt lieferte kein Ergebnis.");
       }
 
+      public AktuelleFahrtResult FailAktuelleFahrt(
+         long? aktuelleFahrtId,
+         string bemerkung)
+      {
+         using SqlConnection connection = new(_configManager.ConnectionString);
+         using SqlCommand command = CreateStoredProcedureCommand(
+            connection,
+            "dbo.FALCOM_FailAktuelleFahrt");
+
+         command.Parameters.Add(
+            new SqlParameter("@AktuelleFahrtID", SqlDbType.BigInt)
+            {
+               Value = aktuelleFahrtId.HasValue
+                  ? aktuelleFahrtId.Value
+                  : DBNull.Value
+            });
+
+         command.Parameters.Add("@Bemerkung", SqlDbType.NVarChar, 1024).Value =
+            ToDbValue(bemerkung);
+
+         connection.Open();
+         using SqlDataReader reader = command.ExecuteReader();
+
+         return reader.Read()
+            ? ReadAktuelleFahrtResult(reader)
+            : AktuelleFahrtResult.Empty("FALCOM_FailAktuelleFahrt lieferte kein Ergebnis.");
+      }
+
       private static SqlCommand CreateStoredProcedureCommand(
          SqlConnection connection,
          string procedureName)
@@ -92,6 +120,8 @@ namespace Falcom
             GetString(reader, "AuftragsTyp"),
             GetString(reader, "Quelle"),
             GetString(reader, "Ziel"),
+            GetNullableInt64(reader, "QuellePositionID"),
+            GetNullableInt64(reader, "ZielPositionID"),
             GetNullableDecimal(reader, "SollMengeKg"),
             GetNullableDecimal(reader, "IstMengeKg"));
       }
@@ -184,6 +214,8 @@ namespace Falcom
       string AuftragsTyp,
       string Quelle,
       string Ziel,
+      long? QuellePositionID,
+      long? ZielPositionID,
       decimal? SollMengeKg,
       decimal? IstMengeKg)
    {
@@ -197,6 +229,8 @@ namespace Falcom
             string.Empty,
             string.Empty,
             string.Empty,
+            null,
+            null,
             null,
             null);
       }

@@ -22,10 +22,10 @@ namespace Falcom
       private OpcSubscription? subscription = null;
       private bool spsDataUnavailable;
       private DateTime nextDataFlowErrorLogUtc = DateTime.MinValue;
-      private DateTime nextKranfahrtAuftragConfigurationLogUtc = DateTime.MinValue;
       private DateTime nextKranSpsLebensZaehlerLogUtc = DateTime.UtcNow.AddMinutes(1);
       private int kranfahrtAuftragTelegrammNummer;
       private int kranSpsLebensZaehlerEventsInCurrentMinute;
+      private string? lastKranfahrtAuftragConfigurationIssue;
       private bool disposed;
 
       // NEU: FalcomEventQueue im Konstruktor anfordern
@@ -181,11 +181,8 @@ namespace Falcom
          }
       }
 
-      public Task<bool> SendKranfahrtAuftragAsync(
-         AktuelleFahrtResult aktuelleFahrt,
-         int auftragTeilfahrt,
-         decimal toleranzKg,
-         bool aktiv,
+      public Task<OpcSendResult> SendKranfahrtAuftragAsync(
+         KranfahrtAuftragEvent kranfahrtAuftragEvent,
          CancellationToken cancellationToken)
       {
          cancellationToken.ThrowIfCancellationRequested();
@@ -194,7 +191,9 @@ namespace Falcom
 
          if (nodes is null)
          {
-            return Task.FromResult(false);
+            return Task.FromResult(OpcSendResult.Failed(
+               lastKranfahrtAuftragConfigurationIssue
+               ?? "KranfahrtAuftrag-OPC-Nodes sind nicht gueltig konfiguriert."));
          }
 
          try
@@ -205,39 +204,38 @@ namespace Falcom
                ? 0
                : kranfahrtAuftragTelegrammNummer + 1;
 
-            WriteRequiredNode(nodes.AuftragNummer, Convert.ToInt32(aktuelleFahrt.AuftragID ?? 0));
-            WriteRequiredNode(nodes.AuftragTeilfahrt, auftragTeilfahrt);
-            WriteRequiredNode(nodes.Quelle, aktuelleFahrt.Quelle);
-            WriteRequiredNode(nodes.Ziel, aktuelleFahrt.Ziel);
-            WriteRequiredNode(nodes.SollMasse, Convert.ToDouble(aktuelleFahrt.SollMengeKg ?? 0m));
-            WriteRequiredNode(nodes.Toleranz, Convert.ToDouble(toleranzKg));
-            WriteRequiredNode(nodes.Aktiv, aktiv);
+            WriteRequiredNode(nodes.AuftragNummer, Convert.ToInt32(kranfahrtAuftragEvent.AuftragNummer));
+            WriteRequiredNode(nodes.AuftragTeilfahrt, kranfahrtAuftragEvent.AuftragTeilfahrt);
+            WriteRequiredNode(nodes.Quelle, Convert.ToInt32(kranfahrtAuftragEvent.QuellePositionID));
+            WriteRequiredNode(nodes.Ziel, Convert.ToInt32(kranfahrtAuftragEvent.ZielPositionID));
+            WriteRequiredNode(nodes.SollMasse, Convert.ToDouble(kranfahrtAuftragEvent.SollMasseKg));
+            WriteRequiredNode(nodes.Toleranz, Convert.ToDouble(kranfahrtAuftragEvent.ToleranzKg));
             WriteRequiredNode(nodes.TelegrammNummer, telegrammNummer);
 
             kranfahrtAuftragTelegrammNummer = telegrammNummer;
 
             _logger.LogInformation(
-               "0047|KranfahrtAuftrag an SPS gesendet: Auftrag={AuftragID}, Teilfahrt={AuftragTeilfahrt}, Quelle={Quelle}, Ziel={Ziel}, SollMasseKg={SollMasseKg}, ToleranzKg={ToleranzKg}, Aktiv={Aktiv}, TelegrammNummer={TelegrammNummer}.",
-               aktuelleFahrt.AuftragID,
-               auftragTeilfahrt,
-               aktuelleFahrt.Quelle,
-               aktuelleFahrt.Ziel,
-               aktuelleFahrt.SollMengeKg,
-               toleranzKg,
-               aktiv,
+               "0047|KranfahrtAuftrag an SPS gesendet: Auftrag={AuftragID}, Teilfahrt={AuftragTeilfahrt}, QuellePositionID={QuellePositionID}, ZielPositionID={ZielPositionID}, SollMasseKg={SollMasseKg}, ToleranzKg={ToleranzKg}, TelegrammNummer={TelegrammNummer}.",
+               kranfahrtAuftragEvent.AuftragNummer,
+               kranfahrtAuftragEvent.AuftragTeilfahrt,
+               kranfahrtAuftragEvent.QuellePositionID,
+               kranfahrtAuftragEvent.ZielPositionID,
+               kranfahrtAuftragEvent.SollMasseKg,
+               kranfahrtAuftragEvent.ToleranzKg,
                telegrammNummer);
 
-            return Task.FromResult(true);
+            return Task.FromResult(OpcSendResult.Ok());
          }
          catch (Exception ex)
          {
             _logger.LogError(
                ex,
-               "0048|KranfahrtAuftrag konnte nicht an die SPS gesendet werden. Auftrag={AuftragID}, Quelle={Quelle}, Ziel={Ziel}.",
-               aktuelleFahrt.AuftragID,
-               aktuelleFahrt.Quelle,
-               aktuelleFahrt.Ziel);
-            return Task.FromResult(false);
+               "0048|KranfahrtAuftrag konnte nicht an die SPS gesendet werden. Auftrag={AuftragID}, QuellePositionID={QuellePositionID}, ZielPositionID={ZielPositionID}.",
+               kranfahrtAuftragEvent.AuftragNummer,
+               kranfahrtAuftragEvent.QuellePositionID,
+               kranfahrtAuftragEvent.ZielPositionID);
+            return Task.FromResult(OpcSendResult.Failed(
+               $"KranfahrtAuftrag konnte nicht an die SPS gesendet werden: {ex.Message}"));
          }
       }
 
@@ -269,8 +267,10 @@ namespace Falcom
                CommandTimeout = 30
             };
 
-            command.Parameters.Add("@EventName", SqlDbType.NVarChar, 128).Value = "KranfahrtAuftrag";
-            command.Parameters.Add("@Direction", SqlDbType.NVarChar, 64).Value = "FALCOM->KRAN_SPS";
+            command.Parameters.Add("@EventName", SqlDbType.NVarChar, 128).Value =
+               KranfahrtAuftragEvent.EventName;
+            command.Parameters.Add("@Direction", SqlDbType.NVarChar, 64).Value =
+               KranfahrtAuftragEvent.Direction;
 
             connection.Open();
             using SqlDataReader reader = command.ExecuteReader();
@@ -296,14 +296,13 @@ namespace Falcom
 
          string[] requiredNodeNames =
          [
-            "AuftragNummer",
-            "AuftragTeilfahrt",
-            "Quelle",
-            "Ziel",
-            "SollMasse",
-            "Toleranz",
-            "aktiv",
-            "TelegrammNummer"
+            KranfahrtAuftragEvent.AuftragNummerNodeName,
+            KranfahrtAuftragEvent.AuftragTeilfahrtNodeName,
+            KranfahrtAuftragEvent.QuelleNodeName,
+            KranfahrtAuftragEvent.ZielNodeName,
+            KranfahrtAuftragEvent.SollMasseNodeName,
+            KranfahrtAuftragEvent.ToleranzNodeName,
+            KranfahrtAuftragEvent.TelegrammNummerNodeName
          ];
 
          foreach (string nodeName in requiredNodeNames)
@@ -320,14 +319,13 @@ namespace Falcom
          }
 
          return new KranfahrtAuftragOpcNodes(
-            opcNodes["AuftragNummer"].Trim(),
-            opcNodes["AuftragTeilfahrt"].Trim(),
-            opcNodes["Quelle"].Trim(),
-            opcNodes["Ziel"].Trim(),
-            opcNodes["SollMasse"].Trim(),
-            opcNodes["Toleranz"].Trim(),
-            opcNodes["aktiv"].Trim(),
-            opcNodes["TelegrammNummer"].Trim());
+            opcNodes[KranfahrtAuftragEvent.AuftragNummerNodeName].Trim(),
+            opcNodes[KranfahrtAuftragEvent.AuftragTeilfahrtNodeName].Trim(),
+            opcNodes[KranfahrtAuftragEvent.QuelleNodeName].Trim(),
+            opcNodes[KranfahrtAuftragEvent.ZielNodeName].Trim(),
+            opcNodes[KranfahrtAuftragEvent.SollMasseNodeName].Trim(),
+            opcNodes[KranfahrtAuftragEvent.ToleranzNodeName].Trim(),
+            opcNodes[KranfahrtAuftragEvent.TelegrammNummerNodeName].Trim());
       }
 
       private string LoadRequiredEventOpcNode(
@@ -384,15 +382,11 @@ namespace Falcom
 
       private void LogKranfahrtAuftragConfigurationIssue(string reason)
       {
-         if (DateTime.UtcNow < nextKranfahrtAuftragConfigurationLogUtc)
-         {
-            return;
-         }
+         lastKranfahrtAuftragConfigurationIssue = reason;
 
          _logger.LogWarning(
-            "004B|KranfahrtAuftrag wird noch nicht an die SPS gesendet: {Reason} Neuer Hinweis fruehestens in 60 Sekunden.",
+            "004B|KranfahrtAuftrag wird noch nicht an die SPS gesendet: {Reason}",
             reason);
-         nextKranfahrtAuftragConfigurationLogUtc = DateTime.UtcNow.AddMinutes(1);
       }
 
       private void WriteRequiredNode(string nodeId, object value)
@@ -442,8 +436,20 @@ namespace Falcom
          string Ziel,
          string SollMasse,
          string Toleranz,
-         string Aktiv,
          string TelegrammNummer);
+
+      public sealed record OpcSendResult(bool Success, string Reason)
+      {
+         public static OpcSendResult Ok()
+         {
+            return new OpcSendResult(true, string.Empty);
+         }
+
+         public static OpcSendResult Failed(string reason)
+         {
+            return new OpcSendResult(false, reason);
+         }
+      }
 
       private void ValidateWatchdogRead()
       {

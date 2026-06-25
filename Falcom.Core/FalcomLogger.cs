@@ -48,9 +48,9 @@ public sealed class FalcomLogger : ILogger
       }
 
       var line = FormatLine(logLevel, message, exception);
+      _uiLogSink.Write(logLevel, line);
       _fileSink.Write(line);
       _consoleSink.Write(logLevel, line);
-      _uiLogSink.Write(logLevel, line);
    }
 
    private string FormatLine(LogLevel logLevel, string message, Exception? exception)

@@ -231,14 +231,6 @@ namespace Falcom
 
       private void LogConfigurationIssue(string issue)
       {
-         if (string.Equals(
-            lastConfigurationIssue,
-            issue,
-            StringComparison.Ordinal))
-         {
-            return;
-         }
-
          lastConfigurationIssue = issue;
          _logger.LogWarning(
             "003B|Watchdog ist nicht sendebereit: {Reason} Neuer Konfigurationsversuch in {DelaySeconds} Sekunden.",

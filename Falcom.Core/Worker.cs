@@ -114,12 +114,39 @@ namespace Falcom
                         if (result.Success)
                         {
                            _runtimeStatus.SetAktuelleFahrt(result);
-                           await _opcClientCrane.SendKranfahrtAuftragAsync(
-                              result,
-                              auftragTeilfahrt: 1,
-                              toleranzKg: 150m,
-                              aktiv: true,
-                              stoppingToken);
+
+                           KranfahrtAuftragEvent kranfahrtAuftragEvent =
+                              KranfahrtAuftragEvent.FromAktuelleFahrt(
+                                 result,
+                                 auftragTeilfahrt: 1,
+                                 toleranzKg: 150m);
+
+                           OPC_Client_Crane.OpcSendResult sendResult =
+                              await _opcClientCrane.SendKranfahrtAuftragAsync(
+                                 kranfahrtAuftragEvent,
+                                 stoppingToken);
+
+                           if (!sendResult.Success)
+                           {
+                              string bemerkung =
+                                 $"FEHLER beim Starten der Kranfahrt: {sendResult.Reason}";
+
+                              AktuelleFahrtResult failResult =
+                                 _aktuelleFahrtRepository.FailAktuelleFahrt(
+                                    result.AktuelleFahrtID,
+                                    bemerkung);
+
+                              _runtimeStatus.SetAktuelleFahrt(AktuelleFahrtResult.Empty(
+                                 "Keine aktive Fahrt."));
+
+                              _logger.LogError(
+                                 "0052|Aktuelle Fahrt wegen nicht sendbarem SPS-Fahrauftrag historisiert: Erfolg={Success}, Grund={Reason}, AktuelleFahrtID={AktuelleFahrtID}, AuftragID={AuftragID}, Bemerkung={Bemerkung}.",
+                                 failResult.Success,
+                                 failResult.Reason,
+                                 failResult.AktuelleFahrtID,
+                                 failResult.AuftragID,
+                                 bemerkung);
+                           }
                         }
                      }
 
