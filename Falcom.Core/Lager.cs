@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 
 namespace Falcom
@@ -16,7 +16,7 @@ namespace Falcom
       private float mg;
       private string bezeichnung = string.Empty;
       private string schrottsorte = string.Empty;
-      private int toleranz;
+      private float toleranz;
 
       public Lagerplatz()
       {
@@ -34,7 +34,7 @@ namespace Falcom
          float mg,
          string bezeichnung,
          string schrottsorte,
-         int toleranz)
+         float toleranz)
       {
          this.lagerplatzNr = lagerplatzNr;
          this.active = active;
@@ -132,7 +132,7 @@ namespace Falcom
          set { schrottsorte = value; }
       }
 
-      public int Toleranz
+      public float Toleranz
       {
          get { return toleranz; }
          set { toleranz = value; }
@@ -153,7 +153,26 @@ namespace Falcom
 
          try
          {
-            SimpleSqlQuery query = new SimpleSqlQuery(_configManager.ConnectionString, "select * from FALCOM_Lager order by Lagerplatz");
+            const string sql = @"
+SELECT
+   lager.Lagerplatz,
+   lager.Aktiv,
+   lager.Restmenge,
+   lager.Bezeichnung,
+   COALESCE(material.MaterialName, N'') AS Schrottsorte,
+   COALESCE(material.Cu, 0) AS Cu,
+   COALESCE(material.Mn, 0) AS Mn,
+   COALESCE(material.C, 0) AS C,
+   COALESCE(material.Si, 0) AS Si,
+   COALESCE(material.Cr, 0) AS S,
+   COALESCE(material.Mg, 0) AS Mg,
+   COALESCE(material.Toleranz, 150) AS Toleranz
+FROM dbo.FALCOM_LAGER AS lager
+LEFT JOIN dbo.FALCOM_MATERIAL AS material
+   ON material.ID = lager.MaterialID
+ORDER BY lager.Lagerplatz";
+
+            SimpleSqlQuery query = new SimpleSqlQuery(_configManager.ConnectionString, sql);
             if (query.QueryResult != null)
             {
                foreach (Dictionary<string, object> row in query.QueryResult)
@@ -176,7 +195,7 @@ namespace Falcom
 
                      string bezeichnung = Convert.ToString(row["Bezeichnung"]) ?? string.Empty;
                      string schrottsorte = Convert.ToString(row["Schrottsorte"]) ?? "Unbekannt";
-                     int toleranz = Convert.ToInt32(row["Toleranz"]);
+                     float toleranz = (float)Math.Round(Convert.ToSingle(row["Toleranz"]), 3);
 
                      Lagerplatz platz = new(
                         lagerplatz,
