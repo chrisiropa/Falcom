@@ -44,176 +44,194 @@ namespace Falcom
 
       protected override async Task ExecuteAsync(CancellationToken stoppingToken)
       {
-         _logger.LogInformation("002E|State machine started.");
-         _logger.LogInformation("004C|Initialer Verbindungsaufbau zur Kran-SPS wird gestartet.");
-         await _opcClientCrane.ConnectUntilConnectedAsync(stoppingToken);
-         _logger.LogInformation("004D|Initialer Verbindungsaufbau zur Kran-SPS ist abgeschlossen.");
-
-         using var watchdogTimerCancellation =
-            CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
-         Task watchdogTimer = ScheduleWatchdogEventsAsync(
-            watchdogTimerCancellation.Token);
-
          try
          {
+            _logger.LogInformation("002E|State machine started.");
+            _logger.LogInformation("004C|Initialer Verbindungsaufbau zur Kran-SPS wird gestartet.");
+            await _opcClientCrane.ConnectUntilConnectedAsync(stoppingToken);
+            _logger.LogInformation("004D|Initialer Verbindungsaufbau zur Kran-SPS ist abgeschlossen.");
+
+            using var watchdogTimerCancellation =
+               CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+            Task watchdogTimer = ScheduleWatchdogEventsAsync(
+               watchdogTimerCancellation.Token);
+
             // NEU: Die Schleife wartet jetzt reaktiv, bis ein Event in der Queue landet.
             // WaitToReadAsync lässt den Thread schlafen, solange die Queue leer ist (0% CPU Last).
-            InitializeStateFromDatabase();
-
-            while (await _eventQueue.Reader.WaitToReadAsync(stoppingToken))
+            try
             {
-               // Verarbeite alle aktuell in der Queue liegenden Events der Reihe nach (FIFO)
-               while (_eventQueue.Reader.TryRead(out var falcomEvent))
+               InitializeStateFromDatabase();
+
+               while (await _eventQueue.Reader.WaitToReadAsync(stoppingToken))
                {
-                  try
+                  // Verarbeite alle aktuell in der Queue liegenden Events der Reihe nach (FIFO)
+                  while (_eventQueue.Reader.TryRead(out var falcomEvent))
                   {
-                     _logger.LogDebug("0030|Dispatcher verarbeitet Event {EventId} von Quelle {Source}.", falcomEvent.EventId, falcomEvent.Source);
-
-                     if (falcomEvent is WatchdogEvent watchdogEvent)
+                     try
                      {
-                        try
+                        _logger.LogDebug("0030|Dispatcher verarbeitet Event {EventId} von Quelle {Source}.", falcomEvent.EventId, falcomEvent.Source);
+
+                        if (falcomEvent is WatchdogEvent watchdogEvent)
                         {
-                           watchdogEventsInCurrentMinute++;
-                           LogWatchdogSummaryIfDue(watchdogEvent.LebensZaehler);
-
-                           await _watchdogSender.SendAsync(
-                              watchdogEvent.LebensZaehler,
-                              stoppingToken);
-                        }
-                        finally
-                        {
-                           Interlocked.Exchange(
-                              ref watchdogEventPending,
-                              0);
-                        }
-
-                        continue;
-                     }
-
-                     if (falcomEvent is KranSpsLebensZaehlerEvent)
-                     {
-                        continue;
-                     }
-
-                     if (falcomEvent is OrderReleasedEvent orderReleasedEvent)
-                     {
-                        SetState(ProcessState.AuftragBereit);
-
-                        AktuelleFahrtResult result =
-                           _aktuelleFahrtRepository.TryCreateNextAktuelleFahrt(
-                              orderReleasedEvent.AuftragsNummer);
-
-                        _logger.LogInformation(
-                           "0045|Aktuelle Fahrt aus Auftrag erzeugt: Erfolg={Success}, Grund={Reason}, AktuelleFahrtID={AktuelleFahrtID}, AuftragID={AuftragID}, Typ={AuftragsTyp}, Quelle={Quelle}, Ziel={Ziel}, SollMengeKg={SollMengeKg}.",
-                           result.Success,
-                           result.Reason,
-                           result.AktuelleFahrtID,
-                           result.AuftragID,
-                           result.AuftragsTyp,
-                           result.Quelle,
-                           result.Ziel,
-                           result.SollMengeKg);
-
-                        if (result.Success)
-                        {
-                           _runtimeStatus.SetAktuelleFahrt(result);
-
-                           KranfahrtAuftragEvent kranfahrtAuftragEvent =
-                              KranfahrtAuftragEvent.FromAktuelleFahrt(
-                                 result,
-                                 auftragTeilfahrt: 1,
-                                 toleranzKg: 150m);
-
-                           OPC_Client_Crane.OpcSendResult sendResult =
-                              await _opcClientCrane.SendKranfahrtAuftragAsync(
-                                 kranfahrtAuftragEvent,
-                                 stoppingToken);
-
-                           if (!sendResult.Success)
+                           try
                            {
-                              string bemerkung =
-                                 $"FEHLER beim Starten der Kranfahrt: {sendResult.Reason}";
+                              watchdogEventsInCurrentMinute++;
+                              LogWatchdogSummaryIfDue(watchdogEvent.LebensZaehler);
 
-                              AktuelleFahrtResult failResult =
-                                 _aktuelleFahrtRepository.FailAktuelleFahrt(
-                                    result.AktuelleFahrtID,
+                              await _watchdogSender.SendAsync(
+                                 watchdogEvent.LebensZaehler,
+                                 stoppingToken);
+                           }
+                           finally
+                           {
+                              Interlocked.Exchange(
+                                 ref watchdogEventPending,
+                                 0);
+                           }
+
+                           continue;
+                        }
+
+                        if (falcomEvent is KranSpsLebensZaehlerEvent)
+                        {
+                           continue;
+                        }
+
+                        if (falcomEvent is OrderReleasedEvent orderReleasedEvent)
+                        {
+                           SetState(ProcessState.AuftragBereit);
+
+                           AktuelleFahrtResult result =
+                              _aktuelleFahrtRepository.TryCreateNextAktuelleFahrt(
+                                 orderReleasedEvent.AuftragsNummer);
+
+                           _logger.LogInformation(
+                              "0045|Aktuelle Fahrt aus Auftrag erzeugt: Erfolg={Success}, Grund={Reason}, AktuelleFahrtID={AktuelleFahrtID}, AuftragID={AuftragID}, Typ={AuftragsTyp}, Quelle={Quelle}, Ziel={Ziel}, SollMengeKg={SollMengeKg}.",
+                              result.Success,
+                              result.Reason,
+                              result.AktuelleFahrtID,
+                              result.AuftragID,
+                              result.AuftragsTyp,
+                              result.Quelle,
+                              result.Ziel,
+                              result.SollMengeKg);
+
+                           if (result.Success)
+                           {
+                              _runtimeStatus.SetAktuelleFahrt(result);
+
+                              KranfahrtAuftragEvent kranfahrtAuftragEvent =
+                                 KranfahrtAuftragEvent.FromAktuelleFahrt(
+                                    result,
+                                    auftragTeilfahrt: 1,
+                                    toleranzKg: 150m);
+
+                              OPC_Client_Crane.OpcSendResult sendResult =
+                                 await _opcClientCrane.SendKranfahrtAuftragAsync(
+                                    kranfahrtAuftragEvent,
+                                    stoppingToken);
+
+                              if (!sendResult.Success)
+                              {
+                                 string bemerkung =
+                                    $"FEHLER beim Starten der Kranfahrt: {sendResult.Reason}";
+
+                                 AktuelleFahrtResult failResult =
+                                    _aktuelleFahrtRepository.FailAktuelleFahrt(
+                                       result.AktuelleFahrtID,
+                                       bemerkung);
+
+                                 _runtimeStatus.SetAktuelleFahrt(AktuelleFahrtResult.Empty(
+                                    "Keine aktive Fahrt."));
+
+                                 _logger.LogError(
+                                    "0052|Aktuelle Fahrt wegen nicht sendbarem SPS-Fahrauftrag historisiert: Erfolg={Success}, Grund={Reason}, AktuelleFahrtID={AktuelleFahrtID}, AuftragID={AuftragID}, Bemerkung={Bemerkung}.",
+                                    failResult.Success,
+                                    failResult.Reason,
+                                    failResult.AktuelleFahrtID,
+                                    failResult.AuftragID,
                                     bemerkung);
 
-                              _runtimeStatus.SetAktuelleFahrt(AktuelleFahrtResult.Empty(
-                                 "Keine aktive Fahrt."));
-
-                              _logger.LogError(
-                                 "0052|Aktuelle Fahrt wegen nicht sendbarem SPS-Fahrauftrag historisiert: Erfolg={Success}, Grund={Reason}, AktuelleFahrtID={AktuelleFahrtID}, AuftragID={AuftragID}, Bemerkung={Bemerkung}.",
-                                 failResult.Success,
-                                 failResult.Reason,
-                                 failResult.AktuelleFahrtID,
-                                 failResult.AuftragID,
-                                 bemerkung);
-
-                              SetState(ProcessState.Fehler);
+                                 SetState(ProcessState.Fehler);
+                              }
+                              else
+                              {
+                                 SetState(ProcessState.FahrtAnSpsGesendet);
+                                 SetState(ProcessState.WarteAufSpsRueckmeldung);
+                              }
                            }
                            else
                            {
-                              SetState(ProcessState.FahrtAnSpsGesendet);
-                              SetState(ProcessState.WarteAufSpsRueckmeldung);
+                              SetState(ProcessState.Fehler);
                            }
                         }
-                        else
-                        {
-                           SetState(ProcessState.Fehler);
-                        }
-                     }
 
-                     if (falcomEvent is KranfahrtBeendetEvent kranfahrtBeendetEvent)
+                        if (falcomEvent is KranfahrtBeendetEvent kranfahrtBeendetEvent)
+                        {
+                           AktuelleFahrtResult result =
+                              _aktuelleFahrtRepository.CompleteAktuelleFahrt(
+                                 kranfahrtBeendetEvent);
+
+                           _logger.LogInformation(
+                              "0046|KranfahrtBeendet verarbeitet: Erfolg={Success}, Grund={Reason}, AktuelleFahrtID={AktuelleFahrtID}, AuftragID={AuftragID}, Typ={AuftragsTyp}, IstMengeKg={IstMengeKg}.",
+                              result.Success,
+                              result.Reason,
+                              result.AktuelleFahrtID,
+                              result.AuftragID,
+                              result.AuftragsTyp,
+                              result.IstMengeKg);
+
+                           if (result.Success)
+                           {
+                              SetState(ProcessState.FahrtAbgeschlossen);
+                              SetState(ProcessState.Idle);
+                           }
+                           else
+                           {
+                              SetState(ProcessState.Fehler);
+                           }
+                        }
+
+                        // 1. Datenfluss zur SPS sicherstellen
+                        await _opcClientCrane.EnsureDataFlowAsync(stoppingToken);
+
+                        // Optionale Überwachungsausgabe
+                        //LogOpenCraneQueueOrdersIfChanged();
+                     }
+                     catch (OperationCanceledException)
                      {
-                        AktuelleFahrtResult result =
-                           _aktuelleFahrtRepository.CompleteAktuelleFahrt(
-                              kranfahrtBeendetEvent);
-
-                        _logger.LogInformation(
-                           "0046|KranfahrtBeendet verarbeitet: Erfolg={Success}, Grund={Reason}, AktuelleFahrtID={AktuelleFahrtID}, AuftragID={AuftragID}, Typ={AuftragsTyp}, IstMengeKg={IstMengeKg}.",
-                           result.Success,
-                           result.Reason,
-                           result.AktuelleFahrtID,
-                           result.AuftragID,
-                           result.AuftragsTyp,
-                           result.IstMengeKg);
-
-                        if (result.Success)
-                        {
-                           SetState(ProcessState.FahrtAbgeschlossen);
-                           SetState(ProcessState.Idle);
-                        }
-                        else
-                        {
-                           SetState(ProcessState.Fehler);
-                        }
+                        throw;
                      }
+                     catch (Exception ex)
+                     {
+                        _logger.LogError(ex, "0035|Fehler im State-Machine-Zyklus (z.B. OPC-Verbindungsverlust). Zustand war: {state}", _currentState);
 
-                     // 1. Datenfluss zur SPS sicherstellen
-                     await _opcClientCrane.EnsureDataFlowAsync(stoppingToken);
+                        SetState(ProcessState.Fehler);
 
-                     // Optionale Überwachungsausgabe
-                     //LogOpenCraneQueueOrdersIfChanged();
-                  }
-                  catch (OperationCanceledException)
-                  {
-                     throw;
-                  }
-                  catch (Exception ex)
-                  {
-                     _logger.LogError(ex, "0035|Fehler im State-Machine-Zyklus (z.B. OPC-Verbindungsverlust). Zustand war: {state}", _currentState);
+                        // Dem System im Fehlerfall etwas Zeit zum Atmen geben
+                        await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
 
-                     SetState(ProcessState.Fehler);
-
-                     // Dem System im Fehlerfall etwas Zeit zum Atmen geben
-                     await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
-
-                     // Da ein Fehler auftrat, brechen wir die innere TryRead-Schleife ab,
-                     // um den Datenfluss im nächsten Hauptdurchlauf frisch zu prüfen.
-                     break;
+                        // Da ein Fehler auftrat, brechen wir die innere TryRead-Schleife ab,
+                        // um den Datenfluss im nächsten Hauptdurchlauf frisch zu prüfen.
+                        break;
+                     }
                   }
                }
+            }
+            finally
+            {
+               watchdogTimerCancellation.Cancel();
+
+               try
+               {
+                  await watchdogTimer;
+               }
+               catch (OperationCanceledException)
+               {
+               }
+
+               _logger.LogInformation("0038|Disconnecting from OPC Server...");
+               _opcClientCrane.Disconnect();
             }
          }
          catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -223,21 +241,6 @@ namespace Falcom
          catch (Exception ex)
          {
             _logger.LogCritical(ex, "0037|Schwerwiegender Fehler außerhalb der Hauptschleife. Dienst wird beendet!");
-         }
-         finally
-         {
-            watchdogTimerCancellation.Cancel();
-
-            try
-            {
-               await watchdogTimer;
-            }
-            catch (OperationCanceledException)
-            {
-            }
-
-            _logger.LogInformation("0038|Disconnecting from OPC Server...");
-            _opcClientCrane.Disconnect();
          }
       }
 

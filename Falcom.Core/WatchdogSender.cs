@@ -167,7 +167,7 @@ namespace Falcom
                CommandTimeout = 30
             };
 
-            command.Parameters.Add("@EventName", SqlDbType.NVarChar, 128).Value = "Watchdog";
+            command.Parameters.Add("@EventName", SqlDbType.NVarChar, 128).Value = WatchdogEvent.EventName;
             command.Parameters.Add("@Direction", SqlDbType.NVarChar, 64).Value = "FALCOM->KRAN_SPS";
 
             connection.Open();
@@ -198,7 +198,7 @@ namespace Falcom
          if (string.IsNullOrWhiteSpace(nodeId))
          {
             LogConfigurationIssue(
-               "Event Watchdog Richtung FALCOM->KRAN_SPS oder Detail LebensZaehler wurde nicht gefunden.");
+               "Event LebensZaehlerFalcom Richtung FALCOM->KRAN_SPS oder Detail LebensZaehler wurde nicht gefunden.");
             return null;
          }
 

@@ -5,7 +5,7 @@ namespace Falcom
    /// </summary>
    public sealed class KranSpsLebensZaehlerEvent : FalcomEventBase
    {
-      public const string EventName = "LebensZaehler";
+      public const string EventName = "LebensZaehlerKran";
 
       public KranSpsLebensZaehlerEvent(int lebensZaehler)
       {

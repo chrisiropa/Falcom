@@ -8,24 +8,38 @@ namespace Falcom
    public sealed class OPC_Client_Crane : IDisposable
    {
       private static readonly TimeSpan ConnectRetryDelay = TimeSpan.FromSeconds(5);
-      private const string WatchdogNodeId = "ns=1;s=LagerV.DataBlocks.OPC_Daten_ORG.Static.Watchdog";
+      private const string KranPositionEventName = "KranPosition";
+      private const string KranPositionDirection = "KRAN_SPS->FALCOM";
+      private const string PosKranXNodeName = "PosKranX";
+      private const string PosKatzeYNodeName = "PosKatzeY";
+      private const string PosHubZNodeName = "PosHubZ";
 
       private readonly ILogger<OPC_Client_Crane> _logger;
       private readonly ConfigManager _configManager;
       private readonly FalcomRuntimeStatus _runtimeStatus;
+      private readonly FalcomKranLiveSignalRClient _kranLiveSignalRClient;
       private readonly FalcomEventQueue _eventQueue; // NEU: Privates Feld für die Queue
       private readonly object _syncRoot = new();
       private readonly List<OpcMonitoredItem> monitoredItems = new();
       private readonly string opcServerEndpoint;
+      private readonly string falcomWatchdogNodeId;
       private readonly string kranSpsLebensZaehlerNodeId;
+      private readonly Dictionary<string, string> kranPositionOpcNodesByName;
+      private readonly Dictionary<string, string> kranPositionNodeNameByOpcNode = new(StringComparer.Ordinal);
       private OpcClient? client = null;
       private OpcSubscription? subscription = null;
       private bool spsDataUnavailable;
+      private volatile bool spsLebensZaehlerFreigegeben;
       private DateTime nextDataFlowErrorLogUtc = DateTime.MinValue;
       private DateTime nextKranSpsLebensZaehlerLogUtc = DateTime.UtcNow.AddMinutes(1);
+      private DateTime nextKranPositionLogUtc = DateTime.UtcNow.AddMinutes(1);
       private int kranfahrtAuftragTelegrammNummer;
       private int kranfahrtAuftragZaehlerAnfahrt;
       private int kranSpsLebensZaehlerEventsInCurrentMinute;
+      private int kranPositionEventsInCurrentMinute;
+      private int? aktuellePosKranX;
+      private int? aktuellePosKatzeY;
+      private int? aktuellePosHubZ;
       private string? lastKranfahrtAuftragConfigurationIssue;
       private bool disposed;
 
@@ -35,18 +49,27 @@ namespace Falcom
          Parameter parameter,
          ConfigManager configManager,
          FalcomRuntimeStatus runtimeStatus,
+         FalcomKranLiveSignalRClient kranLiveSignalRClient,
          FalcomEventQueue eventQueue)
       {
          _logger = logger;
          _configManager = configManager;
          _runtimeStatus = runtimeStatus;
+         _kranLiveSignalRClient = kranLiveSignalRClient;
          _eventQueue = eventQueue; // NEU: Zuweisung für den späteren Zugriff
          TraegerLicense();
          KranfahrtBeendetEvent.LoadOpcNodes(configManager);
+         falcomWatchdogNodeId = LoadRequiredEventOpcNode(
+            eventName: WatchdogEvent.EventName,
+            direction: "FALCOM->KRAN_SPS",
+            nodeName: "LebensZaehler");
          kranSpsLebensZaehlerNodeId = LoadRequiredEventOpcNode(
             eventName: KranSpsLebensZaehlerEvent.EventName,
             direction: "KRAN_SPS->FALCOM",
             nodeName: "LebensZaehler");
+         kranPositionOpcNodesByName = LoadOptionalEventOpcNodes(
+            KranPositionEventName,
+            KranPositionDirection);
 
          if (string.IsNullOrWhiteSpace(parameter.OpcServer))
          {
@@ -92,8 +115,11 @@ namespace Falcom
             try
             {
                _logger.LogInformation("0012|OPC-Verbindungsversuch {Attempt} wird gestartet.", attempt);
+               spsLebensZaehlerFreigegeben = false;
+               _runtimeStatus.SetSpsLebensZaehlerUnavailable("OPC-Datenfluss wird geprueft");
                ConnectOnce();
                ValidateWatchdogRead();
+               spsLebensZaehlerFreigegeben = true;
                _logger.LogInformation("0013|OPC-Verbindungsversuch {Attempt} erfolgreich abgeschlossen.", attempt);
                return;
             }
@@ -122,6 +148,7 @@ namespace Falcom
             {
                EnsureConnected();
                ValidateWatchdogRead();
+               spsLebensZaehlerFreigegeben = true;
 
                if (spsDataUnavailable)
                {
@@ -138,6 +165,8 @@ namespace Falcom
             catch (Exception ex)
             {
                spsDataUnavailable = true;
+               spsLebensZaehlerFreigegeben = false;
+               _runtimeStatus.SetSpsLebensZaehlerUnavailable("OPC-Datenfluss nicht freigegeben");
 
                if (DateTime.UtcNow >= nextDataFlowErrorLogUtc)
                {
@@ -345,6 +374,57 @@ namespace Falcom
             opcNodes[KranfahrtAuftragEvent.ZaehlerAnfahrtNodeName].Trim());
       }
 
+      private Dictionary<string, string> LoadOptionalEventOpcNodes(
+         string eventName,
+         string direction)
+      {
+         var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+         try
+         {
+            using SqlConnection connection = new(_configManager.ConnectionString);
+            using SqlCommand command = new("dbo.FALCOM_GetEventOpcNodes", connection)
+            {
+               CommandType = CommandType.StoredProcedure,
+               CommandTimeout = 30
+            };
+
+            command.Parameters.Add("@EventName", SqlDbType.NVarChar, 128).Value = eventName;
+            command.Parameters.Add("@Direction", SqlDbType.NVarChar, 64).Value = direction;
+
+            connection.Open();
+            using SqlDataReader reader = command.ExecuteReader();
+
+            while (reader.Read())
+            {
+               string nodeName = Convert.ToString(reader["NodeName"])?.Trim() ?? string.Empty;
+               string opcNode = Convert.ToString(reader["OPC_Node"])?.Trim() ?? string.Empty;
+
+               if (string.IsNullOrWhiteSpace(nodeName))
+               {
+                  continue;
+               }
+
+               result[nodeName] = opcNode;
+            }
+         }
+         catch (Exception ex)
+         {
+            _logger.LogWarning(
+               ex,
+               "0058|Optionale OPC-Event-Konfiguration konnte nicht geladen werden. Event={EventName}, Direction={Direction}.",
+               eventName,
+               direction);
+         }
+
+         return result;
+      }
+
+      private static bool IsConfiguredOpcNode(string? opcNode)
+      {
+         return !string.IsNullOrWhiteSpace(opcNode)
+                && !opcNode.StartsWith("NOCH_ZU_KONFIGURIEREN.", StringComparison.OrdinalIgnoreCase);
+      }
       private string LoadRequiredEventOpcNode(
          string eventName,
          string direction,
@@ -504,17 +584,34 @@ namespace Falcom
          {
             if (client is null)
             {
-               throw new InvalidOperationException("OPC-Client ist nicht initialisiert.");
+               throw new InvalidOperationException(
+                  $"OPC-Client ist nicht initialisiert. Watchdog-Node konnte nicht gelesen werden. Node={falcomWatchdogNodeId}");
             }
 
-            OpcValue watchdogValue = client.ReadNode(WatchdogNodeId);
+            OpcValue watchdogValue;
+
+            try
+            {
+               watchdogValue = client.ReadNode(falcomWatchdogNodeId);
+            }
+            catch (Exception ex)
+            {
+               throw new InvalidOperationException(
+                  $"Watchdog-Node konnte nicht gelesen werden. Node={falcomWatchdogNodeId}",
+                  ex);
+            }
 
             if (!watchdogValue.Status.IsGood)
             {
-               throw new InvalidOperationException($"Watchdog-Node ist nicht sauber lesbar. Status={watchdogValue.Status.Code}, Wert={watchdogValue.Value}");
+               throw new InvalidOperationException(
+                  $"Watchdog-Node ist nicht sauber lesbar. Node={falcomWatchdogNodeId}, Status={watchdogValue.Status.Code}, Wert={watchdogValue.Value}");
             }
 
-            _logger.LogDebug("001C|Watchdog-Node erfolgreich gelesen. Status={Status}, Wert={Value}", watchdogValue.Status.Code, watchdogValue.Value);
+            _logger.LogDebug(
+               "001C|Watchdog-Node erfolgreich gelesen. Node={Node}, Status={Status}, Wert={Value}",
+               falcomWatchdogNodeId,
+               watchdogValue.Status.Code,
+               watchdogValue.Value);
          }
       }
 
@@ -612,6 +709,25 @@ namespace Falcom
          subscription.AddMonitoredItem(kranfahrtBeendetItem);
          monitoredItems.Add(kranfahrtBeendetItem);
 
+         kranPositionNodeNameByOpcNode.Clear();
+
+         foreach ((string nodeName, string opcNode) in kranPositionOpcNodesByName)
+         {
+            if (!IsConfiguredOpcNode(opcNode))
+            {
+               continue;
+            }
+
+            var positionItem = new OpcMonitoredItem(opcNode, OpcAttribute.Value)
+            {
+               Tag = $"KranPosition.{nodeName}"
+            };
+            positionItem.DataChangeReceived += HandleDataChange;
+            subscription.AddMonitoredItem(positionItem);
+            monitoredItems.Add(positionItem);
+            kranPositionNodeNameByOpcNode[opcNode] = nodeName;
+         }
+
          subscription.ApplyChanges();
 
          _logger.LogInformation("0021|Kanal 'Zähler' erfolgreich registriert.");
@@ -622,7 +738,7 @@ namespace Falcom
       {
          if (subscription == null || client == null) return false;
 
-         var item = new OpcMonitoredItem(WatchdogNodeId, OpcAttribute.Value)
+         var item = new OpcMonitoredItem(falcomWatchdogNodeId, OpcAttribute.Value)
          {
             Tag = "craneEvent"
          };
@@ -654,6 +770,54 @@ namespace Falcom
          nextKranSpsLebensZaehlerLogUtc = nowUtc.AddMinutes(1);
       }
 
+      private void HandleKranPositionDataChange(string nodeName, object? value)
+      {
+         int position = Convert.ToInt32(value);
+
+         switch (nodeName)
+         {
+            case PosKranXNodeName:
+               aktuellePosKranX = position;
+               break;
+            case PosKatzeYNodeName:
+               aktuellePosKatzeY = position;
+               break;
+            case PosHubZNodeName:
+               aktuellePosHubZ = position;
+               break;
+            default:
+               return;
+         }
+
+         kranPositionEventsInCurrentMinute++;
+         _ = _kranLiveSignalRClient.SendKranPositionAsync(
+            aktuellePosKranX,
+            aktuellePosKatzeY,
+            aktuellePosHubZ,
+            CancellationToken.None);
+
+         LogKranPositionSummaryIfDue();
+      }
+
+      private void LogKranPositionSummaryIfDue()
+      {
+         DateTime nowUtc = DateTime.UtcNow;
+
+         if (nowUtc < nextKranPositionLogUtc)
+         {
+            return;
+         }
+
+         _logger.LogInformation(
+            "005A|Kranposition aktiv. In den letzten 60 Sekunden wurden {EventCount} Positionswerte empfangen. X={PosKranX}, Y={PosKatzeY}, Z={PosHubZ}.",
+            kranPositionEventsInCurrentMinute,
+            aktuellePosKranX,
+            aktuellePosKatzeY,
+            aktuellePosHubZ);
+
+         kranPositionEventsInCurrentMinute = 0;
+         nextKranPositionLogUtc = nowUtc.AddMinutes(1);
+      }
       private void HandleDataChange(object sender, OpcDataChangeReceivedEventArgs e)
       {
          if (client == null) return;
@@ -661,10 +825,17 @@ namespace Falcom
          try
          {
             var neuerZaehlerWert = e.Item.Value.Value;
+            string changedNodeId = e.MonitoredItem.NodeId.ToString();
             _logger.LogInformation(
                "0050|OPC Empfang: Node={Node}, Wert={Value}",
                e.MonitoredItem.NodeId,
                neuerZaehlerWert);
+
+            if (kranPositionNodeNameByOpcNode.TryGetValue(changedNodeId, out string? positionNodeName))
+            {
+               HandleKranPositionDataChange(positionNodeName, neuerZaehlerWert);
+               return;
+            }
 
             if (string.Equals(
                e.MonitoredItem.NodeId.ToString(),
@@ -672,6 +843,16 @@ namespace Falcom
                StringComparison.Ordinal))
             {
                int lebensZaehler = Convert.ToInt32(neuerZaehlerWert);
+
+               if (!spsLebensZaehlerFreigegeben)
+               {
+                  _logger.LogDebug(
+                     "0057|SPS-LebensZaehler empfangen, aber noch nicht freigegeben. Node={Node}, Wert={Value}",
+                     e.MonitoredItem.NodeId,
+                     lebensZaehler);
+                  return;
+               }
+
                var lebensZaehlerEvent = new KranSpsLebensZaehlerEvent(lebensZaehler);
 
                if (!_eventQueue.Writer.TryWrite(lebensZaehlerEvent))
@@ -682,6 +863,9 @@ namespace Falcom
 
                kranSpsLebensZaehlerEventsInCurrentMinute++;
                _runtimeStatus.SetSpsLebensZaehlerReceived(lebensZaehler);
+               _ = _kranLiveSignalRClient.SendSpsLebensZaehlerAsync(
+                  lebensZaehler,
+                  CancellationToken.None);
                LogKranSpsLebensZaehlerSummaryIfDue(lebensZaehler);
                return;
             }
@@ -764,12 +948,16 @@ namespace Falcom
          }
          else if (e.NewState == OpcClientState.Disconnected)
          {
+            spsLebensZaehlerFreigegeben = false;
             _runtimeStatus.SetOpcKranSpsStatus(false, "Getrennt");
+            _runtimeStatus.SetSpsLebensZaehlerUnavailable("OPC getrennt");
             _logger.LogError("002C|Die Verbindung zum OPC UA Server wurde getrennt!");
          }
          else if (e.NewState == OpcClientState.Reconnecting)
          {
+            spsLebensZaehlerFreigegeben = false;
             _runtimeStatus.SetOpcKranSpsStatus(false, "Reconnect laeuft");
+            _runtimeStatus.SetSpsLebensZaehlerUnavailable("OPC Reconnect laeuft");
             _logger.LogInformation("002D|Verbindung verloren. Auto-Reconnect versucht gerade die Wiederverbindung...");
          }
       }

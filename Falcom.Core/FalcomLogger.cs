@@ -61,10 +61,22 @@ public sealed class FalcomLogger : ILogger
 
       if (exception is not null)
       {
-         line = $"{line}{Environment.NewLine}{exception}";
+         line = $"{line} | {FormatExceptionSummary(exception)}";
       }
 
       return line;
+   }
+
+   private static string FormatExceptionSummary(Exception exception)
+   {
+      List<string> parts = new();
+
+      for (Exception? current = exception; current is not null; current = current.InnerException)
+      {
+         parts.Add($"{current.GetType().Name}: {current.Message}");
+      }
+
+      return string.Join(" | Inner: ", parts);
    }
 
    private static string ToShortLevelText(LogLevel logLevel)

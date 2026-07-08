@@ -32,8 +32,18 @@ public partial class App : Application
    {
       if (host is not null)
       {
-         await host.StopAsync(TimeSpan.FromSeconds(5));
-         host.Dispose();
+         try
+         {
+            await host.StopAsync(TimeSpan.FromSeconds(5));
+         }
+         catch (OperationCanceledException)
+         {
+            // Normales Beenden: laufende Hintergrundaufgaben dürfen beim Schließen abbrechen.
+         }
+         finally
+         {
+            host.Dispose();
+         }
       }
 
       base.OnExit(e);

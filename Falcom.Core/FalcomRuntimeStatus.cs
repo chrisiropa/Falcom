@@ -15,6 +15,7 @@ public sealed class FalcomRuntimeStatus
    public int? LetzterSpsLebensZaehler { get; private set; }
    public DateTime? LetzterSpsLebensZaehlerEmpfangenAm { get; private set; }
    public string SpsLebensZaehlerStatusText { get; private set; } = "Noch nicht empfangen";
+   public bool SpsLebensZaehlerGueltig { get; private set; }
 
    public long? AktuelleFahrtID { get; private set; }
    public long? AktuellerAuftragID { get; private set; }
@@ -61,6 +62,16 @@ public sealed class FalcomRuntimeStatus
          LetzterSpsLebensZaehler = wert;
          LetzterSpsLebensZaehlerEmpfangenAm = DateTime.Now;
          SpsLebensZaehlerStatusText = "Empfangen";
+         SpsLebensZaehlerGueltig = true;
+      }
+   }
+
+   public void SetSpsLebensZaehlerUnavailable(string statusText)
+   {
+      lock (sync)
+      {
+         SpsLebensZaehlerStatusText = statusText;
+         SpsLebensZaehlerGueltig = false;
       }
    }
 
@@ -108,6 +119,7 @@ public sealed class FalcomRuntimeStatus
             LetzterSpsLebensZaehler,
             LetzterSpsLebensZaehlerEmpfangenAm,
             SpsLebensZaehlerStatusText,
+            SpsLebensZaehlerGueltig,
             AktuelleFahrtID,
             AktuellerAuftragID,
             AktuellerAuftragsTyp,
@@ -131,6 +143,7 @@ public sealed record FalcomRuntimeStatusSnapshot(
    int? LetzterSpsLebensZaehler,
    DateTime? LetzterSpsLebensZaehlerEmpfangenAm,
    string SpsLebensZaehlerStatusText,
+   bool SpsLebensZaehlerGueltig,
    long? AktuelleFahrtID,
    long? AktuellerAuftragID,
    string AktuellerAuftragsTyp,

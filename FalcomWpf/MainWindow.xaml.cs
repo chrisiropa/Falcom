@@ -49,7 +49,7 @@ public partial class MainWindow : Window
 
       bool spsLifeFresh = snapshot.LetzterSpsLebensZaehlerEmpfangenAm is not null
                           && now - snapshot.LetzterSpsLebensZaehlerEmpfangenAm.Value < TimeSpan.FromSeconds(5);
-      SpsLifeLamp.Fill = spsLifeFresh ? Brushes.LimeGreen : Brushes.Firebrick;
+      SpsLifeLamp.Fill = snapshot.SpsLebensZaehlerGueltig && spsLifeFresh ? Brushes.LimeGreen : Brushes.Firebrick;
       SpsLifeValueText.Text = snapshot.LetzterSpsLebensZaehler?.ToString() ?? "-";
       SpsLifeTimeText.Text = $"{snapshot.SpsLebensZaehlerStatusText} {FormatTimestamp(snapshot.LetzterSpsLebensZaehlerEmpfangenAm)}";
 
