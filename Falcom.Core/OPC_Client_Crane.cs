@@ -24,6 +24,7 @@ namespace Falcom
       private DateTime nextDataFlowErrorLogUtc = DateTime.MinValue;
       private DateTime nextKranSpsLebensZaehlerLogUtc = DateTime.UtcNow.AddMinutes(1);
       private int kranfahrtAuftragTelegrammNummer;
+      private int kranfahrtAuftragZaehlerAnfahrt;
       private int kranSpsLebensZaehlerEventsInCurrentMinute;
       private string? lastKranfahrtAuftragConfigurationIssue;
       private bool disposed;
@@ -203,6 +204,11 @@ namespace Falcom
             int telegrammNummer = kranfahrtAuftragTelegrammNummer == int.MaxValue
                ? 0
                : kranfahrtAuftragTelegrammNummer + 1;
+            int zaehlerAnfahrt = kranfahrtAuftragZaehlerAnfahrt == int.MaxValue
+               ? 0
+               : kranfahrtAuftragZaehlerAnfahrt + 1;
+
+            kranfahrtAuftragEvent.SetZaehlerAnfahrt(zaehlerAnfahrt);
 
             WriteRequiredNode(nodes.AuftragNummer, Convert.ToInt32(kranfahrtAuftragEvent.AuftragNummer));
             WriteRequiredNode(nodes.AuftragTeilfahrt, kranfahrtAuftragEvent.AuftragTeilfahrt);
@@ -217,18 +223,21 @@ namespace Falcom
             WriteRequiredNode(nodes.SollMasse, Convert.ToDouble(kranfahrtAuftragEvent.SollMasseKg));
             WriteRequiredNode(nodes.Toleranz, Convert.ToDouble(kranfahrtAuftragEvent.ToleranzKg));
             WriteRequiredNode(nodes.TelegrammNummer, telegrammNummer);
+            WriteRequiredNode(nodes.ZaehlerAnfahrt, kranfahrtAuftragEvent.ZaehlerAnfahrt);
 
             kranfahrtAuftragTelegrammNummer = telegrammNummer;
+            kranfahrtAuftragZaehlerAnfahrt = zaehlerAnfahrt;
 
             _logger.LogInformation(
-               "0047|KranfahrtAuftrag an SPS gesendet: Auftrag={AuftragID}, Teilfahrt={AuftragTeilfahrt}, QuellePositionID={QuellePositionID}, ZielPositionID={ZielPositionID}, SollMasseKg={SollMasseKg}, ToleranzKg={ToleranzKg}, TelegrammNummer={TelegrammNummer}.",
+               "0047|KranfahrtAuftrag an SPS gesendet: Auftrag={AuftragID}, Teilfahrt={AuftragTeilfahrt}, QuellePositionID={QuellePositionID}, ZielPositionID={ZielPositionID}, SollMasseKg={SollMasseKg}, ToleranzKg={ToleranzKg}, TelegrammNummer={TelegrammNummer}, ZaehlerAnfahrt={ZaehlerAnfahrt}.",
                kranfahrtAuftragEvent.AuftragNummer,
                kranfahrtAuftragEvent.AuftragTeilfahrt,
                kranfahrtAuftragEvent.QuellePositionID,
                kranfahrtAuftragEvent.ZielPositionID,
                kranfahrtAuftragEvent.SollMasseKg,
                kranfahrtAuftragEvent.ToleranzKg,
-               telegrammNummer);
+               telegrammNummer,
+               kranfahrtAuftragEvent.ZaehlerAnfahrt);
 
             return Task.FromResult(OpcSendResult.Ok());
          }
@@ -308,7 +317,8 @@ namespace Falcom
             KranfahrtAuftragEvent.ZielNodeName,
             KranfahrtAuftragEvent.SollMasseNodeName,
             KranfahrtAuftragEvent.ToleranzNodeName,
-            KranfahrtAuftragEvent.TelegrammNummerNodeName
+            KranfahrtAuftragEvent.TelegrammNummerNodeName,
+            KranfahrtAuftragEvent.ZaehlerAnfahrtNodeName
          ];
 
          foreach (string nodeName in requiredNodeNames)
@@ -331,7 +341,8 @@ namespace Falcom
             opcNodes[KranfahrtAuftragEvent.ZielNodeName].Trim(),
             opcNodes[KranfahrtAuftragEvent.SollMasseNodeName].Trim(),
             opcNodes[KranfahrtAuftragEvent.ToleranzNodeName].Trim(),
-            opcNodes[KranfahrtAuftragEvent.TelegrammNummerNodeName].Trim());
+            opcNodes[KranfahrtAuftragEvent.TelegrammNummerNodeName].Trim(),
+            opcNodes[KranfahrtAuftragEvent.ZaehlerAnfahrtNodeName].Trim());
       }
 
       private string LoadRequiredEventOpcNode(
@@ -466,7 +477,8 @@ namespace Falcom
          string Ziel,
          string SollMasse,
          string Toleranz,
-         string TelegrammNummer);
+         string TelegrammNummer,
+         string ZaehlerAnfahrt);
 
       public sealed record OpcSendResult(bool Success, string Reason)
       {

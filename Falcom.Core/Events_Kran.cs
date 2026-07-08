@@ -1,4 +1,7 @@
-﻿namespace Falcom
+﻿using Microsoft.Data.SqlClient;
+using System.Data;
+
+namespace Falcom
 {
    /// <summary> Signalisiert das Ende eines physischen Hubs </summary>
    public sealed class KranfahrtBeendetEvent : FalcomEventBase
@@ -28,31 +31,40 @@
 
       public static void LoadOpcNodes(ConfigManager configManager)
       {
-         SimpleSqlQuery query = new(
-            configManager.ConnectionString,
-            $"""
-            SELECT nodes.NodeName, nodes.OPC_Node
-            FROM dbo.FALCOM_EVENTS AS events
-            INNER JOIN dbo.FALCOM_EVENT_OPC_NODES AS nodes
-               ON nodes.EventID = events.ID
-            WHERE events.EventName = '{EventName}'
-              AND events.Direction = 'KRAN_SPS->FALCOM'
-              AND events.IsActive = 1
-            """);
+         Dictionary<string, string> opcNodes = new(StringComparer.OrdinalIgnoreCase);
 
-         if (query.Exception is not null)
+         try
+         {
+            using SqlConnection connection = new(configManager.ConnectionString);
+            using SqlCommand command = new("dbo.FALCOM_GetEventOpcNodes", connection)
+            {
+               CommandType = CommandType.StoredProcedure,
+               CommandTimeout = 30
+            };
+
+            command.Parameters.Add("@EventName", SqlDbType.NVarChar, 128).Value = EventName;
+            command.Parameters.Add("@Direction", SqlDbType.NVarChar, 64).Value = "KRAN_SPS->FALCOM";
+
+            connection.Open();
+            using SqlDataReader reader = command.ExecuteReader();
+
+            while (reader.Read())
+            {
+               string nodeName = Convert.ToString(reader["NodeName"]) ?? string.Empty;
+               string opcNode = Convert.ToString(reader["OPC_Node"]) ?? string.Empty;
+
+               if (!string.IsNullOrWhiteSpace(nodeName))
+               {
+                  opcNodes[nodeName] = opcNode;
+               }
+            }
+         }
+         catch (Exception ex)
          {
             throw new InvalidOperationException(
                "Die OPC-Nodes für KranfahrtBeendet konnten nicht aus der Event-Konfiguration geladen werden.",
-               query.Exception);
+               ex);
          }
-
-         Dictionary<string, string> opcNodes = query.QueryResult?
-            .ToDictionary(
-               row => Convert.ToString(row["NodeName"]) ?? string.Empty,
-               row => Convert.ToString(row["OPC_Node"]) ?? string.Empty,
-               StringComparer.OrdinalIgnoreCase)
-            ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
          ÄnderungsZaehlerOPCNode = GetRequiredOpcNode(opcNodes, "AenderungsZaehler");
          AuftragsNummerOPCNode = GetRequiredOpcNode(opcNodes, "AuftragsNummer");

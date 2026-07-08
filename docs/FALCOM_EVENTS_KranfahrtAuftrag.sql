@@ -44,7 +44,8 @@ BEGIN TRY
       (N'Ziel',             N'NOCH_ZU_KONFIGURIEREN.Ziel',             N'Payload', N'Int32'),
       (N'SollMasse',        N'NOCH_ZU_KONFIGURIEREN.SollMasse',        N'Payload', N'Double'),
       (N'Toleranz',         N'NOCH_ZU_KONFIGURIEREN.Toleranz',         N'Payload', N'Double'),
-      (N'TelegrammNummer',  N'NOCH_ZU_KONFIGURIEREN.TelegrammNummer',  N'Trigger', N'Int32')
+      (N'TelegrammNummer',  N'NOCH_ZU_KONFIGURIEREN.TelegrammNummer',  N'Trigger', N'Int32'),
+      (N'ZaehlerAnfahrt',   N'NOCH_ZU_KONFIGURIEREN.ZaehlerAnfahrt',   N'Trigger', N'Int32')
    ) AS source (NodeName, OPC_Node, NodeRole, DataType)
    ON target.EventID = @EventID
       AND target.NodeName = source.NodeName

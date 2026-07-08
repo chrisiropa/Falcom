@@ -15,6 +15,7 @@ namespace Falcom
       public const string SollMasseNodeName = "SollMasse";
       public const string ToleranzNodeName = "Toleranz";
       public const string TelegrammNummerNodeName = "TelegrammNummer";
+      public const string ZaehlerAnfahrtNodeName = "ZaehlerAnfahrt";
 
       public KranfahrtAuftragEvent(
          long? aktuelleFahrtID,
@@ -23,7 +24,8 @@ namespace Falcom
          long quellePositionID,
          long zielPositionID,
          decimal sollMasseKg,
-         decimal toleranzKg)
+         decimal toleranzKg,
+         int zaehlerAnfahrt = 0)
       {
          AktuelleFahrtID = aktuelleFahrtID;
          AuftragNummer = auftragNummer;
@@ -32,6 +34,7 @@ namespace Falcom
          ZielPositionID = zielPositionID;
          SollMasseKg = sollMasseKg;
          ToleranzKg = toleranzKg;
+         ZaehlerAnfahrt = zaehlerAnfahrt;
       }
 
       public override string Source => "FALCOM";
@@ -51,6 +54,13 @@ namespace Falcom
       public decimal SollMasseKg { get; }
 
       public decimal ToleranzKg { get; }
+
+      public int ZaehlerAnfahrt { get; private set; }
+
+      public void SetZaehlerAnfahrt(int zaehlerAnfahrt)
+      {
+         ZaehlerAnfahrt = zaehlerAnfahrt;
+      }
 
       public static KranfahrtAuftragEvent FromAktuelleFahrt(
          AktuelleFahrtResult aktuelleFahrt,
