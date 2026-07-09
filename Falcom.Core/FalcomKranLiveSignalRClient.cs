@@ -57,7 +57,7 @@ public sealed class FalcomKranLiveSignalRClient : IAsyncDisposable
       }
       catch (Exception ex)
       {
-         LogSendProblemIfDue(ex);
+         LogSendProblemIfDue(ex, hubUrl);
       }
    }
 
@@ -104,7 +104,7 @@ public sealed class FalcomKranLiveSignalRClient : IAsyncDisposable
       }
       catch (Exception ex)
       {
-         LogSendProblemIfDue(ex);
+         LogSendProblemIfDue(ex, hubUrl);
       }
    }
    private async Task<HubConnection> GetStartedConnectionAsync(
@@ -140,7 +140,7 @@ public sealed class FalcomKranLiveSignalRClient : IAsyncDisposable
       }
    }
 
-   private void LogSendProblemIfDue(Exception ex)
+   private void LogSendProblemIfDue(Exception ex, string hubUrl)
    {
       DateTime nowUtc = DateTime.UtcNow;
 
@@ -149,11 +149,25 @@ public sealed class FalcomKranLiveSignalRClient : IAsyncDisposable
          return;
       }
 
-      logger.LogWarning(
-         ex,
-         "0055|SPS-LebensZaehler konnte nicht an die Kran-Webseite gesendet werden. Weitere gleiche SignalR-Fehler werden fuer 60 Sekunden gedrosselt.");
+      logger.LogInformation(
+         "0055|Kran-Webseite/SignalR-Hub ist aktuell nicht erreichbar. Kein Fehler ! Live-Anzeige wird ausgelassen. Hub={HubUrl}, Grund={Reason}. Neuer Hinweis fruehestens in {DelaySeconds:N0} Sekunden.",
+         hubUrl,
+         BuildShortReason(ex),
+         ErrorLogThrottle.TotalSeconds);
 
       nextErrorLogUtc = nowUtc.Add(ErrorLogThrottle);
+   }
+
+   private static string BuildShortReason(Exception ex)
+   {
+      Exception root = ex;
+
+      while (root.InnerException is not null)
+      {
+         root = root.InnerException;
+      }
+
+      return $"{root.GetType().Name}: {root.Message}";
    }
 
    public async ValueTask DisposeAsync()

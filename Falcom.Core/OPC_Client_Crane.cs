@@ -13,6 +13,7 @@ namespace Falcom
       private const string PosKranXNodeName = "PosKranX";
       private const string PosKatzeYNodeName = "PosKatzeY";
       private const string PosHubZNodeName = "PosHubZ";
+      private const string LebensZaehlerNodeName = "LebensZaehler";
 
       private readonly ILogger<OPC_Client_Crane> _logger;
       private readonly ConfigManager _configManager;
@@ -25,7 +26,6 @@ namespace Falcom
       private readonly string falcomWatchdogNodeId;
       private readonly string kranSpsLebensZaehlerNodeId;
       private readonly Dictionary<string, string> kranPositionOpcNodesByName;
-      private readonly Dictionary<string, string> kranPositionNodeNameByOpcNode = new(StringComparer.Ordinal);
       private OpcClient? client = null;
       private OpcSubscription? subscription = null;
       private bool spsDataUnavailable;
@@ -33,6 +33,7 @@ namespace Falcom
       private DateTime nextDataFlowErrorLogUtc = DateTime.MinValue;
       private DateTime nextKranSpsLebensZaehlerLogUtc = DateTime.UtcNow.AddMinutes(1);
       private DateTime nextKranPositionLogUtc = DateTime.UtcNow.AddMinutes(1);
+      private DateTime nextKranPositionConfigurationLogUtc = DateTime.MinValue;
       private int kranfahrtAuftragTelegrammNummer;
       private int kranfahrtAuftragZaehlerAnfahrt;
       private int kranSpsLebensZaehlerEventsInCurrentMinute;
@@ -709,23 +710,17 @@ namespace Falcom
          subscription.AddMonitoredItem(kranfahrtBeendetItem);
          monitoredItems.Add(kranfahrtBeendetItem);
 
-         kranPositionNodeNameByOpcNode.Clear();
-
-         foreach ((string nodeName, string opcNode) in kranPositionOpcNodesByName)
+         if (kranPositionOpcNodesByName.TryGetValue(LebensZaehlerNodeName, out string? kranPositionTriggerNode)
+             && IsConfiguredOpcNode(kranPositionTriggerNode)
+             && !string.Equals(kranPositionTriggerNode, kranSpsLebensZaehlerNodeId, StringComparison.Ordinal))
          {
-            if (!IsConfiguredOpcNode(opcNode))
+            var positionTriggerItem = new OpcMonitoredItem(kranPositionTriggerNode, OpcAttribute.Value)
             {
-               continue;
-            }
-
-            var positionItem = new OpcMonitoredItem(opcNode, OpcAttribute.Value)
-            {
-               Tag = $"KranPosition.{nodeName}"
+               Tag = "KranPosition.LebensZaehler"
             };
-            positionItem.DataChangeReceived += HandleDataChange;
-            subscription.AddMonitoredItem(positionItem);
-            monitoredItems.Add(positionItem);
-            kranPositionNodeNameByOpcNode[opcNode] = nodeName;
+            positionTriggerItem.DataChangeReceived += HandleDataChange;
+            subscription.AddMonitoredItem(positionTriggerItem);
+            monitoredItems.Add(positionTriggerItem);
          }
 
          subscription.ApplyChanges();
@@ -770,33 +765,109 @@ namespace Falcom
          nextKranSpsLebensZaehlerLogUtc = nowUtc.AddMinutes(1);
       }
 
-      private void HandleKranPositionDataChange(string nodeName, object? value)
+      private bool IsKranPositionTriggerNode(string nodeId)
       {
-         int position = Convert.ToInt32(value);
+         return kranPositionOpcNodesByName.TryGetValue(LebensZaehlerNodeName, out string? triggerNode)
+                && IsConfiguredOpcNode(triggerNode)
+                && string.Equals(nodeId, triggerNode, StringComparison.Ordinal);
+      }
 
-         switch (nodeName)
+      private void TryReadAndSendKranPositionFromTrigger(string triggerNodeId)
+      {
+         if (!IsKranPositionTriggerNode(triggerNodeId))
          {
-            case PosKranXNodeName:
-               aktuellePosKranX = position;
-               break;
-            case PosKatzeYNodeName:
-               aktuellePosKatzeY = position;
-               break;
-            case PosHubZNodeName:
-               aktuellePosHubZ = position;
-               break;
-            default:
-               return;
+            return;
          }
 
-         kranPositionEventsInCurrentMinute++;
-         _ = _kranLiveSignalRClient.SendKranPositionAsync(
-            aktuellePosKranX,
-            aktuellePosKatzeY,
-            aktuellePosHubZ,
-            CancellationToken.None);
+         if (!TryGetConfiguredKranPositionNode(PosKranXNodeName, out string posKranXNode)
+             || !TryGetConfiguredKranPositionNode(PosKatzeYNodeName, out string posKatzeYNode)
+             || !TryGetConfiguredKranPositionNode(PosHubZNodeName, out string posHubZNode))
+         {
+            LogKranPositionConfigurationIssueIfDue(
+               "KranPosition-Trigger empfangen, aber mindestens ein Payload-Node PosKranX/PosKatzeY/PosHubZ ist nicht gueltig konfiguriert.");
+            return;
+         }
 
-         LogKranPositionSummaryIfDue();
+         try
+         {
+            int posKranX;
+            int posKatzeY;
+            int posHubZ;
+
+            lock (_syncRoot)
+            {
+               posKranX = ReadKranPositionPayloadInt32(posKranXNode, PosKranXNodeName);
+               posKatzeY = ReadKranPositionPayloadInt32(posKatzeYNode, PosKatzeYNodeName);
+               posHubZ = ReadKranPositionPayloadInt32(posHubZNode, PosHubZNodeName);
+            }
+
+            aktuellePosKranX = posKranX;
+            aktuellePosKatzeY = posKatzeY;
+            aktuellePosHubZ = posHubZ;
+            kranPositionEventsInCurrentMinute++;
+
+            _ = _kranLiveSignalRClient.SendKranPositionAsync(
+               aktuellePosKranX,
+               aktuellePosKatzeY,
+               aktuellePosHubZ,
+               CancellationToken.None);
+
+            LogKranPositionSummaryIfDue();
+         }
+         catch (Exception ex)
+         {
+            _logger.LogWarning(
+               ex,
+               "005C|KranPosition wurde durch LebensZaehler getriggert, aber die Payloads konnten nicht gelesen werden. TriggerNode={TriggerNode}.",
+               triggerNodeId);
+         }
+      }
+
+      private bool TryGetConfiguredKranPositionNode(string nodeName, out string opcNode)
+      {
+         opcNode = string.Empty;
+
+         if (!kranPositionOpcNodesByName.TryGetValue(nodeName, out string? configuredNode)
+             || !IsConfiguredOpcNode(configuredNode))
+         {
+            return false;
+         }
+
+         opcNode = configuredNode;
+         return true;
+      }
+
+      private int ReadKranPositionPayloadInt32(string opcNode, string nodeName)
+      {
+         if (client is null)
+         {
+            throw new InvalidOperationException($"OPC-Client ist nicht initialisiert. KranPosition.{nodeName} konnte nicht gelesen werden. Node={opcNode}");
+         }
+
+         OpcValue value = client.ReadNode(opcNode);
+
+         if (!value.Status.IsGood)
+         {
+            throw new InvalidOperationException($"KranPosition.{nodeName} ist nicht sauber lesbar. Node={opcNode}, Status={value.Status.Code}, Wert={value.Value}");
+         }
+
+         return Convert.ToInt32(value.Value);
+      }
+
+      private void LogKranPositionConfigurationIssueIfDue(string reason)
+      {
+         DateTime nowUtc = DateTime.UtcNow;
+
+         if (nowUtc < nextKranPositionConfigurationLogUtc)
+         {
+            return;
+         }
+
+         _logger.LogWarning(
+            "005B|KranPosition-Konfiguration ist nicht sendebereit: {Reason}",
+            reason);
+
+         nextKranPositionConfigurationLogUtc = nowUtc.AddMinutes(1);
       }
 
       private void LogKranPositionSummaryIfDue()
@@ -830,14 +901,7 @@ namespace Falcom
                "0050|OPC Empfang: Node={Node}, Wert={Value}",
                e.MonitoredItem.NodeId,
                neuerZaehlerWert);
-
-            if (kranPositionNodeNameByOpcNode.TryGetValue(changedNodeId, out string? positionNodeName))
-            {
-               HandleKranPositionDataChange(positionNodeName, neuerZaehlerWert);
-               return;
-            }
-
-            if (string.Equals(
+if (string.Equals(
                e.MonitoredItem.NodeId.ToString(),
                kranSpsLebensZaehlerNodeId,
                StringComparison.Ordinal))
@@ -867,8 +931,15 @@ namespace Falcom
                   lebensZaehler,
                   CancellationToken.None);
                LogKranSpsLebensZaehlerSummaryIfDue(lebensZaehler);
+               TryReadAndSendKranPositionFromTrigger(changedNodeId);
                return;
             }
+            if (IsKranPositionTriggerNode(changedNodeId))
+            {
+               TryReadAndSendKranPositionFromTrigger(changedNodeId);
+               return;
+            }
+
             if (e.MonitoredItem.NodeId.ToString().Contains("ns=1;s=LagerV.DataBlocks.Count_DB_1.Static.OPC.Zaehler"))
             {
                /*
