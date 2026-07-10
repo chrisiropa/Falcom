@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Opc.UaFx.Client;
 using System;
@@ -54,6 +54,8 @@ namespace Falcom
             using var watchdogTimerCancellation =
                CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
             Task watchdogTimer = ScheduleWatchdogEventsAsync(
+               watchdogTimerCancellation.Token);
+            Task opcDataFlowMonitor = ScheduleOpcDataFlowChecksAsync(
                watchdogTimerCancellation.Token);
 
             // NEU: Die Schleife wartet jetzt reaktiv, bis ein Event in der Queue landet.
@@ -230,6 +232,14 @@ namespace Falcom
                {
                }
 
+               try
+               {
+                  await opcDataFlowMonitor;
+               }
+               catch (OperationCanceledException)
+               {
+               }
+
                _logger.LogInformation("0038|Disconnecting from OPC Server...");
                _opcClientCrane.Disconnect();
             }
@@ -329,6 +339,30 @@ namespace Falcom
             watchdogValue = watchdogValue == int.MaxValue
                ? 0
                : watchdogValue + 1;
+         }
+      }
+
+      private async Task ScheduleOpcDataFlowChecksAsync(CancellationToken stoppingToken)
+      {
+         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(3));
+
+         while (await timer.WaitForNextTickAsync(stoppingToken))
+         {
+            try
+            {
+               await _opcClientCrane.EnsureDataFlowAsync(stoppingToken);
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+               throw;
+            }
+            catch (Exception ex)
+            {
+               _logger.LogWarning(
+                  "0060|Zyklische OPC-Datenflusspruefung fehlgeschlagen. Fehler={ExceptionType}: {Message}",
+                  ex.GetType().Name,
+                  ex.Message);
+            }
          }
       }
 

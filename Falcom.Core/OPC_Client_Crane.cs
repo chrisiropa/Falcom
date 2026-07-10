@@ -14,6 +14,11 @@ namespace Falcom
       private const string PosKatzeYNodeName = "PosKatzeY";
       private const string PosHubZNodeName = "PosHubZ";
       private const string LebensZaehlerNodeName = "LebensZaehler";
+      private const int KranfahrtBeendetEventId = 1;
+      private const int KranfahrtAuftragEventId = 2;
+      private const string KranfahrtAuftragEventName = "KranfahrtAuftrag";
+      private const string KranfahrtAuftragDirection = "FALCOM->KRAN_SPS";
+      private const string TelegrammNummerNodeName = "TelegrammNummer";
 
       private readonly ILogger<OPC_Client_Crane> _logger;
       private readonly ConfigManager _configManager;
@@ -26,6 +31,7 @@ namespace Falcom
       private readonly string falcomWatchdogNodeId;
       private readonly string kranSpsLebensZaehlerNodeId;
       private readonly Dictionary<string, string> kranPositionOpcNodesByName;
+      private readonly Dictionary<string, string> kranfahrtAuftragLiveOpcNodesByName;
       private OpcClient? client = null;
       private OpcSubscription? subscription = null;
       private bool spsDataUnavailable;
@@ -34,14 +40,18 @@ namespace Falcom
       private DateTime nextKranSpsLebensZaehlerLogUtc = DateTime.UtcNow.AddMinutes(1);
       private DateTime nextKranPositionLogUtc = DateTime.UtcNow.AddMinutes(1);
       private DateTime nextKranPositionConfigurationLogUtc = DateTime.MinValue;
+      private DateTime nextBackgroundReconnectLogUtc = DateTime.MinValue;
       private int kranfahrtAuftragTelegrammNummer;
       private int kranfahrtAuftragZaehlerAnfahrt;
       private int kranSpsLebensZaehlerEventsInCurrentMinute;
       private int kranPositionEventsInCurrentMinute;
+      private int backgroundReconnectLoopRunning;
+      private int? lastKranfahrtAuftragTelegrammNummer;
       private int? aktuellePosKranX;
       private int? aktuellePosKatzeY;
       private int? aktuellePosHubZ;
       private string? lastKranfahrtAuftragConfigurationIssue;
+      private readonly CancellationTokenSource backgroundReconnectCancellation = new();
       private bool disposed;
 
       // NEU: FalcomEventQueue im Konstruktor anfordern
@@ -71,6 +81,9 @@ namespace Falcom
          kranPositionOpcNodesByName = LoadOptionalEventOpcNodes(
             KranPositionEventName,
             KranPositionDirection);
+         kranfahrtAuftragLiveOpcNodesByName = LoadOptionalEventOpcNodes(
+            KranfahrtAuftragEventName,
+            KranfahrtAuftragDirection);
 
          if (string.IsNullOrWhiteSpace(parameter.OpcServer))
          {
@@ -120,6 +133,7 @@ namespace Falcom
                _runtimeStatus.SetSpsLebensZaehlerUnavailable("OPC-Datenfluss wird geprueft");
                ConnectOnce();
                ValidateWatchdogRead();
+               _runtimeStatus.SetOpcKranSpsStatus(true, "Verbunden");
                spsLebensZaehlerFreigegeben = true;
                _logger.LogInformation("0013|OPC-Verbindungsversuch {Attempt} erfolgreich abgeschlossen.", attempt);
                return;
@@ -149,6 +163,7 @@ namespace Falcom
             {
                EnsureConnected();
                ValidateWatchdogRead();
+               _runtimeStatus.SetOpcKranSpsStatus(true, "Verbunden");
                spsLebensZaehlerFreigegeben = true;
 
                if (spsDataUnavailable)
@@ -210,6 +225,114 @@ namespace Falcom
                attempt++;
             }
          }
+      }
+
+      private void StartBackgroundReconnectLoop(string reason)
+      {
+         if (disposed || backgroundReconnectCancellation.IsCancellationRequested)
+         {
+            return;
+         }
+
+         if (Interlocked.CompareExchange(
+                ref backgroundReconnectLoopRunning,
+                1,
+                0) != 0)
+         {
+            return;
+         }
+
+         _logger.LogWarning(
+            "005D|OPC-Hintergrund-Reconnect wird gestartet. Grund={Reason}.",
+            reason);
+
+         _ = Task.Run(
+            async () =>
+            {
+               var attempt = 1;
+               CancellationToken cancellationToken = backgroundReconnectCancellation.Token;
+
+               try
+               {
+                  while (!disposed && !cancellationToken.IsCancellationRequested)
+                  {
+                     try
+                     {
+                        lock (_syncRoot)
+                        {
+                           if (client is { State: OpcClientState.Connected })
+                           {
+                              ValidateWatchdogRead();
+                              spsLebensZaehlerFreigegeben = true;
+                              spsDataUnavailable = false;
+                              _runtimeStatus.SetOpcKranSpsStatus(true, "Verbunden");
+                              _logger.LogInformation(
+                                 "005E|OPC-Hintergrund-Reconnect erfolgreich. Versuch={Attempt}.",
+                                 attempt);
+                              return;
+                           }
+
+                           ResetSubscription();
+
+                           if (client is not null)
+                           {
+                              try
+                              {
+                                 client.StateChanged -= OnClientStateChanged;
+                                 client.Disconnect();
+                              }
+                              catch
+                              {
+                              }
+
+                              client.Dispose();
+                              client = null;
+                           }
+
+                           CreateClientInstance();
+                           ConnectOnce();
+                           ValidateWatchdogRead();
+                           spsLebensZaehlerFreigegeben = true;
+                           spsDataUnavailable = false;
+                           _runtimeStatus.SetOpcKranSpsStatus(true, "Verbunden");
+                           _logger.LogInformation(
+                              "005E|OPC-Hintergrund-Reconnect erfolgreich. Versuch={Attempt}.",
+                              attempt);
+                           return;
+                        }
+                     }
+                     catch (Exception ex)
+                     {
+                        spsLebensZaehlerFreigegeben = false;
+                        spsDataUnavailable = true;
+                        _runtimeStatus.SetOpcKranSpsStatus(false, "Reconnect laeuft");
+                        _runtimeStatus.SetSpsLebensZaehlerUnavailable("OPC Reconnect laeuft");
+
+                        if (DateTime.UtcNow >= nextBackgroundReconnectLogUtc)
+                        {
+                           _logger.LogWarning(
+                              "005F|OPC-Hintergrund-Reconnect Versuch={Attempt} noch nicht erfolgreich. Naechster Versuch in {DelaySeconds} Sekunden. Fehler={ExceptionType}: {Message}",
+                              attempt,
+                              ConnectRetryDelay.TotalSeconds,
+                              ex.GetType().Name,
+                              ex.Message);
+                           nextBackgroundReconnectLogUtc = DateTime.UtcNow.AddMinutes(1);
+                        }
+                     }
+
+                     attempt++;
+                     await Task.Delay(ConnectRetryDelay, cancellationToken);
+                  }
+               }
+               catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+               {
+               }
+               finally
+               {
+                  Interlocked.Exchange(ref backgroundReconnectLoopRunning, 0);
+               }
+            },
+            backgroundReconnectCancellation.Token);
       }
 
       public Task<OpcSendResult> SendKranfahrtAuftragAsync(
@@ -628,6 +751,7 @@ namespace Falcom
             try
             {
                _logger.LogInformation("001D|OPC_Client_Crane wird heruntergefahren.");
+               backgroundReconnectCancellation.Cancel();
 
                ResetSubscription();
 
@@ -661,6 +785,8 @@ namespace Falcom
                client.Dispose();
                client = null;
             }
+            backgroundReconnectCancellation.Cancel();
+            backgroundReconnectCancellation.Dispose();
             disposed = true;
          }
       }
@@ -709,6 +835,20 @@ namespace Falcom
          kranfahrtBeendetItem.DataChangeReceived += HandleDataChange;
          subscription.AddMonitoredItem(kranfahrtBeendetItem);
          monitoredItems.Add(kranfahrtBeendetItem);
+         if (TryGetConfiguredKranfahrtAuftragLiveNode(TelegrammNummerNodeName, out string telegrammNummerNode))
+         {
+            var kranfahrtAuftragTelegrammItem = new OpcMonitoredItem(telegrammNummerNode, OpcAttribute.Value)
+            {
+               Tag = "KranfahrtAuftrag.TelegrammNummer"
+            };
+            kranfahrtAuftragTelegrammItem.DataChangeReceived += HandleDataChange;
+            subscription.AddMonitoredItem(kranfahrtAuftragTelegrammItem);
+            monitoredItems.Add(kranfahrtAuftragTelegrammItem);
+         }
+         else
+         {
+            _logger.LogWarning("0061|KranfahrtAuftrag Live-Anzeige ist nicht aktiv: TelegrammNummer-Node ist nicht gueltig konfiguriert.");
+         }
 
          if (kranPositionOpcNodesByName.TryGetValue(LebensZaehlerNodeName, out string? kranPositionTriggerNode)
              && IsConfiguredOpcNode(kranPositionTriggerNode)
@@ -726,24 +866,6 @@ namespace Falcom
          subscription.ApplyChanges();
 
          _logger.LogInformation("0021|Kanal 'Zähler' erfolgreich registriert.");
-         return true;
-      }
-
-      public Boolean ConnectChannels_WD_TEST()
-      {
-         if (subscription == null || client == null) return false;
-
-         var item = new OpcMonitoredItem(falcomWatchdogNodeId, OpcAttribute.Value)
-         {
-            Tag = "craneEvent"
-         };
-         item.DataChangeReceived += HandleDataChange;
-
-         subscription.AddMonitoredItem(item);
-         monitoredItems.Add(item);
-         subscription.ApplyChanges();
-
-         _logger.LogInformation("0022|Kanal 'Watchdog' erfolgreich registriert.");
          return true;
       }
 
@@ -770,6 +892,27 @@ namespace Falcom
          return kranPositionOpcNodesByName.TryGetValue(LebensZaehlerNodeName, out string? triggerNode)
                 && IsConfiguredOpcNode(triggerNode)
                 && string.Equals(nodeId, triggerNode, StringComparison.Ordinal);
+      }
+
+      private bool IsKranfahrtAuftragTelegrammTriggerNode(string nodeId)
+      {
+         return kranfahrtAuftragLiveOpcNodesByName.TryGetValue(TelegrammNummerNodeName, out string? triggerNode)
+                && IsConfiguredOpcNode(triggerNode)
+                && string.Equals(nodeId, triggerNode, StringComparison.Ordinal);
+      }
+
+      private bool TryGetConfiguredKranfahrtAuftragLiveNode(string nodeName, out string opcNode)
+      {
+         opcNode = string.Empty;
+
+         if (!kranfahrtAuftragLiveOpcNodesByName.TryGetValue(nodeName, out string? configuredNode)
+             || !IsConfiguredOpcNode(configuredNode))
+         {
+            return false;
+         }
+
+         opcNode = configuredNode;
+         return true;
       }
 
       private void TryReadAndSendKranPositionFromTrigger(string triggerNodeId)
@@ -821,6 +964,128 @@ namespace Falcom
                "005C|KranPosition wurde durch LebensZaehler getriggert, aber die Payloads konnten nicht gelesen werden. TriggerNode={TriggerNode}.",
                triggerNodeId);
          }
+      }
+
+      private void TryReadAndSendKranfahrtAuftragLiveSnapshot(string triggerNodeId, object? triggerValue)
+      {
+         if (!IsKranfahrtAuftragTelegrammTriggerNode(triggerNodeId))
+         {
+            return;
+         }
+
+         int telegrammNummer;
+
+         try
+         {
+            telegrammNummer = Convert.ToInt32(triggerValue);
+         }
+         catch (Exception ex)
+         {
+            _logger.LogWarning(
+               ex,
+               "0062|KranfahrtAuftrag.TelegrammNummer konnte nicht als Int32 interpretiert werden. Node={Node}, Wert={Value}.",
+               triggerNodeId,
+               triggerValue);
+            return;
+         }
+
+         if (lastKranfahrtAuftragTelegrammNummer == telegrammNummer)
+         {
+            return;
+         }
+
+         lastKranfahrtAuftragTelegrammNummer = telegrammNummer;
+
+         try
+         {
+            Dictionary<string, object?> values = ReadConfiguredEventValues(kranfahrtAuftragLiveOpcNodesByName);
+
+            _ = _kranLiveSignalRClient.SendKranOpcEventAsync(
+               KranfahrtAuftragEventId,
+               KranfahrtAuftragEventName,
+               KranfahrtAuftragDirection,
+               TelegrammNummerNodeName,
+               telegrammNummer,
+               values,
+               CancellationToken.None);
+
+            _logger.LogInformation(
+               "0063|KranfahrtAuftrag Live-Snapshot an Webanwendung vorgemerkt. TelegrammNummer={TelegrammNummer}.",
+               telegrammNummer);
+         }
+         catch (Exception ex)
+         {
+            _logger.LogWarning(
+               ex,
+               "0064|KranfahrtAuftrag Live-Snapshot konnte nach TelegrammNr-Trigger nicht gelesen werden. TriggerNode={TriggerNode}.",
+               triggerNodeId);
+         }
+      }
+
+      private void SendKranfahrtBeendetLiveSnapshot(
+         object? aenderungsZaehler,
+         int auftragId,
+         int teilfahrtID,
+         string kranQuelle,
+         string kranZiel,
+         double toleranz,
+         double istGewicht,
+         int fehlercode)
+      {
+         var values = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+         {
+            ["AenderungsZaehler"] = aenderungsZaehler,
+            ["AuftragsNummer"] = auftragId,
+            ["AuftragTeilfahrt"] = teilfahrtID,
+            ["KranQuelle"] = kranQuelle,
+            ["KranZiel"] = kranZiel,
+            ["Toleranz"] = toleranz,
+            ["IstGewicht"] = istGewicht,
+            ["Fehlercode"] = fehlercode
+         };
+
+         _ = _kranLiveSignalRClient.SendKranOpcEventAsync(
+            KranfahrtBeendetEventId,
+            "KranfahrtBeendet",
+            "KRAN_SPS->FALCOM",
+            "AenderungsZaehler",
+            aenderungsZaehler,
+            values,
+            CancellationToken.None);
+      }
+
+      private Dictionary<string, object?> ReadConfiguredEventValues(
+         IReadOnlyDictionary<string, string> opcNodesByName)
+      {
+         var values = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+
+         if (client is null)
+         {
+            throw new InvalidOperationException("OPC-Client ist nicht initialisiert. Eventwerte konnten nicht gelesen werden.");
+         }
+
+         lock (_syncRoot)
+         {
+            foreach (KeyValuePair<string, string> node in opcNodesByName)
+            {
+               if (!IsConfiguredOpcNode(node.Value))
+               {
+                  continue;
+               }
+
+               OpcValue value = client.ReadNode(node.Value);
+
+               if (!value.Status.IsGood)
+               {
+                  throw new InvalidOperationException(
+                     $"Eventwert {node.Key} ist nicht sauber lesbar. Node={node.Value}, Status={value.Status.Code}, Wert={value.Value}");
+               }
+
+               values[node.Key] = value.Value;
+            }
+         }
+
+         return values;
       }
 
       private bool TryGetConfiguredKranPositionNode(string nodeName, out string opcNode)
@@ -940,6 +1205,12 @@ if (string.Equals(
                return;
             }
 
+            if (IsKranfahrtAuftragTelegrammTriggerNode(changedNodeId))
+            {
+               TryReadAndSendKranfahrtAuftragLiveSnapshot(changedNodeId, neuerZaehlerWert);
+               return;
+            }
+
             if (e.MonitoredItem.NodeId.ToString().Contains("ns=1;s=LagerV.DataBlocks.Count_DB_1.Static.OPC.Zaehler"))
             {
                /*
@@ -998,6 +1269,16 @@ if (string.Equals(
                _logger.LogInformation(
                   "0028|KranfahrtBeendetEvent eingereiht: Auftrag={AuftragId}, Quelle={Quelle}, Ziel={Ziel}, Toleranz={Toleranz}, IstGewicht={IstGewicht}, Fehlercode={Fehlercode}",
                   auftragId, kranQuelle, kranZiel, toleranz, istGewicht, fehlercode);
+
+               SendKranfahrtBeendetLiveSnapshot(
+                  e.Item.Value.Value,
+                  auftragId,
+                  teilfahrtID,
+                  kranQuelle,
+                  kranZiel,
+                  toleranz,
+                  istGewicht,
+                  fehlercode);
             }
          }
          catch (Exception ex)
@@ -1023,6 +1304,7 @@ if (string.Equals(
             _runtimeStatus.SetOpcKranSpsStatus(false, "Getrennt");
             _runtimeStatus.SetSpsLebensZaehlerUnavailable("OPC getrennt");
             _logger.LogError("002C|Die Verbindung zum OPC UA Server wurde getrennt!");
+            StartBackgroundReconnectLoop("OPC Client meldet Disconnected");
          }
          else if (e.NewState == OpcClientState.Reconnecting)
          {
@@ -1030,6 +1312,7 @@ if (string.Equals(
             _runtimeStatus.SetOpcKranSpsStatus(false, "Reconnect laeuft");
             _runtimeStatus.SetSpsLebensZaehlerUnavailable("OPC Reconnect laeuft");
             _logger.LogInformation("002D|Verbindung verloren. Auto-Reconnect versucht gerade die Wiederverbindung...");
+            StartBackgroundReconnectLoop("OPC Client meldet Reconnecting");
          }
       }
 

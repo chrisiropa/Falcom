@@ -4,13 +4,26 @@ namespace Falcom;
 
 public sealed class FalcomKranLiveSignalRClient : IAsyncDisposable
 {
+   private static readonly TimeSpan SendInterval = TimeSpan.FromSeconds(1);
+   private static readonly TimeSpan ReconnectAttemptInterval = TimeSpan.FromSeconds(30);
+   private static readonly TimeSpan OperationTimeout = TimeSpan.FromSeconds(2);
    private static readonly TimeSpan ErrorLogThrottle = TimeSpan.FromMinutes(1);
 
    private readonly ILogger<FalcomKranLiveSignalRClient> logger;
    private readonly ConfigManager configManager;
    private readonly SemaphoreSlim connectionLock = new(1, 1);
+   private readonly object latestSyncRoot = new();
+   private readonly CancellationTokenSource senderCancellation = new();
+   private readonly Task senderTask;
+
    private HubConnection? connection;
    private DateTime nextErrorLogUtc = DateTime.MinValue;
+   private DateTime nextConnectAttemptUtc = DateTime.MinValue;
+   private string? activeHubUrl;
+
+   private LatestSpsLebensZaehler? latestSpsLebensZaehler;
+   private LatestKranPosition? latestKranPosition;
+   private readonly List<LatestKranOpcEvent> pendingKranOpcEvents = new();
 
    public FalcomKranLiveSignalRClient(
       ILogger<FalcomKranLiveSignalRClient> logger,
@@ -18,55 +31,107 @@ public sealed class FalcomKranLiveSignalRClient : IAsyncDisposable
    {
       this.logger = logger;
       this.configManager = configManager;
+      senderTask = Task.Run(() => SendLoopAsync(senderCancellation.Token));
    }
 
-   public async Task SendSpsLebensZaehlerAsync(
+   public Task SendSpsLebensZaehlerAsync(
       int lebensZaehler,
       CancellationToken cancellationToken)
    {
-      string hubUrl = configManager.KranLiveHubUrl;
-
-      if (string.IsNullOrWhiteSpace(hubUrl))
+      if (cancellationToken.IsCancellationRequested)
       {
-         return;
+         return Task.FromCanceled(cancellationToken);
       }
 
-      try
+      lock (latestSyncRoot)
       {
-         HubConnection hubConnection = await GetStartedConnectionAsync(
-            hubUrl.Trim(),
-            cancellationToken);
+         latestSpsLebensZaehler = new LatestSpsLebensZaehler(
+            lebensZaehler,
+            DateTime.UtcNow);
+      }
 
-         await hubConnection.InvokeAsync(
-            "PublishSpsLebensZaehler",
-            new
-            {
-               LebensZaehler = lebensZaehler,
-               TimestampUtc = DateTime.UtcNow,
-               Source = "Kran-SPS"
-            },
-            cancellationToken);
-
-         logger.LogDebug(
-            "0056|SPS-LebensZaehler {LebensZaehler} wurde an die Kran-Webseite gesendet.",
-            lebensZaehler);
-      }
-      catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-      {
-         throw;
-      }
-      catch (Exception ex)
-      {
-         LogSendProblemIfDue(ex, hubUrl);
-      }
+      return Task.CompletedTask;
    }
 
-   public async Task SendKranPositionAsync(
+   public Task SendKranPositionAsync(
       int? posKranX,
       int? posKatzeY,
       int? posHubZ,
       CancellationToken cancellationToken)
    {
+      if (cancellationToken.IsCancellationRequested)
+      {
+         return Task.FromCanceled(cancellationToken);
+      }
+
+      lock (latestSyncRoot)
+      {
+         latestKranPosition = new LatestKranPosition(
+            posKranX,
+            posKatzeY,
+            posHubZ,
+            DateTime.UtcNow);
+      }
+
+      return Task.CompletedTask;
+   }
+
+   public Task SendKranOpcEventAsync(
+      int eventId,
+      string eventName,
+      string direction,
+      string triggerNodeName,
+      object? triggerValue,
+      IReadOnlyDictionary<string, object?> values,
+      CancellationToken cancellationToken)
+   {
+      if (cancellationToken.IsCancellationRequested)
+      {
+         return Task.FromCanceled(cancellationToken);
+      }
+
+      lock (latestSyncRoot)
+      {
+         pendingKranOpcEvents.Add(new LatestKranOpcEvent(
+            eventId,
+            eventName,
+            direction,
+            triggerNodeName,
+            triggerValue,
+            values
+               .Select(pair => new LatestKranOpcEventItem(pair.Key, pair.Value))
+               .ToArray(),
+            DateTime.UtcNow));
+      }
+
+      return Task.CompletedTask;
+   }
+
+   private async Task SendLoopAsync(CancellationToken cancellationToken)
+   {
+      using PeriodicTimer timer = new(SendInterval);
+
+      try
+      {
+         while (await timer.WaitForNextTickAsync(cancellationToken))
+         {
+            await TrySendLatestAsync(cancellationToken);
+         }
+      }
+      catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+      {
+         // normales Beenden
+      }
+      catch (Exception ex)
+      {
+         logger.LogInformation(
+            "005D|SignalR-Live-Sender wurde unerwartet beendet. Live-Visu faellt aus, Falcom laeuft weiter. Grund={Reason}.",
+            BuildShortReason(ex));
+      }
+   }
+
+   private async Task TrySendLatestAsync(CancellationToken cancellationToken)
+   {
       string hubUrl = configManager.KranLiveHubUrl;
 
       if (string.IsNullOrWhiteSpace(hubUrl))
@@ -74,29 +139,96 @@ public sealed class FalcomKranLiveSignalRClient : IAsyncDisposable
          return;
       }
 
+      LatestSpsLebensZaehler? spsLebensZaehler;
+      LatestKranPosition? kranPosition;
+      LatestKranOpcEvent[] kranOpcEvents;
+
+      lock (latestSyncRoot)
+      {
+         spsLebensZaehler = latestSpsLebensZaehler;
+         kranPosition = latestKranPosition;
+         kranOpcEvents = pendingKranOpcEvents.ToArray();
+      }
+
+      if (spsLebensZaehler is null && kranPosition is null && kranOpcEvents.Length == 0)
+      {
+         return;
+      }
+
       try
       {
-         HubConnection hubConnection = await GetStartedConnectionAsync(
+         HubConnection? hubConnection = await GetStartedConnectionAsync(
             hubUrl.Trim(),
             cancellationToken);
 
-         await hubConnection.InvokeAsync(
-            "PublishKranPosition",
-            new
-            {
-               PosKranX = posKranX,
-               PosKatzeY = posKatzeY,
-               PosHubZ = posHubZ,
-               TimestampUtc = DateTime.UtcNow,
-               Source = "Kran-SPS"
-            },
-            cancellationToken);
+         if (hubConnection is null)
+         {
+            return;
+         }
 
-         logger.LogDebug(
-            "0059|Kranposition wurde an die Kran-Webseite gesendet. X={PosKranX}, Y={PosKatzeY}, Z={PosHubZ}.",
-            posKranX,
-            posKatzeY,
-            posHubZ);
+         if (spsLebensZaehler is not null)
+         {
+            await InvokeWithTimeoutAsync(
+               hubConnection,
+               "PublishSpsLebensZaehler",
+               new
+               {
+                  LebensZaehler = spsLebensZaehler.LebensZaehler,
+                  TimestampUtc = spsLebensZaehler.TimestampUtc,
+                  Source = "Kran-SPS"
+               },
+               cancellationToken);
+         }
+
+         if (kranPosition is not null)
+         {
+            await InvokeWithTimeoutAsync(
+               hubConnection,
+               "PublishKranPosition",
+               new
+               {
+                  PosKranX = kranPosition.PosKranX,
+                  PosKatzeY = kranPosition.PosKatzeY,
+                  PosHubZ = kranPosition.PosHubZ,
+                  TimestampUtc = kranPosition.TimestampUtc,
+                  Source = "Kran-SPS"
+               },
+               cancellationToken);
+         }
+
+         foreach (LatestKranOpcEvent kranOpcEvent in kranOpcEvents)
+         {
+            await InvokeWithTimeoutAsync(
+               hubConnection,
+               "PublishKranOpcEvent",
+               new
+               {
+                  EventId = kranOpcEvent.EventId,
+                  EventName = kranOpcEvent.EventName,
+                  Direction = kranOpcEvent.Direction,
+                  TriggerNodeName = kranOpcEvent.TriggerNodeName,
+                  TriggerValue = Convert.ToString(kranOpcEvent.TriggerValue),
+                  TimestampUtc = kranOpcEvent.TimestampUtc,
+                  Source = "Falcom/OPC",
+                  Items = kranOpcEvent.Items.Select(item => new
+                  {
+                     NodeName = item.NodeName,
+                     Value = Convert.ToString(item.Value)
+                  }).ToArray()
+               },
+               cancellationToken);
+         }
+
+         if (kranOpcEvents.Length > 0)
+         {
+            lock (latestSyncRoot)
+            {
+               foreach (LatestKranOpcEvent sentEvent in kranOpcEvents)
+               {
+                  pendingKranOpcEvents.Remove(sentEvent);
+               }
+            }
+         }
       }
       catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
       {
@@ -105,9 +237,11 @@ public sealed class FalcomKranLiveSignalRClient : IAsyncDisposable
       catch (Exception ex)
       {
          LogSendProblemIfDue(ex, hubUrl);
+         await ResetConnectionAfterProblemAsync();
       }
    }
-   private async Task<HubConnection> GetStartedConnectionAsync(
+
+   private async Task<HubConnection?> GetStartedConnectionAsync(
       string hubUrl,
       CancellationToken cancellationToken)
    {
@@ -115,6 +249,18 @@ public sealed class FalcomKranLiveSignalRClient : IAsyncDisposable
 
       try
       {
+         if (!string.Equals(activeHubUrl, hubUrl, StringComparison.OrdinalIgnoreCase))
+         {
+            if (connection is not null)
+            {
+               await connection.DisposeAsync();
+            }
+
+            connection = null;
+            activeHubUrl = hubUrl;
+            nextConnectAttemptUtc = DateTime.MinValue;
+         }
+
          if (connection is null)
          {
             connection = new HubConnectionBuilder()
@@ -123,16 +269,80 @@ public sealed class FalcomKranLiveSignalRClient : IAsyncDisposable
                .Build();
          }
 
-         if (connection.State != HubConnectionState.Connected)
+         if (connection.State == HubConnectionState.Connected)
          {
-            logger.LogInformation(
-               "0054|SignalR-Verbindung zur Kran-Webseite wird aufgebaut: {HubUrl}",
-               hubUrl);
-
-            await connection.StartAsync(cancellationToken);
+            return connection;
          }
 
+         if (connection.State != HubConnectionState.Disconnected)
+         {
+            return null;
+         }
+
+         DateTime nowUtc = DateTime.UtcNow;
+
+         if (nowUtc < nextConnectAttemptUtc)
+         {
+            return null;
+         }
+
+         nextConnectAttemptUtc = nowUtc.Add(ReconnectAttemptInterval);
+
+         logger.LogDebug(
+            "0054|SignalR-Verbindung zur Kran-Webseite wird aufgebaut: {HubUrl}",
+            hubUrl);
+
+         using CancellationTokenSource timeoutCancellation =
+            CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+         timeoutCancellation.CancelAfter(OperationTimeout);
+
+         await connection.StartAsync(timeoutCancellation.Token);
          return connection;
+      }
+      finally
+      {
+         connectionLock.Release();
+      }
+   }
+
+   private static async Task InvokeWithTimeoutAsync(
+      HubConnection hubConnection,
+      string methodName,
+      object payload,
+      CancellationToken cancellationToken)
+   {
+      using CancellationTokenSource timeoutCancellation =
+         CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+      timeoutCancellation.CancelAfter(OperationTimeout);
+
+      await hubConnection.InvokeAsync(
+         methodName,
+         payload,
+         timeoutCancellation.Token);
+   }
+
+   private async Task ResetConnectionAfterProblemAsync()
+   {
+      if (!await connectionLock.WaitAsync(0))
+      {
+         return;
+      }
+
+      try
+      {
+         if (connection is null)
+         {
+            return;
+         }
+
+         await connection.DisposeAsync();
+         connection = null;
+         nextConnectAttemptUtc = DateTime.UtcNow.Add(ReconnectAttemptInterval);
+      }
+      catch
+      {
+         connection = null;
+         nextConnectAttemptUtc = DateTime.UtcNow.Add(ReconnectAttemptInterval);
       }
       finally
       {
@@ -172,11 +382,47 @@ public sealed class FalcomKranLiveSignalRClient : IAsyncDisposable
 
    public async ValueTask DisposeAsync()
    {
-      if (connection is null)
+      await senderCancellation.CancelAsync();
+
+      try
       {
-         return;
+         await senderTask;
+      }
+      catch (OperationCanceledException)
+      {
+         // normales Beenden
       }
 
-      await connection.DisposeAsync();
+      senderCancellation.Dispose();
+
+      if (connection is not null)
+      {
+         await connection.DisposeAsync();
+      }
+
+      connectionLock.Dispose();
    }
+
+   private sealed record LatestSpsLebensZaehler(
+      int LebensZaehler,
+      DateTime TimestampUtc);
+
+   private sealed record LatestKranPosition(
+      int? PosKranX,
+      int? PosKatzeY,
+      int? PosHubZ,
+      DateTime TimestampUtc);
+
+   private sealed record LatestKranOpcEvent(
+      int EventId,
+      string EventName,
+      string Direction,
+      string TriggerNodeName,
+      object? TriggerValue,
+      IReadOnlyList<LatestKranOpcEventItem> Items,
+      DateTime TimestampUtc);
+
+   private sealed record LatestKranOpcEventItem(
+      string NodeName,
+      object? Value);
 }

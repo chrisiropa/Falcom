@@ -35,7 +35,9 @@ public partial class MainWindow : Window
 
       LastRefreshText.Text = $"Aktualisiert: {now:dd.MM.yyyy HH:mm:ss}";
 
-      OpcLamp.Fill = snapshot.OpcKranSpsVerbunden
+      bool opcStatusFresh = snapshot.OpcKranSpsStatusZeit is not null
+                            && now - snapshot.OpcKranSpsStatusZeit.Value < TimeSpan.FromSeconds(10);
+      OpcLamp.Fill = snapshot.OpcKranSpsVerbunden && opcStatusFresh
          ? Brushes.LimeGreen
          : Brushes.Firebrick;
       OpcStatusText.Text = snapshot.OpcKranSpsStatusText;
