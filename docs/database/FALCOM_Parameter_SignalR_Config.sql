@@ -34,12 +34,13 @@ GO
 
 MERGE dbo.FALCOM_Parameter AS target
 USING (VALUES
-   (N'KundenVisuModernHttpsPort', N'7218', N'HTTPS-Port der KundenVisuModern-Webanwendung / SignalR-Server.'),
+   (N'KundenVisuModernHttpsPort', N'7218', N'HTTPS-Port der KundenVisuModern-Webanwendung.'),
    (N'KundenVisuModernHttpPort',  N'5043', N'HTTP-Port der KundenVisuModern-Webanwendung.'),
    (N'KundenVisuModernBindHost',  N'localhost', N'Host/IP fuer Webserver-Bindung. Lokal: localhost, Dienst/Netzwerk ggf. 0.0.0.0 oder konkreter Hostname.'),
-   (N'KranLiveHubScheme',         N'https', N'Schema fuer die SignalR-Hub-URL.'),
-   (N'KranLiveHubHost',           N'localhost', N'Host fuer die SignalR-Hub-URL aus Sicht des Falcom-Dienstes.'),
-   (N'KranLiveHubPath',           N'/falcom-kran-hub', N'Pfad des SignalR-Hubs in KundenVisuModern.')
+   (N'FalcomKranLiveHubScheme',   N'http', N'Schema fuer den Falcom SignalR-Live-Hub.'),
+   (N'FalcomKranLiveHubHost',     N'localhost', N'Host fuer den Falcom SignalR-Live-Hub aus Sicht der Webanwendung.'),
+   (N'FalcomKranLiveHubPort',     N'5055', N'Port fuer den Falcom SignalR-Live-Hub.'),
+   (N'KranLiveHubPath',           N'/falcom-kran-hub', N'Pfad des SignalR-Hubs in Falcom.')
 ) AS source (Name, Wert, Beschreibung)
 ON target.Name = source.Name
 WHEN MATCHED THEN

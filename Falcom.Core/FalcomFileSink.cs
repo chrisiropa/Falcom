@@ -11,11 +11,32 @@ public sealed class FalcomFileSink
 
    public FalcomFileSink(string logfilePath)
    {
-      _logfilePath = logfilePath;
+      _logfilePath = NormalizeLogfilePath(logfilePath);
       EnsureDirectoryAndFile();
       StartNewLogfile();
    }
 
+
+   private static string NormalizeLogfilePath(string logfilePath)
+   {
+      string trimmedPath = string.IsNullOrWhiteSpace(logfilePath)
+         ? Path.Combine(AppContext.BaseDirectory, "FALCOM.log")
+         : logfilePath.Trim();
+
+      if (Directory.Exists(trimmedPath)
+          || string.IsNullOrWhiteSpace(Path.GetExtension(trimmedPath)))
+      {
+         string directoryName = Path.GetFileName(trimmedPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+         if (string.IsNullOrWhiteSpace(directoryName))
+         {
+            directoryName = "FALCOM";
+         }
+
+         return Path.Combine(trimmedPath, $"{directoryName}.log");
+      }
+
+      return trimmedPath;
+   }
    public void Write(string line)
    {
       lock (_sync)

@@ -6,7 +6,25 @@ namespace KranSPS_Simulator;
 
 internal sealed record SimulatorConfiguration(
     string ConnectionString,
-    string OpcEndpoint);
+    string OpcEndpoint,
+    string LogfilePath,
+    string KranSpsLebensZaehlerNodeId,
+    string FalcomLebensZaehlerNodeId,
+    IReadOnlyList<EventNodeConfiguration> KranfahrtBeendetNodes,
+    IReadOnlyList<EventNodeConfiguration> KranfahrtAuftragNodes,
+    IReadOnlyList<EventNodeConfiguration> KranPositionNodes,
+    KranPositionGroundPosition Grundstellung);
+
+internal sealed record EventNodeConfiguration(
+    string NodeName,
+    string NodeRole,
+    string DataType,
+    string OpcNode);
+
+internal sealed record KranPositionGroundPosition(
+    int PosKranX,
+    int PosKatzeY,
+    int PosHubZ);
 
 internal static class DatabaseConfig
 {
@@ -30,21 +48,288 @@ internal static class DatabaseConfig
 
         return new SimulatorConfiguration(
             builder.ConnectionString,
-            LoadOpcEndpoint(builder.ConnectionString));
+            LoadOpcEndpoint(builder.ConnectionString),
+            LoadLogfilePath(settings),
+            LoadKranSpsLebensZaehlerNodeId(builder.ConnectionString),
+            LoadFalcomLebensZaehlerNodeId(builder.ConnectionString),
+            LoadEventOpcNodes(
+                builder.ConnectionString,
+                "KranfahrtBeendet",
+                "KRAN_SPS->FALCOM"),
+            LoadEventOpcNodes(
+                builder.ConnectionString,
+                "KranfahrtAuftrag",
+                "FALCOM->KRAN_SPS"),
+            LoadEventOpcNodes(
+                builder.ConnectionString,
+                "KranPosition",
+                "KRAN_SPS->FALCOM"),
+            LoadKranPosition(
+                builder.ConnectionString,
+                8,
+                new KranPositionGroundPosition(
+                    9000,
+                    12000,
+                    8500)));
+    }
+
+    private static string LoadLogfilePath(JsonElement settings)
+    {
+        if (settings.TryGetProperty("KranSpsSimulationLogfilePath", out JsonElement configuredPath))
+        {
+            string? value = configuredPath.GetString();
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                return value.Trim();
+            }
+        }
+
+        return @"C:\Projekte\LOGS\FALCOM\KranSPS_Simulation\KranSPS_Simulation.log";
     }
 
     private static string LoadOpcEndpoint(string connectionString)
     {
-        const string sql = """
-            SELECT TOP (1) Wert
-            FROM dbo.FALCOM_PARAMETER
-            WHERE Name = N'OpcServer';
-            """;
-
         using var connection = new SqlConnection(connectionString);
-        using var command = new SqlCommand(sql, connection);
+        using var command = new SqlCommand(
+            "dbo.FALCOM_GetParameterValue",
+            connection)
+        {
+            CommandType = System.Data.CommandType.StoredProcedure,
+            CommandTimeout = 10
+        };
+
+        command.Parameters.Add(
+            "@Name",
+            System.Data.SqlDbType.NVarChar,
+            256).Value = "OpcServer";
+
         connection.Open();
-        return Convert.ToString(command.ExecuteScalar())?.Trim()
-            ?? "opc.tcp://localhost:4840";
+
+        using SqlDataReader reader = command.ExecuteReader();
+        if (!reader.Read())
+        {
+            return "opc.tcp://localhost:4840";
+        }
+
+        return Convert.ToString(reader["Wert"])?.Trim()
+               ?? "opc.tcp://localhost:4840";
+    }
+
+    private static string LoadKranSpsLebensZaehlerNodeId(string connectionString)
+    {
+        return LoadLebensZaehlerNodeId(
+            connectionString,
+            "LebensZaehlerKran",
+            "KRAN_SPS->FALCOM");
+    }
+
+    private static string LoadFalcomLebensZaehlerNodeId(string connectionString)
+    {
+        return LoadLebensZaehlerNodeId(
+            connectionString,
+            "LebensZaehlerFalcom",
+            "FALCOM->KRAN_SPS");
+    }
+
+    private static string LoadLebensZaehlerNodeId(
+        string connectionString,
+        string eventName,
+        string direction)
+    {
+        using var connection = new SqlConnection(connectionString);
+        using var command = new SqlCommand(
+            "dbo.FALCOM_GetEventOpcNodes",
+            connection)
+        {
+            CommandType = System.Data.CommandType.StoredProcedure,
+            CommandTimeout = 30
+        };
+
+        command.Parameters.Add(
+            "@EventName",
+            System.Data.SqlDbType.NVarChar,
+            128).Value = eventName;
+        command.Parameters.Add(
+            "@Direction",
+            System.Data.SqlDbType.NVarChar,
+            64).Value = direction;
+
+        connection.Open();
+        using SqlDataReader reader = command.ExecuteReader();
+
+        while (reader.Read())
+        {
+            string nodeName = Convert.ToString(reader["NodeName"])?.Trim() ?? string.Empty;
+            if (!string.Equals(nodeName, "LebensZaehler", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            string nodeId = Convert.ToString(reader["OPC_Node"])?.Trim() ?? string.Empty;
+            if (!string.IsNullOrWhiteSpace(nodeId)
+                && !nodeId.StartsWith("NOCH_ZU_KONFIGURIEREN.", StringComparison.OrdinalIgnoreCase))
+            {
+                return nodeId;
+            }
+        }
+
+        return string.Empty;
+    }
+
+    private static IReadOnlyList<EventNodeConfiguration> LoadEventOpcNodes(
+        string connectionString,
+        string eventName,
+        string direction)
+    {
+        using var connection = new SqlConnection(connectionString);
+        using var command = new SqlCommand(
+            "dbo.FALCOM_GetEventOpcNodes",
+            connection)
+        {
+            CommandType = System.Data.CommandType.StoredProcedure,
+            CommandTimeout = 30
+        };
+
+        command.Parameters.Add(
+            "@EventName",
+            System.Data.SqlDbType.NVarChar,
+            128).Value = eventName;
+        command.Parameters.Add(
+            "@Direction",
+            System.Data.SqlDbType.NVarChar,
+            64).Value = direction;
+
+        connection.Open();
+        using SqlDataReader reader = command.ExecuteReader();
+
+        var nodes = new List<EventNodeConfiguration>();
+        while (reader.Read())
+        {
+            string opcNode = Convert.ToString(reader["OPC_Node"])?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(opcNode)
+                || opcNode.StartsWith("NOCH_ZU_KONFIGURIEREN.", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            nodes.Add(
+                new EventNodeConfiguration(
+                    Convert.ToString(reader["NodeName"])?.Trim() ?? string.Empty,
+                    Convert.ToString(reader["NodeRole"])?.Trim() ?? string.Empty,
+                    Convert.ToString(reader["DataType"])?.Trim() ?? string.Empty,
+                    opcNode));
+        }
+
+        return nodes;
+    }
+
+    public static AktuelleFahrtSimulation? LoadAktuelleFahrt(string connectionString)
+    {
+        using var connection = new SqlConnection(connectionString);
+        using var command = new SqlCommand(
+            """
+            SELECT TOP (1)
+                   f.ID,
+                   f.AuftragsTyp,
+                   f.AuftragID,
+                   f.Status,
+                   f.QuellePositionID,
+                   f.ZielPositionID,
+                   f.SollMengeKg,
+                   q.Bezeichnung AS QuelleBezeichnung,
+                   q.AbwurfPosKranY AS QuelleX,
+                   q.AbwurfPosKatzeX AS QuelleY,
+                   8500 AS QuelleZ,
+                   z.Bezeichnung AS ZielBezeichnung,
+                   z.AbwurfPosKranY AS ZielX,
+                   z.AbwurfPosKatzeX AS ZielY,
+                   8500 AS ZielZ
+            FROM dbo.FALCOM_AKTUELLE_FAHRT f
+            INNER JOIN dbo.FALCOM_KRAN_POSITION q ON q.ID = f.QuellePositionID
+            INNER JOIN dbo.FALCOM_KRAN_POSITION z ON z.ID = f.ZielPositionID
+            WHERE f.FertigDatumZeit IS NULL
+              AND ISNULL(f.Status, N'') NOT IN (N'FERTIG', N'FEHLER', N'ABGESCHLOSSEN')
+            ORDER BY f.ID;
+            """,
+            connection)
+        {
+            CommandTimeout = 10
+        };
+
+        connection.Open();
+        using SqlDataReader reader = command.ExecuteReader();
+        if (!reader.Read())
+        {
+            return null;
+        }
+
+        return new AktuelleFahrtSimulation(
+            Convert.ToInt64(reader["ID"]),
+            Convert.ToString(reader["AuftragsTyp"])?.Trim() ?? string.Empty,
+            Convert.ToInt64(reader["AuftragID"]),
+            Convert.ToString(reader["Status"])?.Trim() ?? string.Empty,
+            Convert.ToInt64(reader["QuellePositionID"]),
+            Convert.ToInt64(reader["ZielPositionID"]),
+            Convert.ToDecimal(reader["SollMengeKg"]),
+            Convert.ToString(reader["QuelleBezeichnung"])?.Trim() ?? string.Empty,
+            Convert.ToString(reader["ZielBezeichnung"])?.Trim() ?? string.Empty,
+            new KranPositionGroundPosition(
+                Convert.ToInt32(reader["QuelleX"]),
+                Convert.ToInt32(reader["QuelleY"]),
+                Convert.ToInt32(reader["QuelleZ"])),
+            new KranPositionGroundPosition(
+                Convert.ToInt32(reader["ZielX"]),
+                Convert.ToInt32(reader["ZielY"]),
+                Convert.ToInt32(reader["ZielZ"])));
+    }
+
+    private static KranPositionGroundPosition LoadKranPosition(
+        string connectionString,
+        int positionsNr,
+        KranPositionGroundPosition fallback)
+    {
+        using var connection = new SqlConnection(connectionString);
+        using var command = new SqlCommand(
+            """
+            SELECT TOP (1)
+                   AbwurfPosKranY,
+                   AbwurfPosKatzeX
+            FROM dbo.FALCOM_KRAN_POSITION
+            WHERE PositionsTyp = N'LAGERBOX'
+              AND PositionsNr = @PositionsNr
+            ORDER BY ID;
+            """,
+            connection)
+        {
+            CommandTimeout = 30
+        };
+        command.Parameters.Add(
+            "@PositionsNr",
+            System.Data.SqlDbType.Int).Value = positionsNr;
+
+        connection.Open();
+        using SqlDataReader reader = command.ExecuteReader();
+        if (!reader.Read())
+        {
+            return fallback;
+        }
+
+        return new KranPositionGroundPosition(
+            Convert.ToInt32(reader["AbwurfPosKranY"]),
+            Convert.ToInt32(reader["AbwurfPosKatzeX"]),
+            8500);
     }
 }
+
+internal sealed record AktuelleFahrtSimulation(
+    long ID,
+    string AuftragsTyp,
+    long AuftragID,
+    string Status,
+    long QuellePositionID,
+    long ZielPositionID,
+    decimal SollMengeKg,
+    string QuelleBezeichnung,
+    string ZielBezeichnung,
+    KranPositionGroundPosition Quelle,
+    KranPositionGroundPosition Ziel);

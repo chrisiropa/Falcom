@@ -71,9 +71,9 @@ namespace Falcom
       {
          try
          {
-            string scheme = LoadParameterValue("KranLiveHubScheme", "https");
-            string host = LoadParameterValue("KranLiveHubHost", "localhost");
-            string port = LoadParameterValue("KundenVisuModernHttpsPort", string.Empty);
+            string scheme = LoadParameterValue("FalcomKranLiveHubScheme", "http");
+            string host = LoadParameterValue("FalcomKranLiveHubHost", "localhost");
+            string port = LoadParameterValue("FalcomKranLiveHubPort", "5055");
             string path = LoadParameterValue("KranLiveHubPath", "/falcom-kran-hub");
 
             if (string.IsNullOrWhiteSpace(host)

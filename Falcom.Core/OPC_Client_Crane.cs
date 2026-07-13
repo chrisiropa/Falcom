@@ -47,6 +47,8 @@ namespace Falcom
       private int kranPositionEventsInCurrentMinute;
       private int backgroundReconnectLoopRunning;
       private int? lastKranfahrtAuftragTelegrammNummer;
+      private int? lastKranfahrtBeendetAenderungsZaehler;
+      private bool kranfahrtBeendetInitialwertGesehen;
       private int? aktuellePosKranX;
       private int? aktuellePosKatzeY;
       private int? aktuellePosHubZ;
@@ -831,7 +833,9 @@ namespace Falcom
          subscription.AddMonitoredItem(zaehlerItem);
          monitoredItems.Add(zaehlerItem);
 
-         var kranfahrtBeendetItem = new OpcMonitoredItem(KranfahrtBeendetEvent.ÄnderungsZaehlerOPCNode, OpcAttribute.Value);
+         kranfahrtBeendetInitialwertGesehen = false;
+         lastKranfahrtBeendetAenderungsZaehler = null;
+         var kranfahrtBeendetItem = new OpcMonitoredItem(KranfahrtBeendetEvent.AenderungsZaehlerOPCNode, OpcAttribute.Value);
          kranfahrtBeendetItem.DataChangeReceived += HandleDataChange;
          subscription.AddMonitoredItem(kranfahrtBeendetItem);
          monitoredItems.Add(kranfahrtBeendetItem);
@@ -1028,9 +1032,8 @@ namespace Falcom
          int teilfahrtID,
          string kranQuelle,
          string kranZiel,
-         double toleranz,
-         double istGewicht,
-         int fehlercode)
+         int status,
+         double istGewicht)
       {
          var values = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
          {
@@ -1039,9 +1042,8 @@ namespace Falcom
             ["AuftragTeilfahrt"] = teilfahrtID,
             ["KranQuelle"] = kranQuelle,
             ["KranZiel"] = kranZiel,
-            ["Toleranz"] = toleranz,
-            ["IstGewicht"] = istGewicht,
-            ["Fehlercode"] = fehlercode
+            ["Status"] = status,
+            ["IstGewicht"] = istGewicht
          };
 
          _ = _kranLiveSignalRClient.SendKranOpcEventAsync(
@@ -1231,33 +1233,47 @@ if (string.Equals(
             }
             else if (string.Equals(
                e.MonitoredItem.NodeId.ToString(),
-               KranfahrtBeendetEvent.ÄnderungsZaehlerOPCNode,
+               KranfahrtBeendetEvent.AenderungsZaehlerOPCNode,
                StringComparison.Ordinal))
             {
-               if (e.Item.Value.Value is not bool isStopped || !isStopped)
+               int aenderungsZaehler = Convert.ToInt32(e.Item.Value.Value);
+
+               if (!kranfahrtBeendetInitialwertGesehen)
                {
-                  _logger.LogDebug("0025|Stop-Signal wurde zurueckgesetzt.");
+                  kranfahrtBeendetInitialwertGesehen = true;
+                  lastKranfahrtBeendetAenderungsZaehler = aenderungsZaehler;
+                  _logger.LogInformation(
+                     "0025|KranfahrtBeendet Initialwert empfangen und ignoriert. AenderungsZaehler={AenderungsZaehler}",
+                     aenderungsZaehler);
                   return;
                }
 
-               _logger.LogInformation("0026|Kranfahrt beendet");
+               if (lastKranfahrtBeendetAenderungsZaehler == aenderungsZaehler)
+               {
+                  _logger.LogDebug(
+                     "0025|KranfahrtBeendet AenderungsZaehler unveraendert. Wert={AenderungsZaehler}",
+                     aenderungsZaehler);
+                  return;
+               }
+
+               lastKranfahrtBeendetAenderungsZaehler = aenderungsZaehler;
+
+               _logger.LogInformation("0026|Kranfahrt beendet. AenderungsZaehler={AenderungsZaehler}", aenderungsZaehler);
                int auftragId = Convert.ToInt32(client.ReadNode(KranfahrtBeendetEvent.AuftragsNummerOPCNode).Value);
                int teilfahrtID = Convert.ToInt32(client.ReadNode(KranfahrtBeendetEvent.TeilfahrtIDOPCNode).Value);
                string kranQuelle = Convert.ToString(client.ReadNode(KranfahrtBeendetEvent.KranQuelleOPCNode).Value) ?? string.Empty;
                string kranZiel = Convert.ToString(client.ReadNode(KranfahrtBeendetEvent.KranZielOPCNode).Value) ?? string.Empty;
-               double toleranz = Convert.ToDouble(client.ReadNode(KranfahrtBeendetEvent.ToleranzOPCNode).Value);
+               int status = Convert.ToInt32(client.ReadNode(KranfahrtBeendetEvent.StatusOPCNode).Value);
                double istGewicht = Convert.ToDouble(client.ReadNode(KranfahrtBeendetEvent.IstGewichtOPCNode).Value);
-               int fehlercode = Convert.ToInt32(client.ReadNode(KranfahrtBeendetEvent.FehlercodeOPCNode).Value);
 
                var kranEvent = new KranfahrtBeendetEvent(
                     auftragsNummer: auftragId,
                     teilfahrtID: teilfahrtID,
                     kranQuelle: kranQuelle,
                     kranZiel: kranZiel,
-                    toleranz: toleranz,
+                    status: status,
                     istGewicht: istGewicht,
-                    fehlercode: fehlercode,
-                    änderungsZähler: Convert.ToInt32(e.Item.Value.Value)
+                    �nderungsZ�hler: aenderungsZaehler
                );
 
                if (!_eventQueue.Writer.TryWrite(kranEvent))
@@ -1267,8 +1283,8 @@ if (string.Equals(
                }
 
                _logger.LogInformation(
-                  "0028|KranfahrtBeendetEvent eingereiht: Auftrag={AuftragId}, Quelle={Quelle}, Ziel={Ziel}, Toleranz={Toleranz}, IstGewicht={IstGewicht}, Fehlercode={Fehlercode}",
-                  auftragId, kranQuelle, kranZiel, toleranz, istGewicht, fehlercode);
+                  "0028|KranfahrtBeendetEvent eingereiht: Auftrag={AuftragId}, Quelle={Quelle}, Ziel={Ziel}, Status={Status}, IstGewicht={IstGewicht}",
+                  auftragId, kranQuelle, kranZiel, status, istGewicht);
 
                SendKranfahrtBeendetLiveSnapshot(
                   e.Item.Value.Value,
@@ -1276,9 +1292,8 @@ if (string.Equals(
                   teilfahrtID,
                   kranQuelle,
                   kranZiel,
-                  toleranz,
-                  istGewicht,
-                  fehlercode);
+                  status,
+                  istGewicht);
             }
          }
          catch (Exception ex)

@@ -69,14 +69,10 @@ namespace Falcom
             Convert.ToDecimal(kranfahrtBeendetEvent.IstGewicht);
          command.Parameters["@IstGewichtKg"].Precision = 18;
          command.Parameters["@IstGewichtKg"].Scale = 3;
-         command.Parameters.Add("@ToleranzKg", SqlDbType.Decimal).Value =
-            Convert.ToDecimal(kranfahrtBeendetEvent.Toleranz);
-         command.Parameters["@ToleranzKg"].Precision = 18;
-         command.Parameters["@ToleranzKg"].Scale = 3;
-         command.Parameters.Add("@Fehlercode", SqlDbType.Int).Value =
-            kranfahrtBeendetEvent.Fehlercode;
+         command.Parameters.Add("@Status", SqlDbType.Int).Value =
+            kranfahrtBeendetEvent.Status;
          command.Parameters.Add("@AenderungsZaehler", SqlDbType.Int).Value =
-            kranfahrtBeendetEvent.Ã„nderungsZÃ¤hler;
+            kranfahrtBeendetEvent.ÄnderungsZähler;
 
          connection.Open();
          using SqlDataReader reader = command.ExecuteReader();
@@ -85,7 +81,6 @@ namespace Falcom
             ? ReadAktuelleFahrtResult(reader)
             : AktuelleFahrtResult.Empty("FALCOM_CompleteAktuelleFahrt lieferte kein Ergebnis.");
       }
-
       public AktuelleFahrtResult FailAktuelleFahrt(
          long? aktuelleFahrtId,
          string bemerkung)
