@@ -70,7 +70,7 @@ namespace Falcom
          return new KranfahrtAuftragEvent(
             aktuelleFahrt.AktuelleFahrtID,
             aktuelleFahrt.AuftragID ?? 0,
-            auftragTeilfahrt,
+            aktuelleFahrt.AuftragTeilfahrt ?? auftragTeilfahrt,
             aktuelleFahrt.QuellePositionID ?? 0,
             aktuelleFahrt.ZielPositionID ?? 0,
             aktuelleFahrt.SollMengeKg ?? 0m,

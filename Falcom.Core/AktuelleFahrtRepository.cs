@@ -50,6 +50,68 @@ namespace Falcom
             : AktuelleFahrtResult.Empty("FALCOM_GetAktuelleFahrt lieferte kein Ergebnis.");
       }
 
+      public AktuelleFahrtResult TryClaimSpsResend()
+      {
+         using SqlConnection connection = new(_configManager.ConnectionString);
+         using SqlCommand command = CreateStoredProcedureCommand(
+            connection,
+            "dbo.FALCOM_TryClaimAktuelleFahrtSpsResend");
+
+         connection.Open();
+         using SqlDataReader reader = command.ExecuteReader();
+
+         return reader.Read()
+            ? ReadAktuelleFahrtResult(reader)
+            : AktuelleFahrtResult.Empty("FALCOM_TryClaimAktuelleFahrtSpsResend lieferte kein Ergebnis.");
+      }
+
+      public AktuelleFahrtResult MarkSpsSendSuccess(
+         long? aktuelleFahrtId,
+         int? telegrammNummer,
+         int? zaehlerAnfahrt)
+      {
+         using SqlConnection connection = new(_configManager.ConnectionString);
+         using SqlCommand command = CreateStoredProcedureCommand(
+            connection,
+            "dbo.FALCOM_MarkAktuelleFahrtSpsSendSuccess");
+
+         command.Parameters.Add("@AktuelleFahrtID", SqlDbType.BigInt).Value =
+            aktuelleFahrtId.HasValue ? aktuelleFahrtId.Value : DBNull.Value;
+         command.Parameters.Add("@TelegrammNummer", SqlDbType.Int).Value =
+            telegrammNummer.HasValue ? telegrammNummer.Value : DBNull.Value;
+         command.Parameters.Add("@ZaehlerAnfahrt", SqlDbType.Int).Value =
+            zaehlerAnfahrt.HasValue ? zaehlerAnfahrt.Value : DBNull.Value;
+
+         connection.Open();
+         using SqlDataReader reader = command.ExecuteReader();
+
+         return reader.Read()
+            ? ReadAktuelleFahrtResult(reader)
+            : AktuelleFahrtResult.Empty("FALCOM_MarkAktuelleFahrtSpsSendSuccess lieferte kein Ergebnis.");
+      }
+
+      public AktuelleFahrtResult MarkSpsSendFailure(
+         long? aktuelleFahrtId,
+         string fehler)
+      {
+         using SqlConnection connection = new(_configManager.ConnectionString);
+         using SqlCommand command = CreateStoredProcedureCommand(
+            connection,
+            "dbo.FALCOM_MarkAktuelleFahrtSpsSendFailure");
+
+         command.Parameters.Add("@AktuelleFahrtID", SqlDbType.BigInt).Value =
+            aktuelleFahrtId.HasValue ? aktuelleFahrtId.Value : DBNull.Value;
+         command.Parameters.Add("@Fehler", SqlDbType.NVarChar, 1024).Value =
+            ToDbValue(fehler);
+
+         connection.Open();
+         using SqlDataReader reader = command.ExecuteReader();
+
+         return reader.Read()
+            ? ReadAktuelleFahrtResult(reader)
+            : AktuelleFahrtResult.Empty("FALCOM_MarkAktuelleFahrtSpsSendFailure lieferte kein Ergebnis.");
+      }
+
       public AktuelleFahrtResult CompleteAktuelleFahrt(KranfahrtBeendetEvent kranfahrtBeendetEvent)
       {
          using SqlConnection connection = new(_configManager.ConnectionString);
@@ -127,13 +189,22 @@ namespace Falcom
             GetString(reader, "Reason"),
             GetNullableInt64(reader, "AktuelleFahrtID"),
             GetNullableInt64(reader, "AuftragID"),
+            GetNullableInt32(reader, "AuftragTeilfahrt"),
             GetString(reader, "AuftragsTyp"),
             GetString(reader, "Quelle"),
             GetString(reader, "Ziel"),
             GetNullableInt64(reader, "QuellePositionID"),
             GetNullableInt64(reader, "ZielPositionID"),
             GetNullableDecimal(reader, "SollMengeKg"),
-            GetNullableDecimal(reader, "IstMengeKg"));
+            GetNullableDecimal(reader, "IstMengeKg"),
+            GetString(reader, "SpsSendestatus"),
+            GetNullableDateTime(reader, "SpsSendewunschAm"),
+            GetString(reader, "SpsSendewunschVon"),
+            GetString(reader, "SpsSendewunschGrund"),
+            GetNullableDateTime(reader, "SpsGesendetAm"),
+            GetString(reader, "SpsSendefehler"),
+            GetNullableInt32(reader, "SpsLetzteTelegrammNummer"),
+            GetNullableInt32(reader, "SpsLetzterZaehlerAnfahrt"));
       }
 
       private static object ToDbValue(string? value)
@@ -197,6 +268,42 @@ namespace Falcom
             : Convert.ToInt64(reader.GetValue(ordinal));
       }
 
+      private static int? GetNullableInt32(SqlDataReader reader, string name)
+      {
+         int ordinal;
+
+         try
+         {
+            ordinal = reader.GetOrdinal(name);
+         }
+         catch (IndexOutOfRangeException)
+         {
+            return null;
+         }
+
+         return reader.IsDBNull(ordinal)
+            ? null
+            : Convert.ToInt32(reader.GetValue(ordinal));
+      }
+
+      private static DateTime? GetNullableDateTime(SqlDataReader reader, string name)
+      {
+         int ordinal;
+
+         try
+         {
+            ordinal = reader.GetOrdinal(name);
+         }
+         catch (IndexOutOfRangeException)
+         {
+            return null;
+         }
+
+         return reader.IsDBNull(ordinal)
+            ? null
+            : Convert.ToDateTime(reader.GetValue(ordinal));
+      }
+
       private static decimal? GetNullableDecimal(SqlDataReader reader, string name)
       {
          int ordinal;
@@ -221,13 +328,22 @@ namespace Falcom
       string Reason,
       long? AktuelleFahrtID,
       long? AuftragID,
+      int? AuftragTeilfahrt,
       string AuftragsTyp,
       string Quelle,
       string Ziel,
       long? QuellePositionID,
       long? ZielPositionID,
       decimal? SollMengeKg,
-      decimal? IstMengeKg)
+      decimal? IstMengeKg,
+      string SpsSendestatus,
+      DateTime? SpsSendewunschAm,
+      string SpsSendewunschVon,
+      string SpsSendewunschGrund,
+      DateTime? SpsGesendetAm,
+      string SpsSendefehler,
+      int? SpsLetzteTelegrammNummer,
+      int? SpsLetzterZaehlerAnfahrt)
    {
       public static AktuelleFahrtResult Empty(string reason)
       {
@@ -236,11 +352,20 @@ namespace Falcom
             reason,
             null,
             null,
+            null,
             string.Empty,
             string.Empty,
             string.Empty,
             null,
             null,
+            null,
+            null,
+            string.Empty,
+            null,
+            string.Empty,
+            string.Empty,
+            null,
+            string.Empty,
             null,
             null);
       }

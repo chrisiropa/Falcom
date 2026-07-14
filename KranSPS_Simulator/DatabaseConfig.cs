@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Text.Json;
 using Microsoft.Data.SqlClient;
 
@@ -12,8 +12,10 @@ internal sealed record SimulatorConfiguration(
     string FalcomLebensZaehlerNodeId,
     IReadOnlyList<EventNodeConfiguration> KranfahrtBeendetNodes,
     IReadOnlyList<EventNodeConfiguration> KranfahrtAuftragNodes,
+    IReadOnlyList<SimEventMappingConfiguration> KranfahrtBeendetZuordnungen,
     IReadOnlyList<EventNodeConfiguration> KranPositionNodes,
-    KranPositionGroundPosition Grundstellung);
+    KranPositionGroundPosition Grundstellung,
+    IReadOnlyDictionary<long, SimKranPosition> Positionen);
 
 internal sealed record EventNodeConfiguration(
     string NodeName,
@@ -21,10 +23,26 @@ internal sealed record EventNodeConfiguration(
     string DataType,
     string OpcNode);
 
+internal sealed record SimEventMappingConfiguration(
+    long ID,
+    string? SourceEventName,
+    string? SourceNodeName,
+    EventNodeConfiguration TargetNode,
+    string Zuordnungstyp,
+    string? Fixwert,
+    string? Info);
+
 internal sealed record KranPositionGroundPosition(
     int PosKranX,
     int PosKatzeY,
     int PosHubZ);
+
+internal sealed record SimKranPosition(
+    long PositionID,
+    string PositionsTyp,
+    int PositionsNr,
+    string Bezeichnung,
+    KranPositionGroundPosition Position);
 
 internal static class DatabaseConfig
 {
@@ -46,6 +64,9 @@ internal static class DatabaseConfig
             Encrypt = false
         };
 
+        IReadOnlyDictionary<long, SimKranPosition> simPositionen =
+            LoadSimPositionen(builder.ConnectionString);
+
         return new SimulatorConfiguration(
             builder.ConnectionString,
             LoadOpcEndpoint(builder.ConnectionString),
@@ -60,17 +81,18 @@ internal static class DatabaseConfig
                 builder.ConnectionString,
                 "KranfahrtAuftrag",
                 "FALCOM->KRAN_SPS"),
+            LoadSimEventZuordnungen(builder.ConnectionString),
             LoadEventOpcNodes(
                 builder.ConnectionString,
                 "KranPosition",
                 "KRAN_SPS->FALCOM"),
-            LoadKranPosition(
-                builder.ConnectionString,
-                8,
+            LoadGrundstellung(
+                simPositionen,
                 new KranPositionGroundPosition(
                     9000,
                     12000,
-                    8500)));
+                    8500)),
+            simPositionen);
     }
 
     private static string LoadLogfilePath(JsonElement settings)
@@ -176,6 +198,56 @@ internal static class DatabaseConfig
         return string.Empty;
     }
 
+
+    private static IReadOnlyList<SimEventMappingConfiguration> LoadSimEventZuordnungen(string connectionString)
+    {
+        using var connection = new SqlConnection(connectionString);
+        using var command = new SqlCommand(
+            "dbo.FALCOM_Kran_SPS_SIM_GetEventZuordnung",
+            connection)
+        {
+            CommandType = System.Data.CommandType.StoredProcedure,
+            CommandTimeout = 30
+        };
+
+        connection.Open();
+        using SqlDataReader reader = command.ExecuteReader();
+
+        var mappings = new List<SimEventMappingConfiguration>();
+        while (reader.Read())
+        {
+            string targetOpcNode = Convert.ToString(reader["TargetOpcNode"])?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(targetOpcNode)
+                || targetOpcNode.StartsWith("NOCH_ZU_KONFIGURIEREN.", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            mappings.Add(
+                new SimEventMappingConfiguration(
+                    Convert.ToInt64(reader["ID"]),
+                    reader["SourceEventName"] == DBNull.Value
+                        ? null
+                        : Convert.ToString(reader["SourceEventName"])?.Trim(),
+                    reader["SourceNodeName"] == DBNull.Value
+                        ? null
+                        : Convert.ToString(reader["SourceNodeName"])?.Trim(),
+                    new EventNodeConfiguration(
+                        Convert.ToString(reader["TargetNodeName"])?.Trim() ?? string.Empty,
+                        Convert.ToString(reader["TargetNodeRole"])?.Trim() ?? string.Empty,
+                        Convert.ToString(reader["TargetDataType"])?.Trim() ?? string.Empty,
+                        targetOpcNode),
+                    Convert.ToString(reader["Zuordnungstyp"])?.Trim() ?? string.Empty,
+                    reader["Fixwert"] == DBNull.Value
+                        ? null
+                        : Convert.ToString(reader["Fixwert"])?.Trim(),
+                    reader["Info"] == DBNull.Value
+                        ? null
+                        : Convert.ToString(reader["Info"])?.Trim()));
+        }
+
+        return mappings;
+    }
     private static IReadOnlyList<EventNodeConfiguration> LoadEventOpcNodes(
         string connectionString,
         string eventName,
@@ -223,33 +295,23 @@ internal static class DatabaseConfig
         return nodes;
     }
 
-    public static AktuelleFahrtSimulation? LoadAktuelleFahrt(string connectionString)
+    private static IReadOnlyDictionary<long, SimKranPosition> LoadSimPositionen(string connectionString)
     {
         using var connection = new SqlConnection(connectionString);
         using var command = new SqlCommand(
             """
-            SELECT TOP (1)
-                   f.ID,
-                   f.AuftragsTyp,
-                   f.AuftragID,
-                   f.Status,
-                   f.QuellePositionID,
-                   f.ZielPositionID,
-                   f.SollMengeKg,
-                   q.Bezeichnung AS QuelleBezeichnung,
-                   q.AbwurfPosKranY AS QuelleX,
-                   q.AbwurfPosKatzeX AS QuelleY,
-                   8500 AS QuelleZ,
-                   z.Bezeichnung AS ZielBezeichnung,
-                   z.AbwurfPosKranY AS ZielX,
-                   z.AbwurfPosKatzeX AS ZielY,
-                   8500 AS ZielZ
-            FROM dbo.FALCOM_AKTUELLE_FAHRT f
-            INNER JOIN dbo.FALCOM_KRAN_POSITION q ON q.ID = f.QuellePositionID
-            INNER JOIN dbo.FALCOM_KRAN_POSITION z ON z.ID = f.ZielPositionID
-            WHERE f.FertigDatumZeit IS NULL
-              AND ISNULL(f.Status, N'') NOT IN (N'FERTIG', N'FEHLER', N'ABGESCHLOSSEN')
-            ORDER BY f.ID;
+            SELECT
+                ID AS PositionID,
+                PositionsTyp,
+                PositionsNr,
+                Bezeichnung,
+                CONVERT(int, AbwurfPosKranY) AS PosKranX,
+                CONVERT(int, AbwurfPosKatzeX) AS PosKatzeY,
+                8500 AS PosHubZ
+            FROM dbo.FALCOM_KRAN_POSITION
+            WHERE AbwurfPosKranY IS NOT NULL
+              AND AbwurfPosKatzeX IS NOT NULL
+            ORDER BY ID;
             """,
             connection)
         {
@@ -258,73 +320,46 @@ internal static class DatabaseConfig
 
         connection.Open();
         using SqlDataReader reader = command.ExecuteReader();
-        if (!reader.Read())
+        var positionen = new Dictionary<long, SimKranPosition>();
+        while (reader.Read())
         {
-            return null;
+            long positionId = Convert.ToInt64(reader["PositionID"]);
+            positionen[positionId] = new SimKranPosition(
+                positionId,
+                Convert.ToString(reader["PositionsTyp"])?.Trim() ?? string.Empty,
+                Convert.ToInt32(reader["PositionsNr"]),
+                Convert.ToString(reader["Bezeichnung"])?.Trim() ?? string.Empty,
+                new KranPositionGroundPosition(
+                    Convert.ToInt32(reader["PosKranX"]),
+                    Convert.ToInt32(reader["PosKatzeY"]),
+                    Convert.ToInt32(reader["PosHubZ"])));
         }
 
-        return new AktuelleFahrtSimulation(
-            Convert.ToInt64(reader["ID"]),
-            Convert.ToString(reader["AuftragsTyp"])?.Trim() ?? string.Empty,
-            Convert.ToInt64(reader["AuftragID"]),
-            Convert.ToString(reader["Status"])?.Trim() ?? string.Empty,
-            Convert.ToInt64(reader["QuellePositionID"]),
-            Convert.ToInt64(reader["ZielPositionID"]),
-            Convert.ToDecimal(reader["SollMengeKg"]),
-            Convert.ToString(reader["QuelleBezeichnung"])?.Trim() ?? string.Empty,
-            Convert.ToString(reader["ZielBezeichnung"])?.Trim() ?? string.Empty,
-            new KranPositionGroundPosition(
-                Convert.ToInt32(reader["QuelleX"]),
-                Convert.ToInt32(reader["QuelleY"]),
-                Convert.ToInt32(reader["QuelleZ"])),
-            new KranPositionGroundPosition(
-                Convert.ToInt32(reader["ZielX"]),
-                Convert.ToInt32(reader["ZielY"]),
-                Convert.ToInt32(reader["ZielZ"])));
+        return positionen;
     }
 
-    private static KranPositionGroundPosition LoadKranPosition(
-        string connectionString,
-        int positionsNr,
+    private static KranPositionGroundPosition LoadGrundstellung(
+        IReadOnlyDictionary<long, SimKranPosition> positionen,
         KranPositionGroundPosition fallback)
     {
-        using var connection = new SqlConnection(connectionString);
-        using var command = new SqlCommand(
-            """
-            SELECT TOP (1)
-                   AbwurfPosKranY,
-                   AbwurfPosKatzeX
-            FROM dbo.FALCOM_KRAN_POSITION
-            WHERE PositionsTyp = N'LAGERBOX'
-              AND PositionsNr = @PositionsNr
-            ORDER BY ID;
-            """,
-            connection)
-        {
-            CommandTimeout = 30
-        };
-        command.Parameters.Add(
-            "@PositionsNr",
-            System.Data.SqlDbType.Int).Value = positionsNr;
-
-        connection.Open();
-        using SqlDataReader reader = command.ExecuteReader();
-        if (!reader.Read())
+        SimKranPosition? lagerbox8 = positionen.Values.FirstOrDefault(
+            position => string.Equals(position.PositionsTyp, "LAGERBOX", StringComparison.OrdinalIgnoreCase)
+                        && position.PositionsNr == 8);
+        if (lagerbox8 is null)
         {
             return fallback;
         }
 
-        return new KranPositionGroundPosition(
-            Convert.ToInt32(reader["AbwurfPosKranY"]),
-            Convert.ToInt32(reader["AbwurfPosKatzeX"]),
-            8500);
+        return lagerbox8.Position;
     }
 }
 
 internal sealed record AktuelleFahrtSimulation(
     long ID,
+    int TelegrammNummer,
     string AuftragsTyp,
     long AuftragID,
+    int AuftragTeilfahrt,
     string Status,
     long QuellePositionID,
     long ZielPositionID,

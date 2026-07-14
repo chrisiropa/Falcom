@@ -1,4 +1,4 @@
-using Falcom;
+ï»¿using Falcom;
 using Microsoft.Extensions.Logging;
 using Opc.UaFx;
 using Opc.UaFx.Client;
@@ -18,18 +18,20 @@ public partial class MainWindow : Window
     private const double DemoKranSpeedMmPerSecond = 960.0;
     private const double DemoKatzeSpeedMmPerSecond = 960.0;
     private const double DemoHubSpeedMmPerSecond = 720.0;
+    private const int DemoTelegrammNummer = -1;
 
     private readonly FalcomUiLogSink uiLogSink = new();
     private readonly FalcomFileSink fileLogSink;
     private readonly DispatcherTimer logRefreshTimer = new();
     private readonly DispatcherTimer statusRefreshTimer = new();
+    private readonly Random demoRandom = new();
     private readonly object opcSyncRoot = new();
-    private readonly string connectionString;
     private readonly string opcEndpoint;
     private readonly string kranSpsLebensZaehlerNodeId;
     private readonly string falcomLebensZaehlerNodeId;
     private readonly IReadOnlyList<EventNodeConfiguration> kranfahrtBeendetNodes;
     private readonly IReadOnlyList<EventNodeConfiguration> kranfahrtAuftragNodes;
+    private readonly IReadOnlyList<SimEventMappingConfiguration> kranfahrtBeendetZuordnungen;
     private readonly IReadOnlyList<EventNodeConfiguration> kranPositionNodes;
     private readonly Dictionary<string, EventNodeConfiguration> kranfahrtBeendetNodesByName = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, EventNodeConfiguration> kranfahrtAuftragNodesByName = new(StringComparer.OrdinalIgnoreCase);
@@ -39,6 +41,7 @@ public partial class MainWindow : Window
     private int? letzteVerarbeiteteAuftragTelegrammNummer;
     private readonly Dictionary<string, string> kranPositionValues = new(StringComparer.OrdinalIgnoreCase);
     private readonly KranPositionGroundPosition grundstellung;
+    private readonly IReadOnlyDictionary<long, SimKranPosition> positionenById;
     private readonly CancellationTokenSource reconnectCancellation = new();
     private readonly CancellationTokenSource lebensZaehlerCancellation = new();
 
@@ -50,8 +53,6 @@ public partial class MainWindow : Window
     private bool disposed;
     private DateTime nextReconnectLogUtc = DateTime.MinValue;
     private DateTime nextLebensZaehlerErrorLogUtc = DateTime.MinValue;
-    private DateTime nextAktuelleFahrtCheckUtc = DateTime.MinValue;
-    private DateTime nextAktuelleFahrtErrorLogUtc = DateTime.MinValue;
     private string opcStatusText = "Initialisierung";
     private string opcStatusDetailText = string.Empty;
     private int posKranX;
@@ -62,10 +63,11 @@ public partial class MainWindow : Window
     private DateTime? letzterSpsLebensZaehlerGesendetAm;
     private int? letzterFalcomLebensZaehler;
     private DateTime? letzterFalcomLebensZaehlerEmpfangenAm;
-    private AktuelleFahrtSimulation? letzteGeleseneFahrt;
     private AktuelleFahrtSimulation? aktiveSimulationsFahrt;
-    private long? letzteAbgefahreneFahrtId;
+    private AktuelleFahrtSimulation? letzteAbgefahreneFahrt;
+    private long naechsteInterneFahrtId = 1;
     private DateTime? warteAufNeueFahrtBisUtc;
+    private bool demoModeAktiv;
     private SimulationsFahrzustand fahrzustand = SimulationsFahrzustand.Grundstellung;
     private KranMovement? aktuelleBewegung;
 
@@ -82,12 +84,12 @@ public partial class MainWindow : Window
         statusRefreshTimer.Start();
 
         SimulatorConfiguration configuration = DatabaseConfig.Load();
-        connectionString = configuration.ConnectionString;
         opcEndpoint = configuration.OpcEndpoint.Trim();
         kranSpsLebensZaehlerNodeId = configuration.KranSpsLebensZaehlerNodeId.Trim();
         falcomLebensZaehlerNodeId = configuration.FalcomLebensZaehlerNodeId.Trim();
         kranfahrtBeendetNodes = configuration.KranfahrtBeendetNodes;
         kranfahrtAuftragNodes = configuration.KranfahrtAuftragNodes;
+        kranfahrtBeendetZuordnungen = configuration.KranfahrtBeendetZuordnungen;
         foreach (EventNodeConfiguration node in kranfahrtBeendetNodes)
         {
             kranfahrtBeendetNodesByName[node.NodeName] = node;
@@ -98,6 +100,7 @@ public partial class MainWindow : Window
         }
         kranPositionNodes = configuration.KranPositionNodes;
         grundstellung = configuration.Grundstellung;
+        positionenById = configuration.Positionen;
         fileLogSink = new FalcomFileSink(configuration.LogfilePath);
 
         ConfigureTraegerLicense();
@@ -116,7 +119,7 @@ public partial class MainWindow : Window
 
         if (string.IsNullOrWhiteSpace(falcomLebensZaehlerNodeId))
         {
-            LogError("LebensZaehlerFalcom.LebensZaehler ist in der Datenbank nicht gültig konfiguriert. FALCOM->SPS Lebenszähler wird nicht empfangen.");
+            LogError("LebensZaehlerFalcom.LebensZaehler ist in der Datenbank nicht gï¿½ltig konfiguriert. FALCOM->SPS Lebenszï¿½hler wird nicht empfangen.");
         }
         else
         {
@@ -124,6 +127,7 @@ public partial class MainWindow : Window
         }
 
         Log($"Event 1 KranfahrtBeendet Variablen: {string.Join(", ", kranfahrtBeendetNodes.Select(node => node.NodeName))}");
+        Log($"Event 1/2 Sim-Zuordnungen geladen: {kranfahrtBeendetZuordnungen.Count}. {string.Join("; ", kranfahrtBeendetZuordnungen.Select(mapping => mapping.Info ?? mapping.TargetNode.NodeName))}");
         Log($"Event 2 KranfahrtAuftrag Variablen: {string.Join(", ", kranfahrtAuftragNodes.Select(node => node.NodeName))}");
         Log($"Event 5 KranPosition Variablen: {string.Join(", ", kranPositionNodes.Select(node => node.NodeName))}");
         FahreGrundstellungAn();
@@ -332,7 +336,48 @@ public partial class MainWindow : Window
         }
 
         subscription.ApplyChanges();
+        InitialisiereKranfahrtAuftragTelegrammNoLock();
     }
+
+    private void InitialisiereKranfahrtAuftragTelegrammNoLock()
+    {
+        if (!TryGetKranfahrtAuftragNode("TelegrammNummer", out EventNodeConfiguration telegrammNode))
+        {
+            return;
+        }
+
+        try
+        {
+            OpcValue value = opcClient!.ReadNode(telegrammNode.OpcNode);
+            if (!value.Status.IsGood || value.Value is null)
+            {
+                LogWarning(
+                    $"006D|Initialer KranfahrtAuftrag-Telegrammstand konnte nicht gelesen werden. " +
+                    $"Node={telegrammNode.OpcNode}, Status={value.Status.Code}, Beschreibung={value.Status.Description}. " +
+                    "Simulator wartet trotzdem auf die naechste Aenderung.");
+                return;
+            }
+
+            int telegrammNummer = Convert.ToInt32(value.Value, CultureInfo.InvariantCulture);
+            Dictionary<string, object?> payload = ReadEventValuesNoLock(kranfahrtAuftragNodes);
+
+            if (IstInitialerKranfahrtAuftragBereitsBeendetNoLock(payload, out string begruendung))
+            {
+                letzteVerarbeiteteAuftragTelegrammNummer = telegrammNummer;
+                Log($"006D|Warten auf naechste Fahrt. Letztes KranfahrtAuftrag-Telegramm war {telegrammNummer}. {begruendung}");
+                return;
+            }
+
+            Log($"006D|Initialer KranfahrtAuftrag wird als offener Auftrag verarbeitet. TelegrammNummer={telegrammNummer}. {begruendung}");
+            SchreibeKranfahrtBeendetZuordnungNoLock(payload, triggerErhoehen: false);
+            VerarbeiteKranfahrtAuftragPayload(telegrammNummer, payload, "Initialer KranfahrtAuftrag");
+        }
+        catch (Exception ex)
+        {
+            LogWarning($"006D|Initialer KranfahrtAuftrag-Telegrammstand konnte nicht gelesen werden. Fehler={ex.GetType().Name}: {ex.Message}");
+        }
+    }
+
     private void HandleOpcDataChange(object sender, OpcDataChangeReceivedEventArgs e)
     {
         try
@@ -364,8 +409,22 @@ public partial class MainWindow : Window
 
     private void VerarbeiteKranfahrtAuftragTelegramm(int telegrammNummer)
     {
+        if (demoModeAktiv)
+        {
+            letzteVerarbeiteteAuftragTelegrammNummer = telegrammNummer;
+            Log($"006E|KranfahrtAuftrag im Demo-Modus empfangen und ignoriert. Es werden nur Kranpositionswerte geschrieben. TelegrammNummer={telegrammNummer}.");
+            return;
+        }
+
         if (letzteVerarbeiteteAuftragTelegrammNummer == telegrammNummer)
         {
+            return;
+        }
+
+        if (letzteVerarbeiteteAuftragTelegrammNummer is null)
+        {
+            letzteVerarbeiteteAuftragTelegrammNummer = telegrammNummer;
+            Log($"006D|Initialer KranfahrtAuftrag-Telegrammstand aus Callback uebernommen. Wert={telegrammNummer}. Simulator wartet auf die naechste Aenderung.");
             return;
         }
 
@@ -378,9 +437,17 @@ public partial class MainWindow : Window
             }
 
             payload = ReadEventValuesNoLock(kranfahrtAuftragNodes);
-            SpiegeleKranfahrtAuftragNachBeendetNoLock(payload);
+            SchreibeKranfahrtBeendetZuordnungNoLock(payload, triggerErhoehen: false);
         }
 
+        VerarbeiteKranfahrtAuftragPayload(telegrammNummer, payload, "KranfahrtAuftrag aus OPC-Aenderung");
+    }
+
+    private void VerarbeiteKranfahrtAuftragPayload(
+        int telegrammNummer,
+        IReadOnlyDictionary<string, object?> payload,
+        string quelle)
+    {
         letzteVerarbeiteteAuftragTelegrammNummer = telegrammNummer;
         lock (letzteKranfahrtAuftragPayload)
         {
@@ -392,7 +459,166 @@ public partial class MainWindow : Window
         }
 
         SetEventValues(kranfahrtAuftragValues, payload);
-        Log($"006E|KranfahrtAuftrag empfangen und nach Event 1 gespiegelt. TelegrammNummer={telegrammNummer}.");
+        Log($"006E|{quelle}: Event-1-Zuordnung ohne Trigger angewendet. TelegrammNummer={telegrammNummer}.");
+
+        AktuelleFahrtSimulation? fahrt = ErstelleFahrtAusKranfahrtAuftragPayload(telegrammNummer, payload);
+        if (fahrt is null)
+        {
+            return;
+        }
+
+        StarteFahrtZurQuelle(fahrt, DateTime.UtcNow);
+    }
+
+    private bool IstInitialerKranfahrtAuftragBereitsBeendetNoLock(
+        IReadOnlyDictionary<string, object?> auftragPayload,
+        out string begruendung)
+    {
+        begruendung = "Event 1 konnte nicht eindeutig mit Event 2 abgeglichen werden; Initialauftrag gilt als offen.";
+
+        if (!TryGetPayloadInt64(auftragPayload, "AuftragNummer", out long auftragNummer)
+            || !TryGetPayloadInt32(auftragPayload, "AuftragTeilfahrt", out int auftragTeilfahrt))
+        {
+            begruendung = "Event 2 enthaelt keine eindeutige AuftragNummer/AuftragTeilfahrt; Initialauftrag gilt als offen.";
+            return false;
+        }
+
+        Dictionary<string, object?> beendetPayload = ReadEventValuesNoLock(kranfahrtBeendetNodes);
+        SetEventValues(kranfahrtBeendetValues, beendetPayload);
+
+        bool hasBeendetAuftrag = TryGetPayloadInt64(beendetPayload, "AuftragsNummer", out long beendetAuftragNummer);
+        bool hasBeendetTeilfahrt = TryGetPayloadInt32(beendetPayload, "AuftragTeilfahrt", out int beendetTeilfahrt);
+
+        if (!hasBeendetAuftrag || !hasBeendetTeilfahrt)
+        {
+            begruendung = $"Event 1 enthaelt keine eindeutige AuftragsNummer/AuftragTeilfahrt. Event2 Auftrag={auftragNummer}, Teilfahrt={auftragTeilfahrt} gilt als offen.";
+            return false;
+        }
+
+        if (beendetAuftragNummer == auftragNummer && beendetTeilfahrt == auftragTeilfahrt)
+        {
+            begruendung = $"Event 1 bestaetigt bereits Auftrag={auftragNummer}, Teilfahrt={auftragTeilfahrt}; Initialwert wird nicht erneut gefahren.";
+            return true;
+        }
+
+        begruendung = $"Event 1 passt nicht zu Event 2. Event2 Auftrag={auftragNummer}, Teilfahrt={auftragTeilfahrt}; Event1 Auftrag={beendetAuftragNummer}, Teilfahrt={beendetTeilfahrt}.";
+        return false;
+    }
+
+    private AktuelleFahrtSimulation? ErstelleFahrtAusKranfahrtAuftragPayload(
+        int telegrammNummer,
+        IReadOnlyDictionary<string, object?> payload)
+    {
+        if (!TryGetPayloadInt64(payload, "Quelle", out long quellePositionId)
+            || !TryGetPayloadInt64(payload, "Ziel", out long zielPositionId))
+        {
+            LogWarning($"006E|KranfahrtAuftrag kann nicht gefahren werden. Quelle oder Ziel fehlt. TelegrammNummer={telegrammNummer}.");
+            return null;
+        }
+
+        if (!positionenById.TryGetValue(quellePositionId, out SimKranPosition? quelle))
+        {
+            LogWarning($"006E|KranfahrtAuftrag kann nicht gefahren werden. QuellePositionID={quellePositionId} ist in FALCOM_KRAN_POSITION nicht konfiguriert oder hat keine Abwurfposition. TelegrammNummer={telegrammNummer}.");
+            return null;
+        }
+
+        if (!positionenById.TryGetValue(zielPositionId, out SimKranPosition? ziel))
+        {
+            LogWarning($"006E|KranfahrtAuftrag kann nicht gefahren werden. ZielPositionID={zielPositionId} ist in FALCOM_KRAN_POSITION nicht konfiguriert oder hat keine Abwurfposition. TelegrammNummer={telegrammNummer}.");
+            return null;
+        }
+
+        TryGetPayloadInt64(payload, "AuftragNummer", out long auftragNummer);
+        TryGetPayloadInt32(payload, "AuftragTeilfahrt", out int auftragTeilfahrt);
+        TryGetPayloadDecimal(payload, "SollMasse", out decimal sollMasse);
+
+        var fahrt = new AktuelleFahrtSimulation(
+            naechsteInterneFahrtId++,
+            telegrammNummer,
+            "OPC_EVENT_2",
+            auftragNummer,
+            auftragTeilfahrt,
+            "EMPFANGEN",
+            quellePositionId,
+            zielPositionId,
+            sollMasse,
+            quelle.Bezeichnung,
+            ziel.Bezeichnung,
+            quelle.Position,
+            ziel.Position);
+
+        Log(
+            "006E|KranfahrtAuftrag in Simulatorfahrt umgesetzt: " +
+            $"TelegrammNummer={telegrammNummer}, Auftrag={auftragNummer}, Teilfahrt={auftragTeilfahrt}, " +
+            $"Quelle={quelle.Bezeichnung} ({quellePositionId}), Ziel={ziel.Bezeichnung} ({zielPositionId}), SollMasse={sollMasse:0.###}.");
+
+        return fahrt;
+    }
+
+    private static bool TryGetPayloadInt64(
+        IReadOnlyDictionary<string, object?> payload,
+        string name,
+        out long value)
+    {
+        value = 0;
+        if (!payload.TryGetValue(name, out object? raw) || raw is null)
+        {
+            return false;
+        }
+
+        try
+        {
+            value = Convert.ToInt64(raw, CultureInfo.InvariantCulture);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool TryGetPayloadInt32(
+        IReadOnlyDictionary<string, object?> payload,
+        string name,
+        out int value)
+    {
+        value = 0;
+        if (!payload.TryGetValue(name, out object? raw) || raw is null)
+        {
+            return false;
+        }
+
+        try
+        {
+            value = Convert.ToInt32(raw, CultureInfo.InvariantCulture);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool TryGetPayloadDecimal(
+        IReadOnlyDictionary<string, object?> payload,
+        string name,
+        out decimal value)
+    {
+        value = 0;
+        if (!payload.TryGetValue(name, out object? raw) || raw is null)
+        {
+            return false;
+        }
+
+        try
+        {
+            value = Convert.ToDecimal(raw, CultureInfo.InvariantCulture);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private Dictionary<string, object?> ReadEventValuesNoLock(IReadOnlyList<EventNodeConfiguration> nodes)
@@ -419,35 +645,76 @@ public partial class MainWindow : Window
         return values;
     }
 
-    private void SpiegeleKranfahrtAuftragNachBeendetNoLock(IReadOnlyDictionary<string, object?> auftragValues)
+    private void SchreibeKranfahrtBeendetZuordnungNoLock(
+        IReadOnlyDictionary<string, object?> auftragValues,
+        bool triggerErhoehen)
     {
-        WriteMappedEvent1NodeNoLock("AuftragNummer", "AuftragsNummer", auftragValues);
-        WriteMappedEvent1NodeNoLock("AuftragTeilfahrt", "AuftragTeilfahrt", auftragValues);
-        WriteMappedEvent1NodeNoLock("Quelle", "KranQuelle", auftragValues);
-        WriteMappedEvent1NodeNoLock("Ziel", "KranZiel", auftragValues);
-        WriteMappedEvent1NodeNoLock("SollMasse", "IstGewicht", auftragValues);
-    }
+        int geschrieben = 0;
+        int uebersprungen = 0;
 
-    private void WriteMappedEvent1NodeNoLock(
-        string sourceNodeName,
-        string targetNodeName,
-        IReadOnlyDictionary<string, object?> sourceValues)
-    {
-        if (!sourceValues.TryGetValue(sourceNodeName, out object? value))
+        foreach (SimEventMappingConfiguration mapping in kranfahrtBeendetZuordnungen)
         {
-            return;
+            string info = mapping.Info ?? mapping.TargetNode.NodeName;
+            string typ = mapping.Zuordnungstyp.Trim().ToUpperInvariant();
+
+            if (string.Equals(typ, "DIREKT", StringComparison.OrdinalIgnoreCase))
+            {
+                if (string.IsNullOrWhiteSpace(mapping.SourceNodeName)
+                    || !auftragValues.TryGetValue(mapping.SourceNodeName, out object? sourceValue))
+                {
+                    uebersprungen++;
+                    LogWarning($"007D|SIM-Zuordnung nicht geschrieben, weil Quellwert fehlt. ID={mapping.ID}, Info={info}, SourceNode={mapping.SourceNodeName ?? "-"}.");
+                    continue;
+                }
+
+                Log($"007E|SIM-Zuordnung DIREKT: {info}, Wert={FormatOpcValue(sourceValue)}.");
+                WriteKranfahrtBeendetNodeNoLock(mapping.TargetNode, sourceValue);
+                geschrieben++;
+                continue;
+            }
+
+            if (string.Equals(typ, "FIXWERT", StringComparison.OrdinalIgnoreCase))
+            {
+                Log($"007F|SIM-Zuordnung FIXWERT: {info}, Wert={mapping.Fixwert ?? "NULL"}.");
+                WriteKranfahrtBeendetNodeNoLock(mapping.TargetNode, mapping.Fixwert);
+                geschrieben++;
+                continue;
+            }
+
+            if (string.Equals(typ, "TRIGGER_ERHOEHEN", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!triggerErhoehen)
+                {
+                    uebersprungen++;
+                    Log($"0080|SIM-Zuordnung Trigger bleibt noch unveraendert: {info}.");
+                    continue;
+                }
+
+                ErhoeheKranfahrtBeendetTriggerNoLock(mapping.TargetNode, info);
+                geschrieben++;
+                continue;
+            }
+
+            uebersprungen++;
+            LogWarning($"0081|SIM-Zuordnung hat unbekannten Typ. ID={mapping.ID}, Typ={mapping.Zuordnungstyp}, Info={info}.");
         }
 
-        WriteKranfahrtBeendetNodeNoLock(targetNodeName, value);
+        Log($"0082|SIM-Zuordnungen fuer KranfahrtBeendet angewendet. Geschrieben={geschrieben}, Uebersprungen={uebersprungen}, TriggerErhoehen={triggerErhoehen}.");
     }
 
     private void WriteKranfahrtBeendetNodeNoLock(string nodeName, object? value)
     {
         if (!TryGetKranfahrtBeendetNode(nodeName, out EventNodeConfiguration node))
         {
+            LogWarning($"0083|KranfahrtBeendet.{nodeName} ist nicht konfiguriert. Wert wurde nicht geschrieben.");
             return;
         }
 
+        WriteKranfahrtBeendetNodeNoLock(node, value);
+    }
+
+    private void WriteKranfahrtBeendetNodeNoLock(EventNodeConfiguration node, object? value)
+    {
         object? converted = ConvertValueForOpc(value, node.DataType);
         OpcStatus status = opcClient!.WriteNode(node.OpcNode, converted);
         if (status.IsBad && ShouldTryNumericPositionFallback(node.NodeName, converted, value))
@@ -474,6 +741,43 @@ public partial class MainWindow : Window
         LogOpcSend($"0070|OPC Senden KranfahrtBeendet: {node.NodeName}={FormatOpcValue(converted)}");
     }
 
+    private void ErhoeheKranfahrtBeendetTriggerNoLock(
+        EventNodeConfiguration triggerNode,
+        string info)
+    {
+        int currentTelegramm = 0;
+        try
+        {
+            OpcValue current = opcClient!.ReadNode(triggerNode.OpcNode);
+            if (current.Status.IsGood && current.Value is not null)
+            {
+                currentTelegramm = Convert.ToInt32(current.Value, CultureInfo.InvariantCulture);
+            }
+            else if (!current.Status.IsGood)
+            {
+                LogWarning($"0072|KranfahrtBeendet Trigger konnte vor dem Erhoehen nicht gut gelesen werden. Node={triggerNode.OpcNode}, Status={current.Status.Code}, Beschreibung={current.Status.Description}. Starte bei 0.");
+            }
+        }
+        catch (Exception ex)
+        {
+            LogWarning($"0072|KranfahrtBeendet Trigger konnte vor dem Erhoehen nicht gelesen werden. Starte bei 0. Node={triggerNode.OpcNode}, Fehler={ex.GetType().Name}: {ex.Message}");
+        }
+
+        int nextTelegramm = currentTelegramm == int.MaxValue ? 1 : currentTelegramm + 1;
+        Log($"007C|KranfahrtBeendet: Trigger {info} wird von {currentTelegramm} auf {nextTelegramm} erhoeht.");
+        object converted = ConvertValueForOpc(nextTelegramm, triggerNode.DataType) ?? nextTelegramm;
+        OpcStatus writeStatus = opcClient!.WriteNode(triggerNode.OpcNode, converted);
+        if (writeStatus.IsBad)
+        {
+            throw new InvalidOperationException(
+                $"OPC-Schreiben fehlgeschlagen. Event=KranfahrtBeendet, Trigger={triggerNode.NodeName}, Node={triggerNode.OpcNode}, Wert={FormatOpcValue(converted)}, Status={writeStatus.Code}, Beschreibung={writeStatus.Description}");
+        }
+
+        SetEventValue(kranfahrtBeendetValues, triggerNode.NodeName, converted);
+        LogOpcSend($"0073|OPC Senden KranfahrtBeendet Trigger: {triggerNode.NodeName}={FormatOpcValue(converted)}");
+        Log($"0074|KranfahrtBeendet Trigger gesendet. {info}, NeuerWert={FormatOpcValue(converted)}.");
+    }
+
     private void SendeKranfahrtBeendetTelegramm()
     {
         Dictionary<string, object?> auftragPayload;
@@ -490,51 +794,11 @@ public partial class MainWindow : Window
                 return;
             }
 
-            Log($"0079|KranfahrtBeendet Telegrammaufbau gestartet. Gespiegelte Auftragspayload-Werte={auftragPayload.Count}.");
-
-            if (auftragPayload.Count > 0)
-            {
-                Log("007A|KranfahrtBeendet: Auftragspayload aus Event 2 wird in Event 1 gespiegelt.");
-                SpiegeleKranfahrtAuftragNachBeendetNoLock(auftragPayload);
-            }
-
-            Log("007B|KranfahrtBeendet: Status=0 wird geschrieben.");
-            WriteKranfahrtBeendetNodeNoLock("Status", 0);
-
-            if (!TryGetKranfahrtBeendetNode("AenderungsZaehler", out EventNodeConfiguration triggerNode))
-            {
-                LogWarning("0071|KranfahrtBeendet.AenderungsZaehler ist nicht konfiguriert. Abschluss-Telegramm kann nicht ausgelöst werden.");
-                return;
-            }
-
-            int currentTelegramm = 0;
-            try
-            {
-                OpcValue current = opcClient.ReadNode(triggerNode.OpcNode);
-                if (current.Status.IsGood && current.Value is not null)
-                {
-                    currentTelegramm = Convert.ToInt32(current.Value, CultureInfo.InvariantCulture);
-                }
-            }
-            catch (Exception ex)
-            {
-                LogWarning($"0072|KranfahrtBeendet TelegrammNr konnte vor dem Erhöhen nicht gelesen werden. Starte bei 0. Node={triggerNode.OpcNode}, Fehler={ex.GetType().Name}: {ex.Message}");
-            }
-
-            int nextTelegramm = currentTelegramm == int.MaxValue ? 1 : currentTelegramm + 1;
-            Log($"007C|KranfahrtBeendet: Trigger {triggerNode.NodeName} wird von {currentTelegramm} auf {nextTelegramm} erhoeht.");
-            OpcStatus writeStatus = opcClient.WriteNode(triggerNode.OpcNode, nextTelegramm);
-            if (writeStatus.IsBad)
-            {
-                throw new InvalidOperationException(
-                    $"OPC-Schreiben fehlgeschlagen. Event=KranfahrtBeendet, Trigger={triggerNode.NodeName}, Node={triggerNode.OpcNode}, Wert={nextTelegramm}, Status={writeStatus.Code}, Beschreibung={writeStatus.Description}");
-            }
-            SetEventValue(kranfahrtBeendetValues, triggerNode.NodeName, nextTelegramm);
-            LogOpcSend($"0073|OPC Senden KranfahrtBeendet Trigger: {triggerNode.NodeName}={nextTelegramm}");
-            Log($"0074|KranfahrtBeendet gesendet. Status=0, TelegrammNummer={nextTelegramm}.");
+            Log($"0079|KranfahrtBeendet Telegrammaufbau gestartet. Auftragspayload-Werte={auftragPayload.Count}, Zuordnungen={kranfahrtBeendetZuordnungen.Count}.");
+            SchreibeKranfahrtBeendetZuordnungNoLock(auftragPayload, triggerErhoehen: true);
+            Log("0074|KranfahrtBeendet gesendet. Alle aktiven SIM-Zuordnungen inklusive Trigger wurden verarbeitet.");
         }
     }
-
     private bool TryGetKranfahrtAuftragNode(string nodeName, out EventNodeConfiguration node)
     {
         return kranfahrtAuftragNodesByName.TryGetValue(nodeName, out node!);
@@ -728,46 +992,109 @@ public partial class MainWindow : Window
             "Position liegt ueber Lagerbox 8.");
     }
 
-    private AktuelleFahrtSimulation? LadeAktuelleFahrt()
+    private void DemoModeButton_Click(object sender, RoutedEventArgs e)
     {
-        DateTime nowUtc = DateTime.UtcNow;
-        if (nowUtc < nextAktuelleFahrtCheckUtc)
+        demoModeAktiv = !demoModeAktiv;
+        DemoModeButton.Content = demoModeAktiv
+            ? "Demo stoppen"
+            : "Simulation/Demo";
+        DemoModeButton.Background = demoModeAktiv
+            ? Brushes.DarkOrange
+            : Brushes.Transparent;
+
+        if (demoModeAktiv)
         {
-            return letzteGeleseneFahrt;
+            Log("008C|Demo-Modus gestartet. Der Simulator schreibt ausschliesslich Kranpositionen. Event-1/Event-2-Quellen, Ziele und Trigger werden nicht geschrieben.");
+            StarteNaechsteDemoFahrt(DateTime.UtcNow);
+            return;
         }
 
-        nextAktuelleFahrtCheckUtc = nowUtc.AddSeconds(1);
+        Log("008D|Demo-Modus beendet. Grundstellung ueber Lagerbox 8 wird angefahren.");
+        aktiveSimulationsFahrt = null;
+        aktuelleBewegung = null;
+        warteAufNeueFahrtBisUtc = null;
+        StarteBewegung(
+            grundstellung,
+            DateTime.UtcNow,
+            SimulationsFahrzustand.FahreZurGrundstellung,
+            "008D|Demo-Modus beendet. Grundstellung ueber Lagerbox 8 wird angefahren.");
+    }
 
-        try
+    private void StarteNaechsteDemoFahrt(DateTime nowUtc)
+    {
+        AktuelleFahrtSimulation? fahrt = ErzeugeDemoFahrt();
+        if (fahrt is null)
         {
-            letzteGeleseneFahrt = DatabaseConfig.LoadAktuelleFahrt(connectionString);
-        }
-        catch (Exception ex)
-        {
-            if (nowUtc >= nextAktuelleFahrtErrorLogUtc)
+            LogWarning("008C|Demo-Modus kann keine plausible Fahrt bilden. Es fehlen Lagerboxen, LKW-Plaetze oder Chargierwagen in FALCOM_KRAN_POSITION.");
+            demoModeAktiv = false;
+            Dispatcher.BeginInvoke(() =>
             {
-                LogWarning(
-                    $"0062|Aktuelle Fahrt konnte nicht geprueft werden. Simulator behaelt aktuelle Bewegung bei. Fehler={ex.GetType().Name}: {ex.Message}");
-                nextAktuelleFahrtErrorLogUtc = nowUtc.AddMinutes(1);
+                DemoModeButton.Content = "Simulation/Demo";
+                DemoModeButton.Background = Brushes.Transparent;
+            });
+            return;
+        }
+
+        StarteFahrtZurQuelle(fahrt, nowUtc);
+    }
+
+    private AktuelleFahrtSimulation? ErzeugeDemoFahrt()
+    {
+        List<SimKranPosition> lagerboxen = GetDemoPositionen("LAGERBOX");
+        List<SimKranPosition> lkwPlaetze = GetDemoPositionen("LKW_PLATZ");
+        List<SimKranPosition> chargierwagen = GetDemoPositionen("CHARGIERWAGEN");
+
+        var moeglicheFahrten = new List<(SimKranPosition Quelle, SimKranPosition Ziel, string Typ)>();
+        foreach (SimKranPosition lagerbox in lagerboxen)
+        {
+            foreach (SimKranPosition cw in chargierwagen)
+            {
+                moeglicheFahrten.Add((lagerbox, cw, "Lagerbox -> Chargierwagen"));
             }
         }
 
-        return letzteGeleseneFahrt;
+        foreach (SimKranPosition lkw in lkwPlaetze)
+        {
+            foreach (SimKranPosition lagerbox in lagerboxen)
+            {
+                moeglicheFahrten.Add((lkw, lagerbox, "LKW -> Lagerbox"));
+            }
+        }
+
+        if (moeglicheFahrten.Count == 0)
+        {
+            return null;
+        }
+
+        (SimKranPosition quelle, SimKranPosition ziel, string typ) =
+            moeglicheFahrten[demoRandom.Next(moeglicheFahrten.Count)];
+
+        return new AktuelleFahrtSimulation(
+            naechsteInterneFahrtId++,
+            DemoTelegrammNummer,
+            $"DEMO {typ}",
+            0,
+            0,
+            "DEMO",
+            quelle.PositionID,
+            ziel.PositionID,
+            0,
+            quelle.Bezeichnung,
+            ziel.Bezeichnung,
+            quelle.Position,
+            ziel.Position);
+    }
+
+    private List<SimKranPosition> GetDemoPositionen(string positionsTyp)
+    {
+        return positionenById.Values
+            .Where(position => string.Equals(position.PositionsTyp, positionsTyp, StringComparison.OrdinalIgnoreCase))
+            .OrderBy(position => position.PositionsNr)
+            .ToList();
     }
 
     private void AktualisiereFahrposition(DateTime nowUtc)
     {
-        AktuelleFahrtSimulation? aktuelleFahrt = LadeAktuelleFahrt();
-        if (aktuelleFahrt is not null
-            && aktuelleFahrt.ID != letzteAbgefahreneFahrtId
-            && (aktiveSimulationsFahrt is null || aktiveSimulationsFahrt.ID != aktuelleFahrt.ID))
-        {
-            StarteFahrtZurQuelle(
-                aktuelleFahrt,
-                nowUtc);
-            return;
-        }
-
         if (aktuelleBewegung is not null)
         {
             AktualisiereAktuelleBewegung(nowUtc);
@@ -787,15 +1114,6 @@ public partial class MainWindow : Window
 
             return;
         }
-
-        if (aktuelleFahrt is null && fahrzustand != SimulationsFahrzustand.Grundstellung)
-        {
-            StarteBewegung(
-                grundstellung,
-                nowUtc,
-                SimulationsFahrzustand.FahreZurGrundstellung,
-                "0067|Keine aktuelle Fahrt vorhanden. Grundstellung ueber Lagerbox 8 wird angefahren.");
-        }
     }
 
     private void StarteFahrtZurQuelle(
@@ -809,7 +1127,7 @@ public partial class MainWindow : Window
             nowUtc,
             SimulationsFahrzustand.FahreZurQuelle,
             "0068|Aktuelle Fahrt wird abgefahren: " +
-            $"FahrtID={fahrt.ID}, AuftragID={fahrt.AuftragID}, " +
+            $"SimulatorFahrtID={fahrt.ID}, TelegrammNummer={fahrt.TelegrammNummer}, AuftragID={fahrt.AuftragID}, Teilfahrt={fahrt.AuftragTeilfahrt}, " +
             $"Quelle={fahrt.QuelleBezeichnung} ({fahrt.QuellePositionID}), " +
             $"Ziel={fahrt.ZielBezeichnung} ({fahrt.ZielPositionID}).");
     }
@@ -855,11 +1173,23 @@ public partial class MainWindow : Window
 
         if (fahrzustand == SimulationsFahrzustand.FahreZumZiel && aktiveSimulationsFahrt is not null)
         {
-            letzteAbgefahreneFahrtId = aktiveSimulationsFahrt.ID;
+            if (demoModeAktiv)
+            {
+                Log(
+                    "008C|Demo-Ziel erreicht. Es wurde kein KranfahrtBeendet-Event gesendet. " +
+                    $"Quelle={aktiveSimulationsFahrt.QuelleBezeichnung} ({aktiveSimulationsFahrt.QuellePositionID}), " +
+                    $"Ziel={aktiveSimulationsFahrt.ZielBezeichnung} ({aktiveSimulationsFahrt.ZielPositionID}).");
+                aktiveSimulationsFahrt = null;
+                StarteNaechsteDemoFahrt(nowUtc);
+                return;
+            }
+
+            letzteAbgefahreneFahrt = aktiveSimulationsFahrt;
             Log(
                 "006A|Ziel erreicht. Fahrt intern abgefahren: " +
-                $"FahrtID={aktiveSimulationsFahrt.ID}, AuftragID={aktiveSimulationsFahrt.AuftragID}. " +
-                "Warte jetzt 10 Sekunden auf neue Fahrt oder Teilfahrt.");
+                $"SimulatorFahrtID={aktiveSimulationsFahrt.ID}, TelegrammNummer={aktiveSimulationsFahrt.TelegrammNummer}, " +
+                $"AuftragID={aktiveSimulationsFahrt.AuftragID}, Teilfahrt={aktiveSimulationsFahrt.AuftragTeilfahrt}. " +
+                "KranfahrtBeendet wird jetzt vorbereitet.");
 
             try
             {
@@ -877,6 +1207,11 @@ public partial class MainWindow : Window
             aktiveSimulationsFahrt = null;
             fahrzustand = SimulationsFahrzustand.WarteAufNeueFahrt;
             warteAufNeueFahrtBisUtc = nowUtc.AddSeconds(10);
+            Log(
+                "006A|Warten auf naechste Fahrt. " +
+                $"Letzte Fahrt war TelegrammNummer={letzteAbgefahreneFahrt.TelegrammNummer}, " +
+                $"AuftragID={letzteAbgefahreneFahrt.AuftragID}, Teilfahrt={letzteAbgefahreneFahrt.AuftragTeilfahrt}. " +
+                "Wenn 10 Sekunden nichts Neues kommt, wird Lagerbox 8 als Grundstellung angefahren.");
             Dispatcher.BeginInvoke(() =>
             {
                 SimulationStatusText.Text = "Warte auf neue Fahrt";
@@ -936,8 +1271,8 @@ public partial class MainWindow : Window
         {
             SimulationStatusText.Text = zielZustand switch
             {
-                SimulationsFahrzustand.FahreZurQuelle => "Fahrt: Quelle",
-                SimulationsFahrzustand.FahreZumZiel => "Fahrt: Ziel",
+                SimulationsFahrzustand.FahreZurQuelle => demoModeAktiv ? "Demo: Quelle" : "Fahrt: Quelle",
+                SimulationsFahrzustand.FahreZumZiel => demoModeAktiv ? "Demo: Ziel" : "Fahrt: Ziel",
                 SimulationsFahrzustand.FahreZurGrundstellung => "Grundstellung",
                 _ => "Simulation"
             };
@@ -1335,3 +1670,5 @@ public partial class MainWindow : Window
         FahreZurGrundstellung
     }
 }
+
+

@@ -1,4 +1,4 @@
-using Microsoft.Data.SqlClient;
+﻿using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using System.Data;
@@ -6,8 +6,8 @@ using System.Data;
 namespace Falcom
 {
    /// <summary>
-   /// Überwacht zyklisch die SQL-Datenbank auf neue, freigegebene Chargieraufträge
-   /// und schleust diese bei freier Bahn in die interne Event-Queue ein.
+   /// Ueberwacht zyklisch die SQL-Datenbank auf die naechste fachlich anstehende Kranfahrt.
+   /// Die fachliche Prioritaet liegt in der Datenbank: zuerst Chargieren, danach Einlagern.
    /// </summary>
    public sealed class DatabaseOrderPoller : BackgroundService
    {
@@ -38,7 +38,7 @@ namespace Falcom
       protected override async Task ExecuteAsync(CancellationToken stoppingToken)
       {
          _logger.LogInformation(
-            "0004|Datenbank-Poller gestartet. Nutze Stored Procedures. Intervall: {Interval}s",
+            "0004|Datenbank-Poller gestartet. Suche naechste Kranfahrt ueber Stored Procedures. Intervall: {Interval}s",
             PollInterval.TotalSeconds);
 
          while (!stoppingToken.IsCancellationRequested)
@@ -57,21 +57,21 @@ namespace Falcom
                   continue;
                }
 
-               OrderReleasedEvent? nextOrder = FetchNextReleasedOrder();
+               PendingKranfahrt pendingKranfahrt = FetchPendingKranfahrt();
 
-               if (nextOrder is not null)
+               if (pendingKranfahrt.HasPending)
                {
                   _logger.LogInformation(
-                     "0007|Neuen freigegebenen Auftrag gefunden: ID={OrderId}",
-                     nextOrder.AuftragsNummer);
+                     "0007|Naechste Kranfahrt steht an: Typ={AuftragsTyp}, AuftragID={AuftragID}, Grund={Reason}",
+                     pendingKranfahrt.AuftragsTyp,
+                     pendingKranfahrt.AuftragID,
+                     pendingKranfahrt.Reason);
 
-                  if (UpdateOrderStatus(nextOrder.AuftragsNummer, 2))
-                  {
-                     _logger.LogInformation(
-                        "0008|Feuere OrderReleasedEvent fuer Auftrag {OrderId} ab.",
-                        nextOrder.AuftragsNummer);
-                     await _eventQueue.PushEventAsync(nextOrder);
-                  }
+                  await _eventQueue.PushEventAsync(
+                     new NextKranfahrtAvailableEvent(
+                        pendingKranfahrt.AuftragsTyp,
+                        pendingKranfahrt.AuftragID,
+                        pendingKranfahrt.Reason));
                }
                else
                {
@@ -87,7 +87,7 @@ namespace Falcom
             catch (Exception ex)
             {
                _logger.LogError(
-                  "0009|Fehler beim Pollen der Auftragsdatenbank über Stored Procedures. Meldung: {Message}",
+                  "0009|Fehler beim Pollen der naechsten Kranfahrt ueber Stored Procedures. Meldung: {Message}",
                   ex.Message);
             }
 
@@ -105,7 +105,7 @@ namespace Falcom
          }
 
          _logger.LogInformation(
-            "0005|Datenbank-Poller aktiv. In den letzten {Seconds:N0} Sekunden: Polls={PollCount}, blockiert={BlockedPollCount}, ohne neuen Auftrag={IdlePollCount}.",
+            "0005|Datenbank-Poller aktiv. In den letzten {Seconds:N0} Sekunden: Polls={PollCount}, blockiert={BlockedPollCount}, ohne neue Kranfahrt={IdlePollCount}.",
             PollSummaryInterval.TotalSeconds,
             pollCount,
             blockedPollCount,
@@ -144,14 +144,14 @@ namespace Falcom
          }
       }
 
-      private OrderReleasedEvent? FetchNextReleasedOrder()
+      private PendingKranfahrt FetchPendingKranfahrt()
       {
          try
          {
             using SqlConnection connection = new(_configManager.ConnectionString);
             using SqlCommand command = CreateStoredProcedureCommand(
                connection,
-               "dbo.FALCOM_GetNextReleasedOrder");
+               "dbo.FALCOM_HasPendingKranfahrt");
 
             _runtimeStatus.SetFreigabePruefung();
             connection.Open();
@@ -159,51 +159,20 @@ namespace Falcom
 
             if (!reader.Read())
             {
-               return null;
+               return PendingKranfahrt.None("FALCOM_HasPendingKranfahrt lieferte kein Ergebnis.");
             }
 
-            return new OrderReleasedEvent(
-               auftragsNummer: Convert.ToInt32(reader["ID"]),
-               eisensorteId: reader["EisensorteID"]?.ToString() ?? "UNBEKANNT",
-               zielGewichtKg: Convert.ToDouble(reader["ZielgewichtKg"]));
+            bool hasPending = Convert.ToBoolean(reader["HasPending"]);
+            return new PendingKranfahrt(
+               hasPending,
+               reader["AuftragsTyp"]?.ToString() ?? string.Empty,
+               reader["AuftragID"] == DBNull.Value ? null : Convert.ToInt64(reader["AuftragID"]),
+               reader["Reason"]?.ToString() ?? string.Empty);
          }
          catch (Exception ex)
          {
-            _logger.LogError(ex, "000B|Fehler bei FALCOM_GetNextReleasedOrder.");
-            return null;
-         }
-      }
-
-      private bool UpdateOrderStatus(int orderId, int newStatus)
-      {
-         try
-         {
-            using SqlConnection connection = new(_configManager.ConnectionString);
-            using SqlCommand command = CreateStoredProcedureCommand(
-               connection,
-               "dbo.FALCOM_UpdateOrderStatus");
-
-            command.Parameters.Add("@OrderId", SqlDbType.BigInt).Value = orderId;
-            command.Parameters.Add("@NewStatus", SqlDbType.Int).Value = newStatus;
-
-            connection.Open();
-            using SqlDataReader reader = command.ExecuteReader();
-
-            if (!reader.Read())
-            {
-               return true;
-            }
-
-            int rowsAffected = Convert.ToInt32(reader["RowsAffected"]);
-            return rowsAffected > 0;
-         }
-         catch (Exception ex)
-         {
-            _logger.LogError(
-               ex,
-               "000C|Fehler bei FALCOM_UpdateOrderStatus fuer ID {OrderId}.",
-               orderId);
-            return false;
+            _logger.LogError(ex, "000B|Fehler bei FALCOM_HasPendingKranfahrt.");
+            return PendingKranfahrt.None(ex.Message);
          }
       }
 
@@ -216,6 +185,18 @@ namespace Falcom
             CommandType = CommandType.StoredProcedure,
             CommandTimeout = 30
          };
+      }
+
+      private sealed record PendingKranfahrt(
+         bool HasPending,
+         string AuftragsTyp,
+         long? AuftragID,
+         string Reason)
+      {
+         public static PendingKranfahrt None(string reason)
+         {
+            return new PendingKranfahrt(false, string.Empty, null, reason);
+         }
       }
    }
 }

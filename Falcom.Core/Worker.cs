@@ -1,4 +1,4 @@
-using Microsoft.Extensions.Hosting;
+﻿using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Opc.UaFx.Client;
 using System;
@@ -31,7 +31,7 @@ namespace Falcom
           FalcomEventQueue eventQueue,
           WatchdogSender watchdogSender,
           AktuelleFahrtRepository aktuelleFahrtRepository,
-          FalcomRuntimeStatus runtimeStatus) // NEU: Im Konstruktor übergeben
+          FalcomRuntimeStatus runtimeStatus) // NEU: Im Konstruktor Ã¼bergeben
       {
          _logger = logger;
          _configManager = configManager;
@@ -57,9 +57,11 @@ namespace Falcom
                watchdogTimerCancellation.Token);
             Task opcDataFlowMonitor = ScheduleOpcDataFlowChecksAsync(
                watchdogTimerCancellation.Token);
+            Task spsResendMonitor = ScheduleSpsResendChecksAsync(
+               watchdogTimerCancellation.Token);
 
             // NEU: Die Schleife wartet jetzt reaktiv, bis ein Event in der Queue landet.
-            // WaitToReadAsync lässt den Thread schlafen, solange die Queue leer ist (0% CPU Last).
+            // WaitToReadAsync lÃ¤sst den Thread schlafen, solange die Queue leer ist (0% CPU Last).
             try
             {
                InitializeStateFromDatabase();
@@ -99,20 +101,26 @@ namespace Falcom
                            continue;
                         }
 
-                        if (falcomEvent is OrderReleasedEvent orderReleasedEvent)
+                        if (falcomEvent is NextKranfahrtAvailableEvent nextKranfahrtAvailableEvent)
                         {
                            SetState(ProcessState.AuftragBereit);
 
+                           _logger.LogInformation(
+                              "0008|Feuere Verarbeitung der naechsten Kranfahrt ab: Typ={AuftragsTyp}, AuftragID={AuftragID}, Grund={Reason}.",
+                              nextKranfahrtAvailableEvent.AuftragsTyp,
+                              nextKranfahrtAvailableEvent.AuftragID,
+                              nextKranfahrtAvailableEvent.Reason);
+
                            AktuelleFahrtResult result =
-                              _aktuelleFahrtRepository.TryCreateNextAktuelleFahrt(
-                                 orderReleasedEvent.AuftragsNummer);
+                              _aktuelleFahrtRepository.TryCreateNextAktuelleFahrt(null);
 
                            _logger.LogInformation(
-                              "0045|Aktuelle Fahrt aus Auftrag erzeugt: Erfolg={Success}, Grund={Reason}, AktuelleFahrtID={AktuelleFahrtID}, AuftragID={AuftragID}, Typ={AuftragsTyp}, Quelle={Quelle}, Ziel={Ziel}, SollMengeKg={SollMengeKg}.",
+                              "0045|Aktuelle Fahrt aus naechster DB-Kranfahrt erzeugt: Erfolg={Success}, Grund={Reason}, AktuelleFahrtID={AktuelleFahrtID}, AuftragID={AuftragID}, Teilfahrt={AuftragTeilfahrt}, Typ={AuftragsTyp}, Quelle={Quelle}, Ziel={Ziel}, SollMengeKg={SollMengeKg}.",
                               result.Success,
                               result.Reason,
                               result.AktuelleFahrtID,
                               result.AuftragID,
+                              result.AuftragTeilfahrt,
                               result.AuftragsTyp,
                               result.Quelle,
                               result.Ziel,
@@ -125,7 +133,7 @@ namespace Falcom
                               KranfahrtAuftragEvent kranfahrtAuftragEvent =
                                  KranfahrtAuftragEvent.FromAktuelleFahrt(
                                     result,
-                                    auftragTeilfahrt: 1,
+                                    auftragTeilfahrt: result.AuftragTeilfahrt ?? 1,
                                     toleranzKg: 150m);
 
                               OPC_Client_Crane.OpcSendResult sendResult =
@@ -137,6 +145,17 @@ namespace Falcom
                               {
                                  string bemerkung =
                                     $"FEHLER beim Starten der Kranfahrt: {sendResult.Reason}";
+                                 AktuelleFahrtResult sendFailureResult =
+                                    _aktuelleFahrtRepository.MarkSpsSendFailure(
+                                       result.AktuelleFahrtID,
+                                       sendResult.Reason);
+
+                                 _logger.LogWarning(
+                                    "008A|SPS-Fahrauftrag Sendefehler markiert: AktuelleFahrtID={AktuelleFahrtID}, AuftragID={AuftragID}, Grund={Reason}.",
+                                    sendFailureResult.AktuelleFahrtID,
+                                    sendFailureResult.AuftragID,
+                                    sendResult.Reason);
+
 
                                  AktuelleFahrtResult failResult =
                                     _aktuelleFahrtRepository.FailAktuelleFahrt(
@@ -158,6 +177,22 @@ namespace Falcom
                               }
                               else
                               {
+                                 AktuelleFahrtResult sentResult =
+                                    _aktuelleFahrtRepository.MarkSpsSendSuccess(
+                                       result.AktuelleFahrtID,
+                                       sendResult.TelegrammNummer,
+                                       sendResult.ZaehlerAnfahrt);
+
+                                 _runtimeStatus.SetAktuelleFahrt(sentResult);
+
+                                 _logger.LogInformation(
+                                    "0086|SPS-Fahrauftrag als gesendet markiert: AktuelleFahrtID={AktuelleFahrtID}, AuftragID={AuftragID}, Teilfahrt={AuftragTeilfahrt}, TelegrammNummer={TelegrammNummer}, ZaehlerAnfahrt={ZaehlerAnfahrt}.",
+                                    sentResult.AktuelleFahrtID,
+                                    sentResult.AuftragID,
+                                    sentResult.AuftragTeilfahrt,
+                                    sendResult.TelegrammNummer,
+                                    sendResult.ZaehlerAnfahrt);
+
                                  SetState(ProcessState.FahrtAnSpsGesendet);
                                  SetState(ProcessState.WarteAufSpsRueckmeldung);
                               }
@@ -170,6 +205,16 @@ namespace Falcom
 
                         if (falcomEvent is KranfahrtBeendetEvent kranfahrtBeendetEvent)
                         {
+                           _logger.LogInformation(
+                              "0084|KranfahrtBeendet wird an Datenbank uebergeben: Auftrag={AuftragID}, Teilfahrt={TeilfahrtID}, Quelle={Quelle}, Ziel={Ziel}, Status={Status}, IstGewicht={IstGewicht}, AenderungsZaehler={AenderungsZaehler}.",
+                              kranfahrtBeendetEvent.AuftragsNummer,
+                              kranfahrtBeendetEvent.TeilfahrtID,
+                              kranfahrtBeendetEvent.KranQuelle,
+                              kranfahrtBeendetEvent.KranZiel,
+                              kranfahrtBeendetEvent.Status,
+                              kranfahrtBeendetEvent.IstGewicht,
+                              kranfahrtBeendetEvent.ÄnderungsZähler);
+
                            AktuelleFahrtResult result =
                               _aktuelleFahrtRepository.CompleteAktuelleFahrt(
                                  kranfahrtBeendetEvent);
@@ -197,7 +242,7 @@ namespace Falcom
                         // 1. Datenfluss zur SPS sicherstellen
                         await _opcClientCrane.EnsureDataFlowAsync(stoppingToken);
 
-                        // Optionale Überwachungsausgabe
+                        // Optionale Ãœberwachungsausgabe
                         //LogOpenCraneQueueOrdersIfChanged();
                      }
                      catch (OperationCanceledException)
@@ -214,7 +259,7 @@ namespace Falcom
                         await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
 
                         // Da ein Fehler auftrat, brechen wir die innere TryRead-Schleife ab,
-                        // um den Datenfluss im nächsten Hauptdurchlauf frisch zu prüfen.
+                        // um den Datenfluss im nÃ¤chsten Hauptdurchlauf frisch zu prÃ¼fen.
                         break;
                      }
                   }
@@ -240,6 +285,14 @@ namespace Falcom
                {
                }
 
+               try
+               {
+                  await spsResendMonitor;
+               }
+               catch (OperationCanceledException)
+               {
+               }
+
                _logger.LogInformation("0038|Disconnecting from OPC Server...");
                _opcClientCrane.Disconnect();
             }
@@ -250,7 +303,7 @@ namespace Falcom
          }
          catch (Exception ex)
          {
-            _logger.LogCritical(ex, "0037|Schwerwiegender Fehler außerhalb der Hauptschleife. Dienst wird beendet!");
+            _logger.LogCritical(ex, "0037|Schwerwiegender Fehler auÃŸerhalb der Hauptschleife. Dienst wird beendet!");
          }
       }
 
@@ -366,6 +419,96 @@ namespace Falcom
          }
       }
 
+
+      private async Task ScheduleSpsResendChecksAsync(CancellationToken stoppingToken)
+      {
+         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
+
+         while (await timer.WaitForNextTickAsync(stoppingToken))
+         {
+            try
+            {
+               AktuelleFahrtResult aktuelleFahrt =
+                  _aktuelleFahrtRepository.TryClaimSpsResend();
+
+               if (!aktuelleFahrt.Success || aktuelleFahrt.AktuelleFahrtID is null)
+               {
+                  continue;
+               }
+
+               _runtimeStatus.SetAktuelleFahrt(aktuelleFahrt);
+
+               _logger.LogInformation(
+                  "0087|Bedieneranforderung: Aktuelle Fahrt wird erneut an die Kran-SPS gesendet. AktuelleFahrtID={AktuelleFahrtID}, AuftragID={AuftragID}, Teilfahrt={AuftragTeilfahrt}, Grund={Grund}, AngefordertVon={AngefordertVon}.",
+                  aktuelleFahrt.AktuelleFahrtID,
+                  aktuelleFahrt.AuftragID,
+                  aktuelleFahrt.AuftragTeilfahrt,
+                  aktuelleFahrt.SpsSendewunschGrund,
+                  aktuelleFahrt.SpsSendewunschVon);
+
+               KranfahrtAuftragEvent kranfahrtAuftragEvent =
+                  KranfahrtAuftragEvent.FromAktuelleFahrt(
+                     aktuelleFahrt,
+                     auftragTeilfahrt: aktuelleFahrt.AuftragTeilfahrt ?? 1,
+                     toleranzKg: 150m);
+
+               OPC_Client_Crane.OpcSendResult sendResult =
+                  await _opcClientCrane.SendKranfahrtAuftragAsync(
+                     kranfahrtAuftragEvent,
+                     stoppingToken);
+
+               if (sendResult.Success)
+               {
+                  AktuelleFahrtResult sentResult =
+                     _aktuelleFahrtRepository.MarkSpsSendSuccess(
+                        aktuelleFahrt.AktuelleFahrtID,
+                        sendResult.TelegrammNummer,
+                        sendResult.ZaehlerAnfahrt);
+
+                  _runtimeStatus.SetAktuelleFahrt(sentResult);
+
+                  _logger.LogInformation(
+                     "0088|Aktuelle Fahrt wurde erneut an die Kran-SPS gesendet: AktuelleFahrtID={AktuelleFahrtID}, AuftragID={AuftragID}, Teilfahrt={AuftragTeilfahrt}, TelegrammNummer={TelegrammNummer}, ZaehlerAnfahrt={ZaehlerAnfahrt}.",
+                     sentResult.AktuelleFahrtID,
+                     sentResult.AuftragID,
+                     sentResult.AuftragTeilfahrt,
+                     sendResult.TelegrammNummer,
+                     sendResult.ZaehlerAnfahrt);
+
+                  SetState(ProcessState.FahrtAnSpsGesendet);
+                  SetState(ProcessState.WarteAufSpsRueckmeldung);
+                  continue;
+               }
+
+               AktuelleFahrtResult failedResult =
+                  _aktuelleFahrtRepository.MarkSpsSendFailure(
+                     aktuelleFahrt.AktuelleFahrtID,
+                     sendResult.Reason);
+
+               _runtimeStatus.SetAktuelleFahrt(failedResult);
+
+               _logger.LogWarning(
+                  "0089|Erneutes Senden der aktuellen Fahrt an die Kran-SPS ist fehlgeschlagen: AktuelleFahrtID={AktuelleFahrtID}, AuftragID={AuftragID}, Grund={Reason}.",
+                  failedResult.AktuelleFahrtID,
+                  failedResult.AuftragID,
+                  sendResult.Reason);
+
+               SetState(ProcessState.Fehler);
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+               throw;
+            }
+            catch (Exception ex)
+            {
+               _logger.LogWarning(
+                  "008B|Pruefung auf SPS-Neusendeanforderung fehlgeschlagen. Fehler={ExceptionType}: {Message}",
+                  ex.GetType().Name,
+                  ex.Message);
+            }
+         }
+      }
+
       public override async Task StopAsync(CancellationToken cancellationToken)
       {
          _logger.LogInformation("0039|Windows-Dienst Stop angefordert.");
@@ -375,3 +518,4 @@ namespace Falcom
       
    }
 }
+

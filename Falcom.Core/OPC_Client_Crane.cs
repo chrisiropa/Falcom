@@ -24,6 +24,7 @@ namespace Falcom
       private readonly ConfigManager _configManager;
       private readonly FalcomRuntimeStatus _runtimeStatus;
       private readonly FalcomKranLiveSignalRClient _kranLiveSignalRClient;
+      private readonly AktuelleFahrtRepository _aktuelleFahrtRepository;
       private readonly FalcomEventQueue _eventQueue; // NEU: Privates Feld f√ºr die Queue
       private readonly object _syncRoot = new();
       private readonly List<OpcMonitoredItem> monitoredItems = new();
@@ -63,12 +64,14 @@ namespace Falcom
          ConfigManager configManager,
          FalcomRuntimeStatus runtimeStatus,
          FalcomKranLiveSignalRClient kranLiveSignalRClient,
+         AktuelleFahrtRepository aktuelleFahrtRepository,
          FalcomEventQueue eventQueue)
       {
          _logger = logger;
          _configManager = configManager;
          _runtimeStatus = runtimeStatus;
          _kranLiveSignalRClient = kranLiveSignalRClient;
+         _aktuelleFahrtRepository = aktuelleFahrtRepository;
          _eventQueue = eventQueue; // NEU: Zuweisung f√ºr den sp√§teren Zugriff
          TraegerLicense();
          KranfahrtBeendetEvent.LoadOpcNodes(configManager);
@@ -394,7 +397,7 @@ namespace Falcom
                telegrammNummer,
                kranfahrtAuftragEvent.ZaehlerAnfahrt);
 
-            return Task.FromResult(OpcSendResult.Ok());
+            return Task.FromResult(OpcSendResult.Ok(telegrammNummer, kranfahrtAuftragEvent.ZaehlerAnfahrt));
          }
          catch (Exception ex)
          {
@@ -686,11 +689,11 @@ namespace Falcom
          string TelegrammNummer,
          string ZaehlerAnfahrt);
 
-      public sealed record OpcSendResult(bool Success, string Reason)
+      public sealed record OpcSendResult(bool Success, string Reason, int? TelegrammNummer = null, int? ZaehlerAnfahrt = null)
       {
-         public static OpcSendResult Ok()
+         public static OpcSendResult Ok(int? telegrammNummer = null, int? zaehlerAnfahrt = null)
          {
-            return new OpcSendResult(true, string.Empty);
+            return new OpcSendResult(true, string.Empty, telegrammNummer, zaehlerAnfahrt);
          }
 
          public static OpcSendResult Failed(string reason)
@@ -1242,9 +1245,24 @@ if (string.Equals(
                {
                   kranfahrtBeendetInitialwertGesehen = true;
                   lastKranfahrtBeendetAenderungsZaehler = aenderungsZaehler;
+
+                  KranfahrtBeendetPayload initialPayload = ReadKranfahrtBeendetPayload(aenderungsZaehler);
+                  if (!SollKranfahrtBeendetInitialwertVerarbeitetWerden(initialPayload))
+                  {
+                     _logger.LogInformation(
+                        "0025|KranfahrtBeendet Initialwert empfangen und ignoriert. AenderungsZaehler={AenderungsZaehler}, Auftrag={AuftragId}, Teilfahrt={TeilfahrtID}",
+                        aenderungsZaehler,
+                        initialPayload.AuftragId,
+                        initialPayload.TeilfahrtID);
+                     return;
+                  }
+
                   _logger.LogInformation(
-                     "0025|KranfahrtBeendet Initialwert empfangen und ignoriert. AenderungsZaehler={AenderungsZaehler}",
-                     aenderungsZaehler);
+                     "0026|KranfahrtBeendet Initialwert passt zur aktuellen Fahrt und wird verarbeitet. AenderungsZaehler={AenderungsZaehler}, Auftrag={AuftragId}, Teilfahrt={TeilfahrtID}",
+                     aenderungsZaehler,
+                     initialPayload.AuftragId,
+                     initialPayload.TeilfahrtID);
+                  QueueKranfahrtBeendetEvent(initialPayload);
                   return;
                }
 
@@ -1259,41 +1277,7 @@ if (string.Equals(
                lastKranfahrtBeendetAenderungsZaehler = aenderungsZaehler;
 
                _logger.LogInformation("0026|Kranfahrt beendet. AenderungsZaehler={AenderungsZaehler}", aenderungsZaehler);
-               int auftragId = Convert.ToInt32(client.ReadNode(KranfahrtBeendetEvent.AuftragsNummerOPCNode).Value);
-               int teilfahrtID = Convert.ToInt32(client.ReadNode(KranfahrtBeendetEvent.TeilfahrtIDOPCNode).Value);
-               string kranQuelle = Convert.ToString(client.ReadNode(KranfahrtBeendetEvent.KranQuelleOPCNode).Value) ?? string.Empty;
-               string kranZiel = Convert.ToString(client.ReadNode(KranfahrtBeendetEvent.KranZielOPCNode).Value) ?? string.Empty;
-               int status = Convert.ToInt32(client.ReadNode(KranfahrtBeendetEvent.StatusOPCNode).Value);
-               double istGewicht = Convert.ToDouble(client.ReadNode(KranfahrtBeendetEvent.IstGewichtOPCNode).Value);
-
-               var kranEvent = new KranfahrtBeendetEvent(
-                    auftragsNummer: auftragId,
-                    teilfahrtID: teilfahrtID,
-                    kranQuelle: kranQuelle,
-                    kranZiel: kranZiel,
-                    status: status,
-                    istGewicht: istGewicht,
-                    ‰nderungsZ‰hler: aenderungsZaehler
-               );
-
-               if (!_eventQueue.Writer.TryWrite(kranEvent))
-               {
-                  _logger.LogError("0027|KranfahrtBeendetEvent konnte nicht in die Event-Queue geschrieben werden.");
-                  return;
-               }
-
-               _logger.LogInformation(
-                  "0028|KranfahrtBeendetEvent eingereiht: Auftrag={AuftragId}, Quelle={Quelle}, Ziel={Ziel}, Status={Status}, IstGewicht={IstGewicht}",
-                  auftragId, kranQuelle, kranZiel, status, istGewicht);
-
-               SendKranfahrtBeendetLiveSnapshot(
-                  e.Item.Value.Value,
-                  auftragId,
-                  teilfahrtID,
-                  kranQuelle,
-                  kranZiel,
-                  status,
-                  istGewicht);
+               QueueKranfahrtBeendetEvent(ReadKranfahrtBeendetPayload(aenderungsZaehler));
             }
          }
          catch (Exception ex)
@@ -1302,6 +1286,111 @@ if (string.Equals(
          }
       }
 
+      private KranfahrtBeendetPayload ReadKranfahrtBeendetPayload(int aenderungsZaehler)
+      {
+         int auftragId = Convert.ToInt32(client!.ReadNode(KranfahrtBeendetEvent.AuftragsNummerOPCNode).Value);
+         int teilfahrtID = Convert.ToInt32(client.ReadNode(KranfahrtBeendetEvent.TeilfahrtIDOPCNode).Value);
+         string kranQuelle = Convert.ToString(client.ReadNode(KranfahrtBeendetEvent.KranQuelleOPCNode).Value) ?? string.Empty;
+         string kranZiel = Convert.ToString(client.ReadNode(KranfahrtBeendetEvent.KranZielOPCNode).Value) ?? string.Empty;
+         int status = Convert.ToInt32(client.ReadNode(KranfahrtBeendetEvent.StatusOPCNode).Value);
+         double istGewicht = Convert.ToDouble(client.ReadNode(KranfahrtBeendetEvent.IstGewichtOPCNode).Value);
+
+         _logger.LogInformation(
+            "0085|KranfahrtBeendet Payload aus OPC gelesen: Auftrag={AuftragId}, Teilfahrt={TeilfahrtID}, Quelle={Quelle}, Ziel={Ziel}, Status={Status}, IstGewicht={IstGewicht}, AenderungsZaehler={AenderungsZaehler}.",
+            auftragId,
+            teilfahrtID,
+            kranQuelle,
+            kranZiel,
+            status,
+            istGewicht,
+            aenderungsZaehler);
+
+         return new KranfahrtBeendetPayload(
+            auftragId,
+            teilfahrtID,
+            kranQuelle,
+            kranZiel,
+            status,
+            istGewicht,
+            aenderungsZaehler);
+      }
+
+      private bool SollKranfahrtBeendetInitialwertVerarbeitetWerden(KranfahrtBeendetPayload payload)
+      {
+         AktuelleFahrtResult aktuelleFahrt = _aktuelleFahrtRepository.GetAktuelleFahrt();
+         if (!aktuelleFahrt.Success || aktuelleFahrt.AktuelleFahrtID is null)
+         {
+            _logger.LogInformation(
+               "0025|KranfahrtBeendet Initialwert passt zu keiner aktuellen Fahrt. Grund={Reason}",
+               aktuelleFahrt.Reason);
+            return false;
+         }
+
+         int erwarteteTeilfahrt = aktuelleFahrt.AuftragTeilfahrt ?? 1;
+         bool passt = aktuelleFahrt.AuftragID == payload.AuftragId
+                      && erwarteteTeilfahrt == payload.TeilfahrtID;
+
+         if (!passt)
+         {
+            _logger.LogInformation(
+               "0025|KranfahrtBeendet Initialwert passt nicht zur aktuellen Fahrt. AktuelleFahrtID={AktuelleFahrtID}, ErwartetAuftrag={ErwartetAuftrag}, ErwartetTeilfahrt={ErwartetTeilfahrt}, IstAuftrag={IstAuftrag}, IstTeilfahrt={IstTeilfahrt}.",
+               aktuelleFahrt.AktuelleFahrtID,
+               aktuelleFahrt.AuftragID,
+               erwarteteTeilfahrt,
+               payload.AuftragId,
+               payload.TeilfahrtID);
+            return false;
+         }
+
+         return true;
+      }
+
+      private void QueueKranfahrtBeendetEvent(KranfahrtBeendetPayload payload)
+      {
+         var kranEvent = new KranfahrtBeendetEvent(
+              auftragsNummer: payload.AuftragId,
+              teilfahrtID: payload.TeilfahrtID,
+              kranQuelle: payload.KranQuelle,
+              kranZiel: payload.KranZiel,
+              status: payload.Status,
+              istGewicht: payload.IstGewicht,
+              ‰nderungsZ‰hler: payload.AenderungsZaehler
+         );
+
+         if (!_eventQueue.Writer.TryWrite(kranEvent))
+         {
+            _logger.LogError("0027|KranfahrtBeendetEvent konnte nicht in die Event-Queue geschrieben werden.");
+            return;
+         }
+
+         _logger.LogInformation(
+            "0028|KranfahrtBeendetEvent eingereiht: Auftrag={AuftragId}, Teilfahrt={TeilfahrtID}, Quelle={Quelle}, Ziel={Ziel}, Status={Status}, IstGewicht={IstGewicht}, AenderungsZaehler={AenderungsZaehler}",
+            payload.AuftragId,
+            payload.TeilfahrtID,
+            payload.KranQuelle,
+            payload.KranZiel,
+            payload.Status,
+            payload.IstGewicht,
+            payload.AenderungsZaehler);
+
+         SendKranfahrtBeendetLiveSnapshot(
+            payload.AenderungsZaehler,
+            payload.AuftragId,
+            payload.TeilfahrtID,
+            payload.KranQuelle,
+            payload.KranZiel,
+            payload.Status,
+            payload.IstGewicht);
+      }
+
+      private sealed record KranfahrtBeendetPayload(
+         int AuftragId,
+         int TeilfahrtID,
+         string KranQuelle,
+         string KranZiel,
+         int Status,
+         double IstGewicht,
+         int AenderungsZaehler);
       #region Verbindungs-Event-Handler
 
       private void OnClientStateChanged(object? sender, OpcClientStateChangedEventArgs e)

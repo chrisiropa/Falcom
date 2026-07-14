@@ -8,13 +8,9 @@ namespace Falcom
    /// </summary>
    public sealed class OrderReleasedEvent : FalcomEventBase
    {
-      // Da der Poller die SQL-Datenbank liest, ist die Quelle klar definiert
       public override string Source => "Database-Poller";
-
-      // Dieses Event weckt die State Machine auf (schaltet von Idle -> In_Arbeit)
       public override bool IsStateTrigger => true;
 
-      // Die fachlichen Nutzdaten (Payload) exakt passend zu deiner Stored Procedure
       public int AuftragsNummer { get; init; }
       public string EisensorteId { get; init; }
       public double ZielGewichtKg { get; init; }
@@ -28,14 +24,33 @@ namespace Falcom
    }
 
    /// <summary>
+   /// Wird vom DB-Poller ausgelöst, wenn aus Sicht der Datenbank eine neue Kranfahrt ansteht.
+   /// Die konkrete Fahrt wird danach zentral über FALCOM_TryCreateNextAktuelleFahrt erzeugt.
+   /// </summary>
+   public sealed class NextKranfahrtAvailableEvent : FalcomEventBase
+   {
+      public override string Source => "Database-Poller";
+      public override bool IsStateTrigger => true;
+
+      public string AuftragsTyp { get; init; }
+      public long? AuftragID { get; init; }
+      public string Reason { get; init; }
+
+      public NextKranfahrtAvailableEvent(string auftragsTyp, long? auftragID, string reason)
+      {
+         AuftragsTyp = auftragsTyp;
+         AuftragID = auftragID;
+         Reason = reason;
+      }
+   }
+
+   /// <summary>
    /// Wird vom DB-Poller (oder einer API) ausgelöst, wenn der Bediener den aktuell laufenden 
    /// Auftrag über die IROPA-Weboberfläche hart abgebrochen hat.
    /// </summary>
    public sealed class OrderCancelledEvent : FalcomEventBase
    {
       public override string Source => "Database-Poller";
-
-      // Ein Abbruch unterbricht die State Machine sofort und zwingt sie zurück in den Idle-Modus
       public override bool IsStateTrigger => true;
 
       public int AuftragsNummer { get; init; }
@@ -55,13 +70,11 @@ namespace Falcom
    public sealed class OrderCorrectionSubmittedEvent : FalcomEventBase
    {
       public override string Source => "Database-Poller";
-
-      // Löst den Sperrzustand auf und bringt die State Machine zurück in den normalen Ablauf
       public override bool IsStateTrigger => true;
 
       public int AuftragsNummer { get; init; }
-      public string DeklarierteQuelle { get; init; } // z.B. "Box 4"
-      public double KorrekturGewicht { get; init; }  // Die manuell reingekippten kg
+      public string DeklarierteQuelle { get; init; }
+      public double KorrekturGewicht { get; init; }
 
       public OrderCorrectionSubmittedEvent(int auftragsNummer, string deklarierteQuelle, double korrekturGewicht)
       {
