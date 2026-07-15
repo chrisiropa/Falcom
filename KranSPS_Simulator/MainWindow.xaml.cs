@@ -19,6 +19,7 @@ public partial class MainWindow : Window
     private const double DemoKatzeSpeedMmPerSecond = 960.0;
     private const double DemoHubSpeedMmPerSecond = 720.0;
     private const int DemoTelegrammNummer = -1;
+    private const decimal MaxIstGewichtKg = 1000m;
 
     private readonly FalcomUiLogSink uiLogSink = new();
     private readonly FalcomFileSink fileLogSink;
@@ -667,8 +668,9 @@ public partial class MainWindow : Window
                     continue;
                 }
 
-                Log($"007E|SIM-Zuordnung DIREKT: {info}, Wert={FormatOpcValue(sourceValue)}.");
-                WriteKranfahrtBeendetNodeNoLock(mapping.TargetNode, sourceValue);
+                object? targetValue = BegrenzeIstGewichtWennNoetig(mapping.TargetNode, sourceValue);
+                Log($"007E|SIM-Zuordnung DIREKT: {info}, Wert={FormatOpcValue(targetValue)}.");
+                WriteKranfahrtBeendetNodeNoLock(mapping.TargetNode, targetValue);
                 geschrieben++;
                 continue;
             }
@@ -700,6 +702,40 @@ public partial class MainWindow : Window
         }
 
         Log($"0082|SIM-Zuordnungen fuer KranfahrtBeendet angewendet. Geschrieben={geschrieben}, Uebersprungen={uebersprungen}, TriggerErhoehen={triggerErhoehen}.");
+    }
+
+    private object? BegrenzeIstGewichtWennNoetig(
+        EventNodeConfiguration targetNode,
+        object? value)
+    {
+        if (!string.Equals(targetNode.NodeName, "IstGewicht", StringComparison.OrdinalIgnoreCase))
+        {
+            return value;
+        }
+
+        if (value is null)
+        {
+            return value;
+        }
+
+        decimal istGewicht;
+        try
+        {
+            istGewicht = Convert.ToDecimal(value, CultureInfo.InvariantCulture);
+        }
+        catch (Exception ex)
+        {
+            LogWarning($"0084|IstGewicht konnte fuer Begrenzung nicht interpretiert werden. Wert={FormatOpcValue(value)}, Fehler={ex.GetType().Name}: {ex.Message}");
+            return value;
+        }
+
+        if (istGewicht <= MaxIstGewichtKg)
+        {
+            return value;
+        }
+
+        Log($"0085|IstGewicht fuer KranfahrtBeendet wird auf maximal {MaxIstGewichtKg:0.###} kg begrenzt. Ursprungswert={istGewicht:0.###} kg.");
+        return MaxIstGewichtKg;
     }
 
     private void WriteKranfahrtBeendetNodeNoLock(string nodeName, object? value)

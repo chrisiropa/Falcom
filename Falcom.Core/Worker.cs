@@ -364,11 +364,23 @@ namespace Falcom
          }
 
          _logger.LogInformation(
-            "002F|State changed: {previousState} -> {currentState}",
-            _lastLoggedState?.ToString() ?? "INITIAL",
-            nextState);
+            "002F|Zustandswechsel: {previousState} -> {currentState}",
+            FormatProcessState(_lastLoggedState),
+            FormatProcessState(nextState));
 
          _lastLoggedState = nextState;
+      }
+
+      private static string FormatProcessState(ProcessState? state)
+      {
+         if (state is null)
+         {
+            return "INITIAL";
+         }
+
+         return state.Value == ProcessState.Fehler
+            ? "Störung"
+            : state.Value.ToString();
       }
 
       private async Task ScheduleWatchdogEventsAsync(CancellationToken stoppingToken)
