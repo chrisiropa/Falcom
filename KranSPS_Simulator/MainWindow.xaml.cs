@@ -19,7 +19,8 @@ public partial class MainWindow : Window
     private const double DemoKatzeSpeedMmPerSecond = 960.0;
     private const double DemoHubSpeedMmPerSecond = 720.0;
     private const int DemoTelegrammNummer = -1;
-    private const decimal MaxIstGewichtKg = 1000m;
+    private const decimal MaxChargierIstGewichtKg = 1000m;
+    private const decimal EinlagerIstGewichtKg = 800m;
 
     private readonly FalcomUiLogSink uiLogSink = new();
     private readonly FalcomFileSink fileLogSink;
@@ -729,13 +730,36 @@ public partial class MainWindow : Window
             return value;
         }
 
-        if (istGewicht <= MaxIstGewichtKg)
+        if (IstAktiveFahrtEinlagerfahrt())
+        {
+            Log($"0085|IstGewicht fuer Einlagerfahrt wird auf {EinlagerIstGewichtKg:0.###} kg gesetzt. Ursprungswert={istGewicht:0.###} kg.");
+            return EinlagerIstGewichtKg;
+        }
+
+        if (istGewicht <= MaxChargierIstGewichtKg)
         {
             return value;
         }
 
-        Log($"0085|IstGewicht fuer KranfahrtBeendet wird auf maximal {MaxIstGewichtKg:0.###} kg begrenzt. Ursprungswert={istGewicht:0.###} kg.");
-        return MaxIstGewichtKg;
+        Log($"0085|IstGewicht fuer KranfahrtBeendet wird auf maximal {MaxChargierIstGewichtKg:0.###} kg begrenzt. Ursprungswert={istGewicht:0.###} kg.");
+        return MaxChargierIstGewichtKg;
+    }
+
+    private bool IstAktiveFahrtEinlagerfahrt()
+    {
+        if (aktiveSimulationsFahrt is null)
+        {
+            return false;
+        }
+
+        if (!positionenById.TryGetValue(aktiveSimulationsFahrt.QuellePositionID, out SimKranPosition? quelle)
+            || !positionenById.TryGetValue(aktiveSimulationsFahrt.ZielPositionID, out SimKranPosition? ziel))
+        {
+            return false;
+        }
+
+        return string.Equals(quelle.PositionsTyp, "LKW_PLATZ", StringComparison.OrdinalIgnoreCase)
+               && string.Equals(ziel.PositionsTyp, "LAGERBOX", StringComparison.OrdinalIgnoreCase);
     }
 
     private void WriteKranfahrtBeendetNodeNoLock(string nodeName, object? value)
