@@ -1,4 +1,4 @@
-using Microsoft.Data.SqlClient;
+ï»¿using Microsoft.Data.SqlClient;
 using Opc.UaFx;
 using Opc.UaFx.Client;
 using System.Data;
@@ -13,6 +13,7 @@ namespace Falcom
       private const string PosKranXNodeName = "PosKranX";
       private const string PosKatzeYNodeName = "PosKatzeY";
       private const string PosHubZNodeName = "PosHubZ";
+      private const string MagnetAnNodeName = "MagnetAn";
       private const string LebensZaehlerNodeName = "LebensZaehler";
       private const int KranfahrtBeendetEventId = 1;
       private const int KranfahrtAuftragEventId = 2;
@@ -53,6 +54,7 @@ namespace Falcom
       private int? aktuellePosKranX;
       private int? aktuellePosKatzeY;
       private int? aktuellePosHubZ;
+      private int? aktuellerMagnetAn;
       private string? lastKranfahrtAuftragConfigurationIssue;
       private readonly CancellationTokenSource backgroundReconnectCancellation = new();
       private bool disposed;
@@ -938,28 +940,38 @@ namespace Falcom
             return;
          }
 
+         bool magnetAnConfigured =
+            TryGetConfiguredKranPositionNode(MagnetAnNodeName, out string magnetAnNode);
+
          try
          {
             int posKranX;
             int posKatzeY;
             int posHubZ;
+            int? magnetAn = null;
 
             lock (_syncRoot)
             {
                posKranX = ReadKranPositionPayloadInt32(posKranXNode, PosKranXNodeName);
                posKatzeY = ReadKranPositionPayloadInt32(posKatzeYNode, PosKatzeYNodeName);
                posHubZ = ReadKranPositionPayloadInt32(posHubZNode, PosHubZNodeName);
+               if (magnetAnConfigured)
+               {
+                  magnetAn = ReadKranPositionPayloadInt32(magnetAnNode, MagnetAnNodeName);
+               }
             }
 
             aktuellePosKranX = posKranX;
             aktuellePosKatzeY = posKatzeY;
             aktuellePosHubZ = posHubZ;
+            aktuellerMagnetAn = magnetAn;
             kranPositionEventsInCurrentMinute++;
 
             _ = _kranLiveSignalRClient.SendKranPositionAsync(
                aktuellePosKranX,
                aktuellePosKatzeY,
                aktuellePosHubZ,
+               aktuellerMagnetAn,
                CancellationToken.None);
 
             LogKranPositionSummaryIfDue();
@@ -1150,11 +1162,12 @@ namespace Falcom
          }
 
          _logger.LogInformation(
-            "005A|Kranposition aktiv. In den letzten 60 Sekunden wurden {EventCount} Positionswerte empfangen. X={PosKranX}, Y={PosKatzeY}, Z={PosHubZ}.",
+            "005A|Kranposition aktiv. In den letzten 60 Sekunden wurden {EventCount} Positionswerte empfangen. X={PosKranX}, Y={PosKatzeY}, Z={PosHubZ}, MagnetAn={MagnetAn}.",
             kranPositionEventsInCurrentMinute,
             aktuellePosKranX,
             aktuellePosKatzeY,
-            aktuellePosHubZ);
+            aktuellePosHubZ,
+            aktuellerMagnetAn);
 
          kranPositionEventsInCurrentMinute = 0;
          nextKranPositionLogUtc = nowUtc.AddMinutes(1);
@@ -1348,14 +1361,13 @@ if (string.Equals(
       private void QueueKranfahrtBeendetEvent(KranfahrtBeendetPayload payload)
       {
          var kranEvent = new KranfahrtBeendetEvent(
-              auftragsNummer: payload.AuftragId,
-              teilfahrtID: payload.TeilfahrtID,
-              kranQuelle: payload.KranQuelle,
-              kranZiel: payload.KranZiel,
-              status: payload.Status,
-              istGewicht: payload.IstGewicht,
-              änderungsZähler: payload.AenderungsZaehler
-         );
+            payload.AuftragId,
+            payload.TeilfahrtID,
+            payload.KranQuelle,
+            payload.KranZiel,
+            payload.Status,
+            payload.IstGewicht,
+            payload.AenderungsZaehler);
 
          if (!_eventQueue.Writer.TryWrite(kranEvent))
          {

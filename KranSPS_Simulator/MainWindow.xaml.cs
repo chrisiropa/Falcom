@@ -21,6 +21,7 @@ public partial class MainWindow : Window
     private const int DemoTelegrammNummer = -1;
     private const decimal MaxChargierIstGewichtKg = 1000m;
     private const decimal EinlagerIstGewichtKg = 800m;
+    private const string MagnetAnNodeName = "MagnetAn";
 
     private readonly FalcomUiLogSink uiLogSink = new();
     private readonly FalcomFileSink fileLogSink;
@@ -65,6 +66,8 @@ public partial class MainWindow : Window
     private DateTime? letzterSpsLebensZaehlerGesendetAm;
     private int? letzterFalcomLebensZaehler;
     private DateTime? letzterFalcomLebensZaehlerEmpfangenAm;
+    private int gewuenschterMagnetAnWert;
+    private int? letzterGesendeterMagnetAnWert;
     private AktuelleFahrtSimulation? aktiveSimulationsFahrt;
     private AktuelleFahrtSimulation? letzteAbgefahreneFahrt;
     private long naechsteInterneFahrtId = 1;
@@ -476,34 +479,23 @@ public partial class MainWindow : Window
         IReadOnlyDictionary<string, object?> auftragPayload,
         out string begruendung)
     {
-        begruendung = "Event 1 konnte nicht eindeutig mit Event 2 abgeglichen werden; Initialauftrag gilt als offen.";
+        begruendung = "Initialer Event-2-Fahrauftrag gilt als offen.";
 
-        if (!TryGetPayloadInt64(auftragPayload, "AuftragNummer", out long auftragNummer)
-            || !TryGetPayloadInt32(auftragPayload, "AuftragTeilfahrt", out int auftragTeilfahrt))
+        if (!TryGetPayloadInt32(auftragPayload, "TelegrammNummer", out int auftragTelegrammNummer)
+            || auftragTelegrammNummer <= 0)
         {
-            begruendung = "Event 2 enthaelt keine eindeutige AuftragNummer/AuftragTeilfahrt; Initialauftrag gilt als offen.";
-            return false;
+            begruendung = "Event 2 enthaelt keine plausible TelegrammNummer; Initialauftrag wird nicht gefahren.";
+            return true;
         }
 
         Dictionary<string, object?> beendetPayload = ReadEventValuesNoLock(kranfahrtBeendetNodes);
         SetEventValues(kranfahrtBeendetValues, beendetPayload);
 
-        bool hasBeendetAuftrag = TryGetPayloadInt64(beendetPayload, "AuftragsNummer", out long beendetAuftragNummer);
-        bool hasBeendetTeilfahrt = TryGetPayloadInt32(beendetPayload, "AuftragTeilfahrt", out int beendetTeilfahrt);
-
-        if (!hasBeendetAuftrag || !hasBeendetTeilfahrt)
-        {
-            begruendung = $"Event 1 enthaelt keine eindeutige AuftragsNummer/AuftragTeilfahrt. Event2 Auftrag={auftragNummer}, Teilfahrt={auftragTeilfahrt} gilt als offen.";
-            return false;
-        }
-
-        if (beendetAuftragNummer == auftragNummer && beendetTeilfahrt == auftragTeilfahrt)
-        {
-            begruendung = $"Event 1 bestaetigt bereits Auftrag={auftragNummer}, Teilfahrt={auftragTeilfahrt}; Initialwert wird nicht erneut gefahren.";
-            return true;
-        }
-
-        begruendung = $"Event 1 passt nicht zu Event 2. Event2 Auftrag={auftragNummer}, Teilfahrt={auftragTeilfahrt}; Event1 Auftrag={beendetAuftragNummer}, Teilfahrt={beendetTeilfahrt}.";
+        TryGetPayloadInt32(beendetPayload, "AenderungsZaehler", out int beendetAenderungsZaehler);
+        begruendung =
+            $"Event 1 und Event 2 verwenden getrennte Telegrammzaehler. " +
+            $"Event2 TelegrammNummer={auftragTelegrammNummer}; Event1 AenderungsZaehler={beendetAenderungsZaehler}. " +
+            "Der Initialauftrag wird deshalb als offen verarbeitet.";
         return false;
     }
 
@@ -1046,6 +1038,8 @@ public partial class MainWindow : Window
             "LebensZaehler",
             spsLebensZaehler.ToString(CultureInfo.InvariantCulture));
 
+        SetMagnetAn(0, "Grundstellung angefahren");
+
         Log(
             "0060|Grundstellung angefahren: " +
             $"PosKranX={posKranX}, PosKatzeY={posKatzeY}, PosHubZ={posHubZ}. " +
@@ -1222,6 +1216,10 @@ public partial class MainWindow : Window
 
         if (fahrzustand == SimulationsFahrzustand.FahreZurQuelle && aktiveSimulationsFahrt is not null)
         {
+            SetMagnetAn(
+                1,
+                $"Quelle erreicht: {aktiveSimulationsFahrt.QuelleBezeichnung} ({aktiveSimulationsFahrt.QuellePositionID}), Ziel={aktiveSimulationsFahrt.ZielBezeichnung} ({aktiveSimulationsFahrt.ZielPositionID})");
+
             StarteBewegung(
                 aktiveSimulationsFahrt.Ziel,
                 nowUtc,
@@ -1233,6 +1231,10 @@ public partial class MainWindow : Window
 
         if (fahrzustand == SimulationsFahrzustand.FahreZumZiel && aktiveSimulationsFahrt is not null)
         {
+            SetMagnetAn(
+                0,
+                $"Ziel erreicht: {aktiveSimulationsFahrt.ZielBezeichnung} ({aktiveSimulationsFahrt.ZielPositionID}), Quelle={aktiveSimulationsFahrt.QuelleBezeichnung} ({aktiveSimulationsFahrt.QuellePositionID})");
+
             if (demoModeAktiv)
             {
                 Log(
@@ -1363,6 +1365,9 @@ public partial class MainWindow : Window
         WriteKranPositionNodeNoLock(
             "PosHubZ",
             posHubZ);
+        WriteKranPositionNodeNoLock(
+            MagnetAnNodeName,
+            gewuenschterMagnetAnWert);
     }
 
     private void WriteKranPositionNodeNoLock(
@@ -1393,6 +1398,39 @@ public partial class MainWindow : Window
             nodeName,
             value.ToString(CultureInfo.InvariantCulture));
         LogOpcSend($"0061|OPC Senden KranPosition: {node.NodeName}={value}");
+    }
+    private void SetMagnetAn(
+        int value,
+        string grund,
+        bool force = false)
+    {
+        gewuenschterMagnetAnWert = value;
+
+        try
+        {
+            lock (opcSyncRoot)
+            {
+                if (opcClient?.State != OpcClientState.Connected)
+                {
+                    Log($"008E|MagnetAn vorgemerkt: Wert={value}, Grund={grund}. OPC ist aktuell nicht verbunden.");
+                    return;
+                }
+
+                if (!force && letzterGesendeterMagnetAnWert == value)
+                {
+                    return;
+                }
+
+                WriteKranPositionNodeNoLock(MagnetAnNodeName, value);
+                letzterGesendeterMagnetAnWert = value;
+                Log($"008E|MagnetAn gesetzt: Wert={value}, Grund={grund}.");
+            }
+        }
+        catch (Exception ex)
+        {
+            LogWarning($"008E|MagnetAn konnte nicht geschrieben werden. Wert={value}, Grund={grund}, Event=KranPosition, Variable={MagnetAnNodeName}, Fehler={ex.GetType().Name}: {ex.Message}");
+            StartBackgroundReconnectLoop("MagnetAn konnte nicht geschrieben werden");
+        }
     }
 
     private void SetKranPositionValue(
@@ -1430,6 +1468,7 @@ public partial class MainWindow : Window
         if (e.NewState == OpcClientState.Connected)
         {
             SetOpcConnectedFromBackground("OPC UA Client erfolgreich verbunden / wiederverbunden");
+            SetMagnetAn(gewuenschterMagnetAnWert, "OPC verbunden / wiederverbunden", force: true);
             LogWarning("002B|OPC UA Client erfolgreich verbunden / wiederverbunden!");
         }
         else if (e.NewState == OpcClientState.Disconnected)

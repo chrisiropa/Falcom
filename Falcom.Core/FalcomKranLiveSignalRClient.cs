@@ -1,4 +1,4 @@
-namespace Falcom;
+﻿namespace Falcom;
 
 /// <summary>
 /// Historischer Name: Die Klasse ist inzwischen kein SignalR-Client mehr.
@@ -36,6 +36,7 @@ public sealed class FalcomKranLiveSignalRClient
       int? posKranX,
       int? posKatzeY,
       int? posHubZ,
+      int? magnetAn,
       CancellationToken cancellationToken)
    {
       if (cancellationToken.IsCancellationRequested)
@@ -47,6 +48,7 @@ public sealed class FalcomKranLiveSignalRClient
          posKranX,
          posKatzeY,
          posHubZ,
+         magnetAn,
          DateTime.UtcNow,
          "Kran-SPS");
 

@@ -1,4 +1,4 @@
-namespace Falcom;
+﻿namespace Falcom;
 
 public sealed class FalcomKranLiveStatusService
 {
@@ -72,6 +72,7 @@ public sealed class FalcomKranLiveStatusService
       int? posKranX,
       int? posKatzeY,
       int? posHubZ,
+      int? magnetAn,
       DateTime timestampUtc,
       string source)
    {
@@ -79,6 +80,7 @@ public sealed class FalcomKranLiveStatusService
          posKranX,
          posKatzeY,
          posHubZ,
+         magnetAn,
          timestampUtc,
          source);
 
@@ -134,6 +136,7 @@ public sealed record KranPositionSnapshot(
    int? PosKranX,
    int? PosKatzeY,
    int? PosHubZ,
+   int? MagnetAn,
    DateTime TimestampUtc,
    string Source);
 
