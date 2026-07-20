@@ -1,13 +1,10 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+﻿using Microsoft.Data.SqlClient;
+using System.Data;
 
 namespace Falcom
 {
-	public class Parameter
-	{
+   public class Parameter
+   {
       private readonly ConfigManager _configManager;
       private readonly ILogger<Parameter> _logger;
 
@@ -18,29 +15,35 @@ namespace Falcom
          _configManager = configManager;
          _logger = logger;
 
-		   try
+         try
          {
-            SimpleSqlQuery query = new SimpleSqlQuery(_configManager.ConnectionString, "select * from FALCOM_PARAMETER where Name like 'OpcServer'");
-            if (query.QueryResult != null)
-            {
-               foreach (Dictionary<string, object> row in query.QueryResult)
-               {
-                  try
-                  {
-                     OpcServer = (string)row["Wert"];
-                     break;
-                  }
-                  catch(Exception e)
-                  {
-                     _logger.LogError(e, "000F|Tabelle FALCOM_PARAMETER konnte für OpcServer nicht gelesen werden.");
-                  }
-               }
-            }
+            OpcServer = LoadParameterValue("OpcServer");
          }
          catch (Exception e)
          {
-            _logger.LogError(e, "0010|Tabelle FALCOM_PARAMETER konnte nicht geladen werden.");
+            _logger.LogError(e, "0010|Datenbankparameter OpcServer konnte nicht geladen werden.");
          }
-	   }
-	}
+      }
+
+      private string LoadParameterValue(string name)
+      {
+         using var connection = new SqlConnection(_configManager.ConnectionString);
+         using var command = new SqlCommand("dbo.FALCOM_GetParameterValue", connection)
+         {
+            CommandType = CommandType.StoredProcedure,
+            CommandTimeout = 10
+         };
+
+         command.Parameters.Add("@Name", SqlDbType.NVarChar, 256).Value = name;
+
+         connection.Open();
+         using SqlDataReader reader = command.ExecuteReader();
+         if (!reader.Read())
+         {
+            return string.Empty;
+         }
+
+         return Convert.ToString(reader["Wert"])?.Trim() ?? string.Empty;
+      }
+   }
 }

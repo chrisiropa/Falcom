@@ -1,21 +1,65 @@
-using System.Text;
+﻿using System.Text;
 
 namespace Falcom;
 
-public sealed class FalcomFileSink
+public sealed class FalcomFileSink : IDisposable
 {
    private const long MaxLogfileBytes = 20L * 1024L * 1024L;
+   private const int KeepDays = 120;
    private readonly object _sync = new();
    private readonly string _logfilePath;
+   private StreamWriter? _writer;
    private bool _firstError = true;
+   private bool _disposed;
 
    public FalcomFileSink(string logfilePath)
    {
       _logfilePath = NormalizeLogfilePath(logfilePath);
       EnsureDirectoryAndFile();
       StartNewLogfile();
+      OpenWriter();
    }
 
+   public void Write(string line)
+   {
+      lock (_sync)
+      {
+         if (_disposed)
+         {
+            return;
+         }
+
+         try
+         {
+            RotateIfNeeded(line);
+            _writer ??= CreateWriter();
+            _writer.WriteLine(line);
+            DeleteOldLogFiles();
+         }
+         catch (Exception exception)
+         {
+            if (_firstError)
+            {
+               _firstError = false;
+               Console.Error.WriteLine($"FalcomFileSink write failed: {exception.Message}");
+            }
+         }
+      }
+   }
+
+   public void Dispose()
+   {
+      lock (_sync)
+      {
+         if (_disposed)
+         {
+            return;
+         }
+
+         _disposed = true;
+         CloseWriter();
+      }
+   }
 
    private static string NormalizeLogfilePath(string logfilePath)
    {
@@ -36,39 +80,6 @@ public sealed class FalcomFileSink
       }
 
       return trimmedPath;
-   }
-   public void Write(string line)
-   {
-      lock (_sync)
-      {
-         var written = false;
-         var tryCounter = 0;
-
-         while (!written && tryCounter < 10)
-         {
-            try
-            {
-               RotateIfNeeded(line);
-
-               using var streamWriter = new StreamWriter(_logfilePath, true, Encoding.UTF8);
-               streamWriter.WriteLine(line);
-
-               written = true;
-               DeleteOldLogFiles();
-            }
-            catch (Exception exception)
-            {
-               if (_firstError)
-               {
-                  _firstError = false;
-                  Console.Error.WriteLine($"FalcomFileSink write failed: {exception.Message}");
-               }
-
-               tryCounter++;
-               Thread.Sleep(0);
-            }
-         }
-      }
    }
 
    private void EnsureDirectoryAndFile()
@@ -142,8 +153,11 @@ public sealed class FalcomFileSink
 
    private void RotateCurrentFile()
    {
+      CloseWriter();
+
       if (!File.Exists(_logfilePath))
       {
+         OpenWriter();
          return;
       }
 
@@ -155,12 +169,39 @@ public sealed class FalcomFileSink
          $"{filenameWithoutExtension} {DateTime.Now:yyyyMMdd-HHmmss-fff}{extension}");
 
       File.Move(_logfilePath, historyFile, true);
+      OpenWriter();
+   }
 
-      using var fileStream = new FileStream(
+   private void OpenWriter()
+   {
+      _writer = CreateWriter();
+   }
+
+   private StreamWriter CreateWriter()
+   {
+      var stream = new FileStream(
          _logfilePath,
-         FileMode.Create,
+         FileMode.Append,
          FileAccess.Write,
          FileShare.ReadWrite);
+
+      return new StreamWriter(stream, Encoding.UTF8)
+      {
+         AutoFlush = true
+      };
+   }
+
+   private void CloseWriter()
+   {
+      try
+      {
+         _writer?.Flush();
+         _writer?.Dispose();
+      }
+      finally
+      {
+         _writer = null;
+      }
    }
 
    private void DeleteOldLogFiles()
@@ -172,26 +213,18 @@ public sealed class FalcomFileSink
       }
 
       var filePrefix = Path.GetFileNameWithoutExtension(_logfilePath);
-      var children = new DirectoryInfo(directoryPath)
+      var oldest = new DirectoryInfo(directoryPath)
          .GetFiles()
          .Where(file => file.Name.Contains(filePrefix, StringComparison.OrdinalIgnoreCase))
-         .ToList();
+         .MinBy(file => file.LastWriteTimeUtc);
 
-      if (children.Count == 0)
-      {
-         return;
-      }
-
-      var oldest = children.MinBy(file => file.LastWriteTimeUtc);
       if (oldest is null)
       {
          return;
       }
 
-      var timeSpan = DateTime.UtcNow - oldest.LastWriteTimeUtc;
-      const int keepDays = 120;
-
-      if (timeSpan.TotalDays <= keepDays)
+      var age = DateTime.UtcNow - oldest.LastWriteTimeUtc;
+      if (age.TotalDays <= KeepDays)
       {
          return;
       }

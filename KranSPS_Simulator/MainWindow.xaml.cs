@@ -1,4 +1,4 @@
-using Falcom;
+﻿using Falcom;
 using Microsoft.Extensions.Logging;
 using Opc.UaFx;
 using Opc.UaFx.Client;
@@ -115,41 +115,41 @@ public partial class MainWindow : Window
         ConfigureTraegerLicense();
         CreateClientInstance();
 
-        Log($"Logdatei aktiv: {configuration.LogfilePath}");
-        Log($"OPC Endpoint aus FALCOM_PARAMETER.OpcServer: {opcEndpoint}");
+        Log($"010B|Logdatei aktiv: {configuration.LogfilePath}");
+        Log($"010C|OPC Endpoint aus FALCOM_PARAMETER.OpcServer: {opcEndpoint}");
         if (configuration.SimulatorSubstitutionen.Count == 0)
         {
-            Log("SimulatorSubstitution aus FALCOM_PARAMETER: keine Substitution aktiv.");
+            Log("010D|SimulatorSubstitution aus FALCOM_PARAMETER: keine Substitution aktiv.");
         }
         else
         {
-            Log($"SimulatorSubstitution aus FALCOM_PARAMETER aktiv: {string.Join("; ", configuration.SimulatorSubstitutionen.Select(substitution => $"{substitution.Suchtext} -> {substitution.Ersatztext}"))}");
+            Log($"010E|SimulatorSubstitution aus FALCOM_PARAMETER aktiv: {string.Join("; ", configuration.SimulatorSubstitutionen.Select(substitution => $"{substitution.Suchtext} -> {substitution.Ersatztext}"))}");
         }
 
         if (string.IsNullOrWhiteSpace(kranSpsLebensZaehlerNodeId))
         {
-            LogError("LebensZaehlerKran.LebensZaehler ist in der Datenbank nicht gültig konfiguriert. SPS->FALCOM Lebenszähler wird nicht geschrieben.");
+            LogError("010A|LebensZaehlerKran.LebensZaehler ist in der Datenbank nicht gueltig konfiguriert. SPS->FALCOM Lebenszaehler wird nicht geschrieben.");
         }
         else
         {
-            Log($"LebensZaehlerKran.LebensZaehler Node: {kranSpsLebensZaehlerNodeId}");
+            Log($"010F|LebensZaehlerKran.LebensZaehler Node: {kranSpsLebensZaehlerNodeId}");
         }
 
         if (string.IsNullOrWhiteSpace(falcomLebensZaehlerNodeId))
         {
-            LogError("LebensZaehlerFalcom.LebensZaehler ist in der Datenbank nicht g�ltig konfiguriert. FALCOM->SPS Lebensz�hler wird nicht empfangen.");
+            LogError("0110|LebensZaehlerFalcom.LebensZaehler ist in der Datenbank nicht gueltig konfiguriert. FALCOM->SPS Lebenszaehler wird nicht empfangen.");
         }
         else
         {
-            Log($"LebensZaehlerFalcom.LebensZaehler Node: {falcomLebensZaehlerNodeId}");
+            Log($"0111|LebensZaehlerFalcom.LebensZaehler Node: {falcomLebensZaehlerNodeId}");
         }
 
-        Log($"Event 1 KranfahrtBeendet Variablen: {string.Join(", ", kranfahrtBeendetNodes.Select(node => node.NodeName))}");
-        Log($"Event 1/2 Sim-Zuordnungen geladen: {kranfahrtBeendetZuordnungen.Count}. {string.Join("; ", kranfahrtBeendetZuordnungen.Select(mapping => mapping.Info ?? mapping.TargetNode.NodeName))}");
-        Log($"Event 2 KranfahrtAuftrag Variablen: {string.Join(", ", kranfahrtAuftragNodes.Select(node => node.NodeName))}");
-        Log($"Event 5 KranPosition Variablen: {string.Join(", ", kranPositionNodes.Select(node => node.NodeName))}");
+        Log($"0112|Event 1 KranfahrtBeendet Variablen: {string.Join(", ", kranfahrtBeendetNodes.Select(node => node.NodeName))}");
+        Log($"0113|Event 1/2 Sim-Zuordnungen geladen: {kranfahrtBeendetZuordnungen.Count}. {string.Join("; ", kranfahrtBeendetZuordnungen.Select(mapping => mapping.Info ?? mapping.TargetNode.NodeName))}");
+        Log($"0114|Event 2 KranfahrtAuftrag Variablen: {string.Join(", ", kranfahrtAuftragNodes.Select(node => node.NodeName))}");
+        Log($"0115|Event 5 KranPosition Variablen: {string.Join(", ", kranPositionNodes.Select(node => node.NodeName))}");
         FahreGrundstellungAn();
-        Log("Kran-SPS-Simulator bereit.");
+        Log("0116|Kran-SPS-Simulator bereit.");
         RefreshLogs();
         RefreshStatusView();
         RefreshEventView();
@@ -183,11 +183,11 @@ public partial class MainWindow : Window
 
         lock (opcSyncRoot)
         {
-            Log($"001A|Verbindung zu {opcEndpoint} wird aufgebaut.");
+            Log($"013C|Verbindung zu {opcEndpoint} wird aufgebaut.");
             ResetSubscription();
             opcClient?.Connect();
             ConfigureOpcSubscriptions();
-            Log("001B|OPC-Verbindung und Kanalregistrierung sind bereit.");
+            Log("013D|OPC-Verbindung und Kanalregistrierung sind bereit.");
         }
     }
 
@@ -206,7 +206,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        LogWarning($"005D|OPC-Hintergrund-Reconnect wird gestartet. Grund={reason}.");
+        LogWarning($"013E|OPC-Hintergrund-Reconnect wird gestartet. Grund={reason}.");
 
         _ = Task.Run(
             async () =>
@@ -226,7 +226,7 @@ public partial class MainWindow : Window
                                 {
                                     SetOpcConnectedFromBackground(
                                         $"Verbunden mit {opcEndpoint}");
-                                    Log($"005E|OPC-Hintergrund-Reconnect erfolgreich. Versuch={attempt}.");
+                                    Log($"013F|OPC-Hintergrund-Reconnect erfolgreich. Versuch={attempt}.");
                                     return;
                                 }
 
@@ -247,24 +247,24 @@ public partial class MainWindow : Window
                                 }
 
                                 CreateClientInstance();
-                                Log($"001A|Verbindung zu {opcEndpoint} wird aufgebaut.");
+                                Log($"0140|Verbindung zu {opcEndpoint} wird aufgebaut.");
                                 opcClient!.Connect();
                                 ConfigureOpcSubscriptions();
-                                Log("001B|OPC-Verbindung und Kanalregistrierung sind bereit.");
+                                Log("0141|OPC-Verbindung und Kanalregistrierung sind bereit.");
                                 SetOpcConnectedFromBackground(
                                     $"Verbunden mit {opcEndpoint}");
-                                Log($"005E|OPC-Hintergrund-Reconnect erfolgreich. Versuch={attempt}.");
+                                Log($"0142|OPC-Hintergrund-Reconnect erfolgreich. Versuch={attempt}.");
                                 return;
                             }
                         }
                         catch (Exception ex)
                         {
-                            SetOpcReconnectFromBackground("Reconnect läuft");
+                            SetOpcReconnectFromBackground("Reconnect laeuft");
 
                             if (DateTime.UtcNow >= nextReconnectLogUtc)
                             {
                                 LogWarning(
-                                    $"005F|OPC-Hintergrund-Reconnect Versuch={attempt} noch nicht erfolgreich. " +
+                                    $"0143|OPC-Hintergrund-Reconnect Versuch={attempt} noch nicht erfolgreich. " +
                                     $"Naechster Versuch in {ConnectRetryDelay.TotalSeconds:0} Sekunden. " +
                                     $"Fehler={ex.GetType().Name}: {ex.Message}");
                                 nextReconnectLogUtc = DateTime.UtcNow.Add(ReconnectLogThrottle);
@@ -334,7 +334,7 @@ public partial class MainWindow : Window
             falcomLifeItem.DataChangeReceived += HandleOpcDataChange;
             subscription.AddMonitoredItem(falcomLifeItem);
             monitoredItems.Add(falcomLifeItem);
-            Log($"0062|OPC Empfangskanal registriert. Event=LebensZaehlerFalcom, Node={falcomLebensZaehlerNodeId}");
+            Log($"0144|OPC Empfangskanal registriert. Event=LebensZaehlerFalcom, Node={falcomLebensZaehlerNodeId}");
         }
 
         if (TryGetKranfahrtAuftragNode("TelegrammNummer", out EventNodeConfiguration telegrammNode))
@@ -350,7 +350,7 @@ public partial class MainWindow : Window
         }
         else
         {
-            LogWarning("006D|KranfahrtAuftrag.TelegrammNummer ist nicht konfiguriert. Event 2 kann nicht empfangen werden.");
+            LogWarning("0145|KranfahrtAuftrag.TelegrammNummer ist nicht konfiguriert. Event 2 kann nicht empfangen werden.");
         }
 
         subscription.ApplyChanges();
@@ -370,7 +370,7 @@ public partial class MainWindow : Window
             if (!value.Status.IsGood || value.Value is null)
             {
                 LogWarning(
-                    $"006D|Initialer KranfahrtAuftrag-Telegrammstand konnte nicht gelesen werden. " +
+                    $"0146|Initialer KranfahrtAuftrag-Telegrammstand konnte nicht gelesen werden. " +
                     $"Node={telegrammNode.OpcNode}, Status={value.Status.Code}, Beschreibung={value.Status.Description}. " +
                     "Simulator wartet trotzdem auf die naechste Aenderung.");
                 return;
@@ -382,17 +382,17 @@ public partial class MainWindow : Window
             if (IstInitialerKranfahrtAuftragBereitsBeendetNoLock(payload, out string begruendung))
             {
                 letzteVerarbeiteteAuftragTelegrammNummer = telegrammNummer;
-                Log($"006D|Warten auf naechste Fahrt. Letztes KranfahrtAuftrag-Telegramm war {telegrammNummer}. {begruendung}");
+                Log($"0147|Warten auf naechste Fahrt. Letztes KranfahrtAuftrag-Telegramm war {telegrammNummer}. {begruendung}");
                 return;
             }
 
-            Log($"006D|Initialer KranfahrtAuftrag wird als offener Auftrag verarbeitet. TelegrammNummer={telegrammNummer}. {begruendung}");
+            Log($"0117|Initialer KranfahrtAuftrag wird als offener Auftrag verarbeitet. TelegrammNummer={telegrammNummer}. {begruendung}");
             SchreibeKranfahrtBeendetZuordnungNoLock(payload, triggerErhoehen: false);
             VerarbeiteKranfahrtAuftragPayload(telegrammNummer, payload, "Initialer KranfahrtAuftrag");
         }
         catch (Exception ex)
         {
-            LogWarning($"006D|Initialer KranfahrtAuftrag-Telegrammstand konnte nicht gelesen werden. Fehler={ex.GetType().Name}: {ex.Message}");
+            LogWarning($"0118|Initialer KranfahrtAuftrag-Telegrammstand konnte nicht gelesen werden. Fehler={ex.GetType().Name}: {ex.Message}");
         }
     }
 
@@ -403,7 +403,7 @@ public partial class MainWindow : Window
             string changedNodeId = e.MonitoredItem.NodeId.ToString();
             object? rawValue = e.Item.Value.Value;
 
-            LogOpcReceive($"0050|OPC Empfang: Node={changedNodeId}, Wert={rawValue}");
+            LogOpcReceive($"0119|OPC Empfang: Node={changedNodeId}, Wert={rawValue}");
 
             if (string.Equals(changedNodeId, falcomLebensZaehlerNodeId, StringComparison.Ordinal))
             {
@@ -421,7 +421,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            LogError($"0063|OPC Callback konnte nicht verarbeitet werden. Fehler={ex.GetType().Name}: {ex.Message}");
+            LogError($"011A|OPC Callback konnte nicht verarbeitet werden. Fehler={ex.GetType().Name}: {ex.Message}");
         }
     }
 
@@ -442,7 +442,7 @@ public partial class MainWindow : Window
         if (letzteVerarbeiteteAuftragTelegrammNummer is null)
         {
             letzteVerarbeiteteAuftragTelegrammNummer = telegrammNummer;
-            Log($"006D|Initialer KranfahrtAuftrag-Telegrammstand aus Callback uebernommen. Wert={telegrammNummer}. Simulator wartet auf die naechste Aenderung.");
+            Log($"011B|Initialer KranfahrtAuftrag-Telegrammstand aus Callback uebernommen. Wert={telegrammNummer}. Simulator wartet auf die naechste Aenderung.");
             return;
         }
 
@@ -477,7 +477,7 @@ public partial class MainWindow : Window
         }
 
         SetEventValues(kranfahrtAuftragValues, payload);
-        Log($"006E|{quelle}: Event-1-Zuordnung ohne Trigger angewendet. TelegrammNummer={telegrammNummer}.");
+        Log($"011C|{quelle}: Event-1-Zuordnung ohne Trigger angewendet. TelegrammNummer={telegrammNummer}.");
 
         AktuelleFahrtSimulation? fahrt = ErstelleFahrtAusKranfahrtAuftragPayload(telegrammNummer, payload);
         if (fahrt is null)
@@ -519,19 +519,19 @@ public partial class MainWindow : Window
         if (!TryGetPayloadInt64(payload, "Quelle", out long quellePositionId)
             || !TryGetPayloadInt64(payload, "Ziel", out long zielPositionId))
         {
-            LogWarning($"006E|KranfahrtAuftrag kann nicht gefahren werden. Quelle oder Ziel fehlt. TelegrammNummer={telegrammNummer}.");
+            LogWarning($"011D|KranfahrtAuftrag kann nicht gefahren werden. Quelle oder Ziel fehlt. TelegrammNummer={telegrammNummer}.");
             return null;
         }
 
         if (!positionenById.TryGetValue(quellePositionId, out SimKranPosition? quelle))
         {
-            LogWarning($"006E|KranfahrtAuftrag kann nicht gefahren werden. QuellePositionID={quellePositionId} ist in FALCOM_KRAN_POSITION nicht konfiguriert oder hat keine Abwurfposition. TelegrammNummer={telegrammNummer}.");
+            LogWarning($"011E|KranfahrtAuftrag kann nicht gefahren werden. QuellePositionID={quellePositionId} ist in FALCOM_KRAN_POSITION nicht konfiguriert oder hat keine Abwurfposition. TelegrammNummer={telegrammNummer}.");
             return null;
         }
 
         if (!positionenById.TryGetValue(zielPositionId, out SimKranPosition? ziel))
         {
-            LogWarning($"006E|KranfahrtAuftrag kann nicht gefahren werden. ZielPositionID={zielPositionId} ist in FALCOM_KRAN_POSITION nicht konfiguriert oder hat keine Abwurfposition. TelegrammNummer={telegrammNummer}.");
+            LogWarning($"011F|KranfahrtAuftrag kann nicht gefahren werden. ZielPositionID={zielPositionId} ist in FALCOM_KRAN_POSITION nicht konfiguriert oder hat keine Abwurfposition. TelegrammNummer={telegrammNummer}.");
             return null;
         }
 
@@ -555,7 +555,7 @@ public partial class MainWindow : Window
             ziel.Position);
 
         Log(
-            "006E|KranfahrtAuftrag in Simulatorfahrt umgesetzt: " +
+            "0120|KranfahrtAuftrag in Simulatorfahrt umgesetzt: " +
             $"TelegrammNummer={telegrammNummer}, Auftrag={auftragNummer}, Teilfahrt={auftragTeilfahrt}, " +
             $"Quelle={quelle.Bezeichnung} ({quellePositionId}), Ziel={ziel.Bezeichnung} ({zielPositionId}), SollMasse={sollMasse:0.###}.");
 
@@ -652,19 +652,19 @@ public partial class MainWindow : Window
 
         if (!retryValue.Status.IsGood)
         {
-            LogError($"006F|OPC Payloadwert-Reload nach 500 ms fehlgeschlagen. Variable={node.NodeName}, Node={node.OpcNode}, {DescribeOpcValue(retryValue)}.");
+            LogError($"0121|OPC Payloadwert-Reload nach 500 ms fehlgeschlagen. Variable={node.NodeName}, Node={node.OpcNode}, {DescribeOpcValue(retryValue)}.");
             throw new InvalidOperationException(
                 $"OPC-Lesen nach NULL-Retry fehlgeschlagen. Variable={node.NodeName}, Node={node.OpcNode}, {DescribeOpcValue(retryValue)}");
         }
 
         if (retryValue.Value is null)
         {
-            LogError($"006F|OPC Payloadwert ist auch nach 500 ms NULL. Variable={node.NodeName}, Node={node.OpcNode}, {DescribeOpcValue(retryValue)}. Event wird nicht weiterverarbeitet.");
+            LogError($"0122|OPC Payloadwert ist auch nach 500 ms NULL. Variable={node.NodeName}, Node={node.OpcNode}, {DescribeOpcValue(retryValue)}. Event wird nicht weiterverarbeitet.");
             throw new InvalidOperationException(
                 $"OPC Payloadwert ist auch nach 500 ms NULL. Variable={node.NodeName}, Node={node.OpcNode}");
         }
 
-        Log($"006F|OPC Payloadwert nach NULL-Retry erfolgreich gelesen. Variable={node.NodeName}, Node={node.OpcNode}, {DescribeOpcValue(retryValue)}.");
+        Log($"0123|OPC Payloadwert nach NULL-Retry erfolgreich gelesen. Variable={node.NodeName}, Node={node.OpcNode}, {DescribeOpcValue(retryValue)}.");
         return retryValue;
     }
 
@@ -685,7 +685,7 @@ public partial class MainWindow : Window
             OpcValue value = ReadRequiredOpcPayloadWithNullRetryNoLock(node);
 
             values[node.NodeName] = value.Value;
-            LogOpcReceive($"006F|OPC Event lesen: {node.NodeName}={value.Value}");
+            LogOpcReceive($"0124|OPC Event lesen: {node.NodeName}={value.Value}");
         }
 
         return values;
@@ -722,7 +722,7 @@ public partial class MainWindow : Window
 
                 if (sourceValue is null)
                 {
-                    LogError($"007D|SIM-Zuordnung abgebrochen, weil Quellwert NULL ist. ID={mapping.ID}, Info={info}, SourceNode={mapping.SourceNodeName ?? "-"}.");
+                    LogError($"0125|SIM-Zuordnung abgebrochen, weil Quellwert NULL ist. ID={mapping.ID}, Info={info}, SourceNode={mapping.SourceNodeName ?? "-"}.");
                     throw new InvalidOperationException(
                         $"SIM-Zuordnung abgebrochen, weil Quellwert NULL ist. ID={mapping.ID}, Info={info}, SourceNode={mapping.SourceNodeName ?? "-"}");
                 }
@@ -785,13 +785,13 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            LogWarning($"0084|IstGewicht konnte fuer Begrenzung nicht interpretiert werden. Wert={FormatOpcValue(value)}, Fehler={ex.GetType().Name}: {ex.Message}");
+            LogWarning($"0126|IstGewicht konnte fuer Begrenzung nicht interpretiert werden. Wert={FormatOpcValue(value)}, Fehler={ex.GetType().Name}: {ex.Message}");
             return value;
         }
 
         if (IstAktiveFahrtEinlagerfahrt())
         {
-            Log($"0085|IstGewicht fuer Einlagerfahrt wird auf {EinlagerIstGewichtKg:0.###} kg gesetzt. Ursprungswert={istGewicht:0.###} kg.");
+            Log($"0127|IstGewicht fuer Einlagerfahrt wird auf {EinlagerIstGewichtKg:0.###} kg gesetzt. Ursprungswert={istGewicht:0.###} kg.");
             return EinlagerIstGewichtKg;
         }
 
@@ -800,7 +800,7 @@ public partial class MainWindow : Window
             return value;
         }
 
-        Log($"0085|IstGewicht fuer KranfahrtBeendet wird auf maximal {MaxChargierIstGewichtKg:0.###} kg begrenzt. Ursprungswert={istGewicht:0.###} kg.");
+        Log($"0128|IstGewicht fuer KranfahrtBeendet wird auf maximal {MaxChargierIstGewichtKg:0.###} kg begrenzt. Ursprungswert={istGewicht:0.###} kg.");
         return MaxChargierIstGewichtKg;
     }
 
@@ -880,7 +880,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            LogWarning($"0072|KranfahrtBeendet Trigger konnte vor dem Erhoehen nicht gelesen werden. Starte bei 0. Node={triggerNode.OpcNode}, Fehler={ex.GetType().Name}: {ex.Message}");
+            LogWarning($"0129|KranfahrtBeendet Trigger konnte vor dem Erhoehen nicht gelesen werden. Starte bei 0. Node={triggerNode.OpcNode}, Fehler={ex.GetType().Name}: {ex.Message}");
         }
 
         int nextTelegramm = currentTelegramm == int.MaxValue ? 1 : currentTelegramm + 1;
@@ -896,7 +896,7 @@ public partial class MainWindow : Window
         SetEventValue(kranfahrtBeendetValues, triggerNode.NodeName, converted);
         LogOpcSend($"0073|OPC Senden KranfahrtBeendet Trigger: {triggerNode.NodeName}={FormatOpcValue(converted)}");
         LogOpcSend($"0074|OPC Schreiben vom OPC-Server angenommen. Event=KranfahrtBeendet, Trigger={triggerNode.NodeName}, Node={triggerNode.OpcNode}, Wert={FormatOpcValue(converted)}, Status={writeStatus.Code}");
-        Log($"0074|KranfahrtBeendet Trigger gesendet. {info}, NeuerWert={FormatOpcValue(converted)}.");
+        Log($"012A|KranfahrtBeendet Trigger gesendet. {info}, NeuerWert={FormatOpcValue(converted)}.");
     }
 
     private void SendeKranfahrtBeendetTelegramm()
@@ -917,7 +917,7 @@ public partial class MainWindow : Window
 
             Log($"0079|KranfahrtBeendet Telegrammaufbau gestartet. Auftragspayload-Werte={auftragPayload.Count}, Zuordnungen={kranfahrtBeendetZuordnungen.Count}.");
             SchreibeKranfahrtBeendetZuordnungNoLock(auftragPayload, triggerErhoehen: true);
-            Log("0074|KranfahrtBeendet gesendet. Alle aktiven SIM-Zuordnungen inklusive Trigger wurden verarbeitet.");
+            Log("012B|KranfahrtBeendet gesendet. Alle aktiven SIM-Zuordnungen inklusive Trigger wurden verarbeitet.");
         }
     }
     private bool TryGetKranfahrtAuftragNode(string nodeName, out EventNodeConfiguration node)
@@ -1058,7 +1058,7 @@ public partial class MainWindow : Window
                                         $"OPC-Schreiben fehlgeschlagen. Node={kranSpsLebensZaehlerNodeId}, Status={status.Code}, Beschreibung={status.Description}");
                                 }
 
-                                LogOpcSend($"0052|OPC Schreiben vom OPC-Server angenommen. Node={kranSpsLebensZaehlerNodeId}, Wert={value}, Status={status.Code}");
+                                LogOpcSend($"012C|OPC Schreiben vom OPC-Server angenommen. Node={kranSpsLebensZaehlerNodeId}, Wert={value}, Status={status.Code}");
                             }
 
                             letzterSpsLebensZaehler = value;
@@ -1067,11 +1067,11 @@ public partial class MainWindow : Window
                                 "LebensZaehler",
                                 value.ToString(CultureInfo.InvariantCulture));
                             SetSpsLebensZaehlerFromBackground(value, letzterSpsLebensZaehlerGesendetAm.Value);
-                            LogOpcSend($"0051|OPC Senden: Node={kranSpsLebensZaehlerNodeId}, Wert={value}");
+                            LogOpcSend($"012D|OPC Senden: Node={kranSpsLebensZaehlerNodeId}, Wert={value}");
                         }
                         catch (Exception ex)
                         {
-                            SetOpcReconnectFromBackground("Reconnect läuft");
+                            SetOpcReconnectFromBackground("Reconnect laeuft");
                             StartBackgroundReconnectLoop("SPS-LebensZaehler konnte nicht geschrieben werden");
 
                             if (DateTime.UtcNow >= nextLebensZaehlerErrorLogUtc)
@@ -1112,7 +1112,7 @@ public partial class MainWindow : Window
         SetMagnetAn(0, "Grundstellung angefahren");
 
         Log(
-            "0060|Grundstellung angefahren: " +
+            "012E|Grundstellung angefahren: " +
             $"PosKranX={posKranX}, PosKatzeY={posKatzeY}, PosHubZ={posHubZ}. " +
             "Position liegt ueber Lagerbox 8.");
     }
@@ -1142,7 +1142,7 @@ public partial class MainWindow : Window
             grundstellung,
             DateTime.UtcNow,
             SimulationsFahrzustand.FahreZurGrundstellung,
-            "008D|Demo-Modus beendet. Grundstellung ueber Lagerbox 8 wird angefahren.");
+            "012F|Demo-Modus beendet. Grundstellung ueber Lagerbox 8 wird angefahren.");
     }
 
     private void StarteNaechsteDemoFahrt(DateTime nowUtc)
@@ -1150,7 +1150,7 @@ public partial class MainWindow : Window
         AktuelleFahrtSimulation? fahrt = ErzeugeDemoFahrt();
         if (fahrt is null)
         {
-            LogWarning("008C|Demo-Modus kann keine plausible Fahrt bilden. Es fehlen Lagerboxen, LKW-Plaetze oder Chargierwagen in FALCOM_KRAN_POSITION.");
+            LogWarning("0130|Demo-Modus kann keine plausible Fahrt bilden. Es fehlen Lagerboxen, LKW-Plaetze oder Chargierwagen in FALCOM_KRAN_POSITION.");
             demoModeAktiv = false;
             Dispatcher.BeginInvoke(() =>
             {
@@ -1234,7 +1234,7 @@ public partial class MainWindow : Window
                     grundstellung,
                     nowUtc,
                     SimulationsFahrzustand.FahreZurGrundstellung,
-                    "0066|Nach 10 Sekunden ohne neue Fahrt wird die Grundstellung ueber Lagerbox 8 angefahren.");
+                    "0131|Nach 10 Sekunden ohne neue Fahrt wird die Grundstellung ueber Lagerbox 8 angefahren.");
             }
 
             return;
@@ -1309,7 +1309,7 @@ public partial class MainWindow : Window
             if (demoModeAktiv)
             {
                 Log(
-                    "008C|Demo-Ziel erreicht. Es wurde kein KranfahrtBeendet-Event gesendet. " +
+                    "0132|Demo-Ziel erreicht. Es wurde kein KranfahrtBeendet-Event gesendet. " +
                     $"Quelle={aktiveSimulationsFahrt.QuelleBezeichnung} ({aktiveSimulationsFahrt.QuellePositionID}), " +
                     $"Ziel={aktiveSimulationsFahrt.ZielBezeichnung} ({aktiveSimulationsFahrt.ZielPositionID}).");
                 aktiveSimulationsFahrt = null;
@@ -1341,7 +1341,7 @@ public partial class MainWindow : Window
             fahrzustand = SimulationsFahrzustand.WarteAufNeueFahrt;
             warteAufNeueFahrtBisUtc = nowUtc.AddSeconds(10);
             Log(
-                "006A|Warten auf naechste Fahrt. " +
+                "0133|Warten auf naechste Fahrt. " +
                 $"Letzte Fahrt war TelegrammNummer={letzteAbgefahreneFahrt.TelegrammNummer}, " +
                 $"AuftragID={letzteAbgefahreneFahrt.AuftragID}, Teilfahrt={letzteAbgefahreneFahrt.AuftragTeilfahrt}. " +
                 "Wenn 10 Sekunden nichts Neues kommt, wird Lagerbox 8 als Grundstellung angefahren.");
@@ -1468,8 +1468,8 @@ public partial class MainWindow : Window
         SetKranPositionValue(
             nodeName,
             value.ToString(CultureInfo.InvariantCulture));
-        LogOpcSend($"0061|OPC Senden KranPosition: {node.NodeName}={value}");
-        LogOpcSend($"0062|OPC Schreiben vom OPC-Server angenommen. Event=KranPosition, Variable={node.NodeName}, Node={node.OpcNode}, Wert={value}, Status={status.Code}");
+        LogOpcSend($"0134|OPC Senden KranPosition: {node.NodeName}={value}");
+        LogOpcSend($"0135|OPC Schreiben vom OPC-Server angenommen. Event=KranPosition, Variable={node.NodeName}, Node={node.OpcNode}, Wert={value}, Status={status.Code}");
     }
     private void SetMagnetAn(
         int value,
@@ -1495,12 +1495,12 @@ public partial class MainWindow : Window
 
                 WriteKranPositionNodeNoLock(MagnetAnNodeName, value);
                 letzterGesendeterMagnetAnWert = value;
-                Log($"008E|MagnetAn gesetzt: Wert={value}, Grund={grund}.");
+                Log($"0136|MagnetAn gesetzt: Wert={value}, Grund={grund}.");
             }
         }
         catch (Exception ex)
         {
-            LogWarning($"008E|MagnetAn konnte nicht geschrieben werden. Wert={value}, Grund={grund}, Event=KranPosition, Variable={MagnetAnNodeName}, Fehler={ex.GetType().Name}: {ex.Message}");
+            LogWarning($"0137|MagnetAn konnte nicht geschrieben werden. Wert={value}, Grund={grund}, Event=KranPosition, Variable={MagnetAnNodeName}, Fehler={ex.GetType().Name}: {ex.Message}");
             StartBackgroundReconnectLoop("MagnetAn konnte nicht geschrieben werden");
         }
     }
@@ -1535,24 +1535,24 @@ public partial class MainWindow : Window
         object? sender,
         OpcClientStateChangedEventArgs e)
     {
-        Log($"002A|OPC Client Zustand geändert von {e.OldState} zu {e.NewState}.");
+        Log($"0138|OPC Client Zustand geaendert von {e.OldState} zu {e.NewState}.");
 
         if (e.NewState == OpcClientState.Connected)
         {
             SetOpcConnectedFromBackground("OPC UA Client erfolgreich verbunden / wiederverbunden");
             SetMagnetAn(gewuenschterMagnetAnWert, "OPC verbunden / wiederverbunden", force: true);
-            LogWarning("002B|OPC UA Client erfolgreich verbunden / wiederverbunden!");
+            LogWarning("0139|OPC UA Client erfolgreich verbunden / wiederverbunden!");
         }
         else if (e.NewState == OpcClientState.Disconnected)
         {
             SetOpcDisconnectedFromBackground("OPC getrennt");
-            LogError("002C|Die Verbindung zum OPC UA Server wurde getrennt!");
+            LogError("013A|Die Verbindung zum OPC UA Server wurde getrennt!");
             StartBackgroundReconnectLoop("OPC Client meldet Disconnected");
         }
         else if (e.NewState == OpcClientState.Reconnecting)
         {
-            SetOpcReconnectFromBackground("Reconnect läuft");
-            Log("002D|Verbindung verloren. Auto-Reconnect versucht gerade die Wiederverbindung...");
+            SetOpcReconnectFromBackground("Reconnect laeuft");
+            Log("013B|Verbindung verloren. Auto-Reconnect versucht gerade die Wiederverbindung...");
             StartBackgroundReconnectLoop("OPC Client meldet Reconnecting");
         }
     }
@@ -1577,7 +1577,7 @@ public partial class MainWindow : Window
         opcStatusText = "Verbunden";
         opcStatusDetailText = status;
         SimulationStatusText.Text = "Simulation bereit";
-        SimulationDetailText.Text = "OPC-Verbindung steht. SPS-Logik wird schrittweise ergänzt.";
+        SimulationDetailText.Text = "OPC-Verbindung steht. SPS-Logik wird schrittweise ergaenzt.";
         RefreshStatusView();
     }
 
@@ -1596,7 +1596,7 @@ public partial class MainWindow : Window
         OpcLamp.Fill = Brushes.DarkOrange;
         opcStatusText = "Reconnect";
         opcStatusDetailText = status;
-        SimulationStatusText.Text = "Reconnect läuft";
+        SimulationStatusText.Text = "Reconnect laeuft";
         SimulationDetailText.Text = "Der Simulator versucht zyklisch, den OPC-Server wieder zu erreichen.";
         RefreshStatusView();
     }
@@ -1841,6 +1841,11 @@ public partial class MainWindow : Window
         FahreZurGrundstellung
     }
 }
+
+
+
+
+
 
 
 

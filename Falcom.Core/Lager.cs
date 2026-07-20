@@ -1,5 +1,7 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
+using Microsoft.Data.SqlClient;
+using System.Data;
 
 namespace Falcom
 {
@@ -143,81 +145,17 @@ namespace Falcom
    {
       private readonly ConfigManager _configManager;
       private readonly ILogger<Lager> _logger;
-      private readonly Dictionary<int, Lagerplatz> lagerplätze;
+      private readonly Dictionary<int, Lagerplatz> lagerplaetze;
 
       public Lager(ConfigManager configManager, ILogger<Lager> logger)
       {
          _configManager = configManager;
          _logger = logger;
-         lagerplätze = new Dictionary<int, Lagerplatz>();
+         lagerplaetze = new Dictionary<int, Lagerplatz>();
 
          try
          {
-            const string sql = @"
-SELECT
-   lager.Lagerplatz,
-   lager.Aktiv,
-   lager.Restmenge,
-   lager.Bezeichnung,
-   COALESCE(material.MaterialName, N'') AS Schrottsorte,
-   COALESCE(material.Cu, 0) AS Cu,
-   COALESCE(material.Mn, 0) AS Mn,
-   COALESCE(material.C, 0) AS C,
-   COALESCE(material.Si, 0) AS Si,
-   COALESCE(material.Cr, 0) AS S,
-   COALESCE(material.Mg, 0) AS Mg,
-   COALESCE(material.Toleranz, 150) AS Toleranz
-FROM dbo.FALCOM_LAGER AS lager
-LEFT JOIN dbo.FALCOM_MATERIAL AS material
-   ON material.ID = lager.MaterialID
-ORDER BY lager.Lagerplatz";
-
-            SimpleSqlQuery query = new SimpleSqlQuery(_configManager.ConnectionString, sql);
-            if (query.QueryResult != null)
-            {
-               foreach (Dictionary<string, object> row in query.QueryResult)
-               {
-                  try
-                  {
-                     int lagerplatz = Convert.ToInt32(row["Lagerplatz"]);
-                     bool active = Convert.ToBoolean(row["Aktiv"]);
-                     int restmenge = Convert.ToInt32(row["Restmenge"]);
-                     float cu = (float)Math.Round(Convert.ToSingle(row["Cu"]), 3);
-                     float mn = (float)Math.Round(Convert.ToSingle(row["Mn"]), 3);
-                     float c = (float)Math.Round(Convert.ToSingle(row["C"]), 3);
-                     float si = (float)Math.Round(Convert.ToSingle(row["Si"]), 3);
-                     float s = row.TryGetValue("S", out object? sValue)
-                        ? (float)Math.Round(Convert.ToSingle(sValue), 3)
-                        : 0;
-                     float mg = row.TryGetValue("Mg", out object? mgValue)
-                        ? (float)Math.Round(Convert.ToSingle(mgValue), 3)
-                        : 0;
-
-                     string bezeichnung = Convert.ToString(row["Bezeichnung"]) ?? string.Empty;
-                     string schrottsorte = Convert.ToString(row["Schrottsorte"]) ?? "Unbekannt";
-                     float toleranz = (float)Math.Round(Convert.ToSingle(row["Toleranz"]), 3);
-
-                     Lagerplatz platz = new(
-                        lagerplatz,
-                        active,
-                        restmenge,
-                        cu,
-                        mn,
-                        c,
-                        si,
-                        s,
-                        mg,
-                        bezeichnung,
-                        schrottsorte,
-                        toleranz);
-                     lagerplätze.Add(lagerplatz, platz);
-                  }
-                  catch (Exception e)
-                  {
-                     _logger.LogError(e, "000D|Tabelle FALCOM_Lager konnte nicht gelesen werden.");
-                  }
-               }
-            }
+            LoadLagerplaetze();
          }
          catch (Exception e)
          {
@@ -225,11 +163,63 @@ ORDER BY lager.Lagerplatz";
          }
       }
 
+      private void LoadLagerplaetze()
+      {
+         using var connection = new SqlConnection(_configManager.ConnectionString);
+         using var command = new SqlCommand("dbo.FALCOM_GetLagerplaetze", connection)
+         {
+            CommandType = CommandType.StoredProcedure,
+            CommandTimeout = 30
+         };
+
+         connection.Open();
+         using SqlDataReader reader = command.ExecuteReader();
+         while (reader.Read())
+         {
+            try
+            {
+               int lagerplatz = Convert.ToInt32(reader["Lagerplatz"]);
+               bool active = Convert.ToBoolean(reader["Aktiv"]);
+               int restmenge = Convert.ToInt32(reader["Restmenge"]);
+               float cu = (float)Math.Round(Convert.ToSingle(reader["Cu"]), 3);
+               float mn = (float)Math.Round(Convert.ToSingle(reader["Mn"]), 3);
+               float c = (float)Math.Round(Convert.ToSingle(reader["C"]), 3);
+               float si = (float)Math.Round(Convert.ToSingle(reader["Si"]), 3);
+               float s = (float)Math.Round(Convert.ToSingle(reader["S"]), 3);
+               float mg = (float)Math.Round(Convert.ToSingle(reader["Mg"]), 3);
+
+               string bezeichnung = Convert.ToString(reader["Bezeichnung"]) ?? string.Empty;
+               string schrottsorte = Convert.ToString(reader["Schrottsorte"]) ?? "Unbekannt";
+               float toleranz = (float)Math.Round(Convert.ToSingle(reader["Toleranz"]), 3);
+
+               Lagerplatz platz = new(
+                  lagerplatz,
+                  active,
+                  restmenge,
+                  cu,
+                  mn,
+                  c,
+                  si,
+                  s,
+                  mg,
+                  bezeichnung,
+                  schrottsorte,
+                  toleranz);
+
+               lagerplaetze[lagerplatz] = platz;
+            }
+            catch (Exception e)
+            {
+               _logger.LogError(e, "000D|Datensatz aus FALCOM_GetLagerplaetze konnte nicht verarbeitet werden.");
+            }
+         }
+      }
+
       public float[] GetCuValues()
       {
          List<float> cuWerte = new List<float>();
 
-         foreach (var lagerplatz in lagerplätze.Values)
+         foreach (var lagerplatz in lagerplaetze.Values)
          {
             if (lagerplatz.LagerplatzNr > 16)
             {
@@ -246,7 +236,7 @@ ORDER BY lager.Lagerplatz";
       {
          List<float> mnWerte = new List<float>();
 
-         foreach (var lagerplatz in lagerplätze.Values)
+         foreach (var lagerplatz in lagerplaetze.Values)
          {
             if (lagerplatz.LagerplatzNr > 16)
             {

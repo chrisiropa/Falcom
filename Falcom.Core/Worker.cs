@@ -31,7 +31,7 @@ namespace Falcom
           FalcomEventQueue eventQueue,
           WatchdogSender watchdogSender,
           AktuelleFahrtRepository aktuelleFahrtRepository,
-          FalcomRuntimeStatus runtimeStatus) // NEU: Im Konstruktor Ã¼bergeben
+          FalcomRuntimeStatus runtimeStatus) // Im Konstruktor uebergeben
       {
          _logger = logger;
          _configManager = configManager;
@@ -61,7 +61,7 @@ namespace Falcom
                watchdogTimerCancellation.Token);
 
             // NEU: Die Schleife wartet jetzt reaktiv, bis ein Event in der Queue landet.
-            // WaitToReadAsync lÃ¤sst den Thread schlafen, solange die Queue leer ist (0% CPU Last).
+            // WaitToReadAsync laesst den Thread schlafen, solange die Queue leer ist (0% CPU Last).
             try
             {
                InitializeStateFromDatabase();
@@ -166,7 +166,7 @@ namespace Falcom
                                     "Keine aktive Fahrt."));
 
                                  _logger.LogError(
-                                    "0052|Aktuelle Fahrt wegen nicht sendbarem SPS-Fahrauftrag historisiert: Erfolg={Success}, Grund={Reason}, AktuelleFahrtID={AktuelleFahrtID}, AuftragID={AuftragID}, Bemerkung={Bemerkung}.",
+                                    "0109|Aktuelle Fahrt wegen nicht sendbarem SPS-Fahrauftrag historisiert: Erfolg={Success}, Grund={Reason}, AktuelleFahrtID={AktuelleFahrtID}, AuftragID={AuftragID}, Bemerkung={Bemerkung}.",
                                     failResult.Success,
                                     failResult.Reason,
                                     failResult.AktuelleFahrtID,
@@ -242,7 +242,7 @@ namespace Falcom
                         // 1. Datenfluss zur SPS sicherstellen
                         await _opcClientCrane.EnsureDataFlowAsync(stoppingToken);
 
-                        // Optionale Ãœberwachungsausgabe
+                        // Optionale Ueberwachungsausgabe
                         //LogOpenCraneQueueOrdersIfChanged();
                      }
                      catch (OperationCanceledException)
@@ -259,7 +259,7 @@ namespace Falcom
                         await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
 
                         // Da ein Fehler auftrat, brechen wir die innere TryRead-Schleife ab,
-                        // um den Datenfluss im nÃ¤chsten Hauptdurchlauf frisch zu prÃ¼fen.
+                        // um den Datenfluss im naechsten Hauptdurchlauf frisch zu pruefen.
                         break;
                      }
                   }
@@ -303,7 +303,7 @@ namespace Falcom
          }
          catch (Exception ex)
          {
-            _logger.LogCritical(ex, "0037|Schwerwiegender Fehler auÃŸerhalb der Hauptschleife. Dienst wird beendet!");
+            _logger.LogCritical(ex, "0037|Schwerwiegender Fehler ausserhalb der Hauptschleife. Dienst wird beendet!");
          }
       }
 
@@ -530,4 +530,7 @@ namespace Falcom
       
    }
 }
+
+
+
 

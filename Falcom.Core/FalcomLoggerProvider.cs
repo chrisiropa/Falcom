@@ -25,5 +25,6 @@ public sealed class FalcomLoggerProvider : ILoggerProvider
 
    public void Dispose()
    {
+      _fileSink.Dispose();
    }
 }

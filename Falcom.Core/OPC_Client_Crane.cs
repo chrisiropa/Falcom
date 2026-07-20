@@ -1,4 +1,4 @@
-using Microsoft.Data.SqlClient;
+﻿using Microsoft.Data.SqlClient;
 using Opc.UaFx;
 using Opc.UaFx.Client;
 using System.Data;
@@ -26,7 +26,7 @@ namespace Falcom
       private readonly FalcomRuntimeStatus _runtimeStatus;
       private readonly FalcomKranLiveSignalRClient _kranLiveSignalRClient;
       private readonly AktuelleFahrtRepository _aktuelleFahrtRepository;
-      private readonly FalcomEventQueue _eventQueue; // NEU: Privates Feld für die Queue
+      private readonly FalcomEventQueue _eventQueue; // Privates Feld fuer die Queue
       private readonly object _syncRoot = new();
       private readonly List<OpcMonitoredItem> monitoredItems = new();
       private readonly string opcServerEndpoint;
@@ -74,7 +74,7 @@ namespace Falcom
          _runtimeStatus = runtimeStatus;
          _kranLiveSignalRClient = kranLiveSignalRClient;
          _aktuelleFahrtRepository = aktuelleFahrtRepository;
-         _eventQueue = eventQueue; // NEU: Zuweisung für den späteren Zugriff
+         _eventQueue = eventQueue; // Zuweisung fuer den spaeteren Zugriff
          TraegerLicense();
          KranfahrtBeendetEvent.LoadOpcNodes(configManager);
          falcomWatchdogNodeId = LoadRequiredEventOpcNode(
@@ -187,9 +187,7 @@ namespace Falcom
             }
             catch (Exception ex)
             {
-               spsDataUnavailable = true;
-               spsLebensZaehlerFreigegeben = false;
-               _runtimeStatus.SetSpsLebensZaehlerUnavailable("OPC-Datenfluss nicht freigegeben");
+               MarkOpcDataFlowUnavailable("Reconnect laeuft", "OPC-Datenfluss nicht freigegeben");
 
                if (DateTime.UtcNow >= nextDataFlowErrorLogUtc)
                {
@@ -298,17 +296,14 @@ namespace Falcom
                            ConnectOnce();
                            MarkOpcDataFlowAvailable("Verbunden");
                            _logger.LogInformation(
-                              "005E|OPC-Hintergrund-Reconnect erfolgreich. Versuch={Attempt}.",
+                              "0100|OPC-Hintergrund-Reconnect erfolgreich. Versuch={Attempt}.",
                               attempt);
                            return;
                         }
                      }
                      catch (Exception ex)
                      {
-                        spsLebensZaehlerFreigegeben = false;
-                        spsDataUnavailable = true;
-                        _runtimeStatus.SetOpcKranSpsStatus(false, "Reconnect laeuft");
-                        _runtimeStatus.SetSpsLebensZaehlerUnavailable("OPC Reconnect laeuft");
+                        MarkOpcDataFlowUnavailable("Reconnect laeuft", "OPC Reconnect laeuft");
 
                         if (DateTime.UtcNow >= nextBackgroundReconnectLogUtc)
                         {
@@ -432,9 +427,7 @@ namespace Falcom
          }
          catch (Exception ex)
          {
-            spsLebensZaehlerFreigegeben = false;
-            spsDataUnavailable = true;
-            _runtimeStatus.SetOpcKranSpsStatus(false, "Reconnect laeuft");
+            MarkOpcDataFlowUnavailable("Reconnect laeuft", "Falcom-LebensZaehler konnte nicht geschrieben werden");
             StartBackgroundReconnectLoop("Falcom-LebensZaehler konnte nicht geschrieben werden");
 
             return Task.FromResult(
@@ -514,7 +507,7 @@ namespace Falcom
             if (!opcNodes.TryGetValue(nodeName, out string? opcNode)
                 || string.IsNullOrWhiteSpace(opcNode)
                 || opcNode.StartsWith("NOCH_ZU_KONFIGURIEREN.", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(opcNode, "Trigger Richtung SPS, einfach hochzählen", StringComparison.OrdinalIgnoreCase))
+                || string.Equals(opcNode, "Trigger Richtung SPS, einfach hochzaehlen", StringComparison.OrdinalIgnoreCase))
             {
                LogKranfahrtAuftragConfigurationIssue(
                   $"Node '{nodeName}' ist noch nicht gueltig konfiguriert.");
@@ -728,6 +721,13 @@ namespace Falcom
          _runtimeStatus.SetOpcKranSpsStatus(true, statusText);
       }
 
+      private void MarkOpcDataFlowUnavailable(string opcStatusText, string lebensZaehlerStatusText)
+      {
+         spsDataUnavailable = true;
+         spsLebensZaehlerFreigegeben = false;
+         _runtimeStatus.SetOpcKranSpsStatus(false, opcStatusText);
+         _runtimeStatus.SetSpsLebensZaehlerUnavailable(lebensZaehlerStatusText);
+      }
       private sealed record KranfahrtAuftragOpcNodes(
          string AuftragNummer,
          string AuftragTeilfahrt,
@@ -748,48 +748,6 @@ namespace Falcom
          public static OpcSendResult Failed(string reason)
          {
             return new OpcSendResult(false, reason);
-         }
-      }
-
-      private void ValidateWatchdogRead()
-      {
-         if (disposed)
-         {
-            throw new ObjectDisposedException(nameof(OPC_Client_Crane));
-         }
-
-         lock (_syncRoot)
-         {
-            if (client is null)
-            {
-               throw new InvalidOperationException(
-                  $"OPC-Client ist nicht initialisiert. Watchdog-Node konnte nicht gelesen werden. Node={falcomWatchdogNodeId}");
-            }
-
-            OpcValue watchdogValue;
-
-            try
-            {
-               watchdogValue = client.ReadNode(falcomWatchdogNodeId);
-            }
-            catch (Exception ex)
-            {
-               throw new InvalidOperationException(
-                  $"Watchdog-Node konnte nicht gelesen werden. Node={falcomWatchdogNodeId}",
-                  ex);
-            }
-
-            if (!watchdogValue.Status.IsGood)
-            {
-               throw new InvalidOperationException(
-                  $"Watchdog-Node ist nicht sauber lesbar. Node={falcomWatchdogNodeId}, Status={watchdogValue.Status.Code}, Wert={watchdogValue.Value}");
-            }
-
-            _logger.LogDebug(
-               "001C|Watchdog-Node erfolgreich gelesen. Node={Node}, Status={Status}, Wert={Value}",
-               falcomWatchdogNodeId,
-               watchdogValue.Status.Code,
-               watchdogValue.Value);
          }
       }
 
@@ -921,7 +879,7 @@ namespace Falcom
 
          subscription.ApplyChanges();
 
-         _logger.LogInformation("0021|Kanal 'Zähler' erfolgreich registriert.");
+         _logger.LogInformation("0021|Kanal 'Zaehler' erfolgreich registriert.");
          return true;
       }
 
@@ -1137,7 +1095,7 @@ namespace Falcom
          }
 
          _logger.LogError(
-            "0065|OPC Payloadwert ist NULL. Event={Event}, Variable={Variable}, Node={Node}, {Diagnose}. Warte 500 ms und lese denselben Node erneut.",
+            "0101|OPC Payloadwert ist NULL. Event={Event}, Variable={Variable}, Node={Node}, {Diagnose}. Warte 500 ms und lese denselben Node erneut.",
             eventName,
             variable,
             opcNode,
@@ -1150,7 +1108,7 @@ namespace Falcom
          if (!retryValue.Status.IsGood)
          {
             _logger.LogError(
-               "0065|OPC Payloadwert-Reload nach 500 ms fehlgeschlagen. Event={Event}, Variable={Variable}, Node={Node}, {Diagnose}.",
+               "0102|OPC Payloadwert-Reload nach 500 ms fehlgeschlagen. Event={Event}, Variable={Variable}, Node={Node}, {Diagnose}.",
                eventName,
                variable,
                opcNode,
@@ -1162,7 +1120,7 @@ namespace Falcom
          if (retryValue.Value is null)
          {
             _logger.LogError(
-               "0065|OPC Payloadwert ist auch nach 500 ms NULL. Event={Event}, Variable={Variable}, Node={Node}, {Diagnose}. Verarbeitung wird abgebrochen.",
+               "0103|OPC Payloadwert ist auch nach 500 ms NULL. Event={Event}, Variable={Variable}, Node={Node}, {Diagnose}. Verarbeitung wird abgebrochen.",
                eventName,
                variable,
                opcNode,
@@ -1172,7 +1130,7 @@ namespace Falcom
          }
 
          _logger.LogInformation(
-            "0065|OPC Payloadwert nach NULL-Retry erfolgreich gelesen. Event={Event}, Variable={Variable}, Node={Node}, {Diagnose}.",
+            "0104|OPC Payloadwert nach NULL-Retry erfolgreich gelesen. Event={Event}, Variable={Variable}, Node={Node}, {Diagnose}.",
             eventName,
             variable,
             opcNode,
@@ -1339,25 +1297,7 @@ if (string.Equals(
                return;
             }
 
-            if (e.MonitoredItem.NodeId.ToString().Contains("ns=1;s=LagerV.DataBlocks.Count_DB_1.Static.OPC.Zaehler"))
-            {
-               /*
-               //TEST
-               string baseNode = "ns=1;s=LagerV.DataBlocks.Count_DB_1.Static.OPC.";
-
-               var cmdStart = client.ReadNode($"{baseNode}Comands.Start")?.Value;
-               var cmdStop = client.ReadNode($"{baseNode}Comands.Stop")?.Value;
-               var statusRun = client.ReadNode($"{baseNode}Status.Run")?.Value;
-
-               _logger.LogInformation("0024|Werte erfolgreich nachgelesen - Start: {Start}, Stop: {Stop}, Run: {Run}", cmdStart, cmdStop, statusRun);
-
-               if (statusRun is bool isRunning && isRunning)
-               {
-                  // Deine Kran-Logik
-               }
-               */
-            }
-            else if (string.Equals(
+            if (string.Equals(
                e.MonitoredItem.NodeId.ToString(),
                KranfahrtBeendetEvent.AenderungsZaehlerOPCNode,
                StringComparison.Ordinal))
@@ -1392,14 +1332,14 @@ if (string.Equals(
                if (lastKranfahrtBeendetAenderungsZaehler == aenderungsZaehler)
                {
                   _logger.LogDebug(
-                     "0025|KranfahrtBeendet AenderungsZaehler unveraendert. Wert={AenderungsZaehler}",
+                     "0105|KranfahrtBeendet AenderungsZaehler unveraendert. Wert={AenderungsZaehler}",
                      aenderungsZaehler);
                   return;
                }
 
                lastKranfahrtBeendetAenderungsZaehler = aenderungsZaehler;
 
-               _logger.LogInformation("0026|Kranfahrt beendet. AenderungsZaehler={AenderungsZaehler}", aenderungsZaehler);
+               _logger.LogInformation("0106|Kranfahrt beendet. AenderungsZaehler={AenderungsZaehler}", aenderungsZaehler);
                QueueKranfahrtBeendetEvent(ReadKranfahrtBeendetPayload(aenderungsZaehler));
             }
          }
@@ -1460,7 +1400,7 @@ if (string.Equals(
          if (!aktuelleFahrt.Success || aktuelleFahrt.AktuelleFahrtID is null)
          {
             _logger.LogInformation(
-               "0025|OPC-Initialwert ignoriert: Es ist keine aktuell offene Fahrt vorhanden. Grund={Reason}",
+               "0107|OPC-Initialwert ignoriert: Es ist keine aktuell offene Fahrt vorhanden. Grund={Reason}",
                aktuelleFahrt.Reason);
             return false;
          }
@@ -1472,7 +1412,7 @@ if (string.Equals(
          if (!passt)
          {
             _logger.LogInformation(
-               "0025|OPC-Initialwert ignoriert: Rueckmeldung gehoert nicht zur aktuell offenen Fahrt. AktuelleFahrtID={AktuelleFahrtID}, ErwartetAuftrag={ErwartetAuftrag}, ErwartetTeilfahrt={ErwartetTeilfahrt}, EmpfangenerAuftrag={IstAuftrag}, EmpfangeneTeilfahrt={IstTeilfahrt}.",
+               "0108|OPC-Initialwert ignoriert: Rueckmeldung gehoert nicht zur aktuell offenen Fahrt. AktuelleFahrtID={AktuelleFahrtID}, ErwartetAuftrag={ErwartetAuftrag}, ErwartetTeilfahrt={ErwartetTeilfahrt}, EmpfangenerAuftrag={IstAuftrag}, EmpfangeneTeilfahrt={IstTeilfahrt}.",
                aktuelleFahrt.AktuelleFahrtID,
                aktuelleFahrt.AuftragID,
                erwarteteTeilfahrt,
@@ -1533,7 +1473,7 @@ if (string.Equals(
 
       private void OnClientStateChanged(object? sender, OpcClientStateChangedEventArgs e)
       {
-         _logger.LogDebug("002A|OPC Client Zustand geändert von {OldState} zu {NewState}", e.OldState, e.NewState);
+         _logger.LogDebug("002A|OPC Client Zustand geaendert von {OldState} zu {NewState}", e.OldState, e.NewState);
 
          if (e.NewState == OpcClientState.Connected)
          {
@@ -1542,17 +1482,13 @@ if (string.Equals(
          }
          else if (e.NewState == OpcClientState.Disconnected)
          {
-            spsLebensZaehlerFreigegeben = false;
-            _runtimeStatus.SetOpcKranSpsStatus(false, "Getrennt");
-            _runtimeStatus.SetSpsLebensZaehlerUnavailable("OPC getrennt");
+            MarkOpcDataFlowUnavailable("Getrennt", "OPC getrennt");
             _logger.LogError("002C|Die Verbindung zum OPC UA Server wurde getrennt!");
             StartBackgroundReconnectLoop("OPC Client meldet Disconnected");
          }
          else if (e.NewState == OpcClientState.Reconnecting)
          {
-            spsLebensZaehlerFreigegeben = false;
-            _runtimeStatus.SetOpcKranSpsStatus(false, "Reconnect laeuft");
-            _runtimeStatus.SetSpsLebensZaehlerUnavailable("OPC Reconnect laeuft");
+            MarkOpcDataFlowUnavailable("Reconnect laeuft", "OPC Reconnect laeuft");
             _logger.LogInformation("002D|Verbindung verloren. Auto-Reconnect versucht gerade die Wiederverbindung...");
             StartBackgroundReconnectLoop("OPC Client meldet Reconnecting");
          }
@@ -1564,8 +1500,11 @@ if (string.Equals(
       {
          Opc.UaFx.Client.Licenser.LicenseKey = ConfigManager.TraegerLicenseKey;
          var license = Opc.UaFx.Client.Licenser.LicenseInfo;
-         Console.WriteLine("Traeger Licence Info = {0} | Gültig = {1}", license.ToString(), !license.IsEvaluation);
+         Console.WriteLine("Traeger Licence Info = {0} | Gueltig = {1}", license.ToString(), !license.IsEvaluation);
       }
    }
 }
+
+
+
 

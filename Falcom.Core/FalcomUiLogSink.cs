@@ -62,12 +62,14 @@ public sealed class FalcomUiLogSink
 
    private static bool IsOpcSendLog(string line)
    {
-      return line.Contains("0051|", StringComparison.OrdinalIgnoreCase);
+      return line.Contains("OPC Senden", StringComparison.OrdinalIgnoreCase)
+             || line.Contains("OPC Schreiben", StringComparison.OrdinalIgnoreCase);
    }
 
    private static bool IsOpcReceiveLog(string line)
    {
-      return line.Contains("0050|", StringComparison.OrdinalIgnoreCase);
+      return line.Contains("OPC Empfang", StringComparison.OrdinalIgnoreCase)
+             || line.Contains("OPC Event lesen", StringComparison.OrdinalIgnoreCase);
    }
 }
 
