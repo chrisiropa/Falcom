@@ -20,7 +20,7 @@ builder.Services.AddHostedService<ConsoleShutdownService>();
 var host = builder.Build();
 var configManager = host.Services.GetRequiredService<ConfigManager>();
 var fileSink = host.Services.GetRequiredService<FalcomFileSink>();
-WriteProgramInformationToLogfile(fileSink, programInformation);
+ProgramStartBanner.WriteToLogfile(fileSink, "FALCOM", "FALCOM PROGRAMMSTART");
 
 Console.WriteLine(
    "ConnectionString: {0}",
@@ -44,25 +44,6 @@ static void PrintProgramInformation(AssemblyInfoWrapper assemblyInfo)
    Console.WriteLine("  Firma         : IROPA Elektrotechnik GMBH");
    Console.WriteLine(new string('=', 72));
    Console.WriteLine();
-}
-
-static void WriteProgramInformationToLogfile(
-   FalcomFileSink fileSink,
-   AssemblyInfoWrapper assemblyInfo)
-{
-   string timestamp = DateTime.Now.ToString("dd.MM.yy HH:mm:ss.fff");
-   fileSink.Write(
-      $"""
-      {timestamp} [INFORMATION] Falcom.Program: 0044|========================================================================
-                            F A L C O M   P R O G R A M M S T A R T
-      ========================================================================
-        Programmname  : {GetProgramName(assemblyInfo)}
-        Version       : {GetVersion(assemblyInfo)}
-        Build-Datum   : {assemblyInfo.FileModifiedTime:dd.MM.yyyy HH:mm:ss}
-        Autor         : Christof Goletzko
-        Firma         : IROPA Elektrotechnik GMBH
-      ========================================================================
-      """);
 }
 
 static string GetProgramName(AssemblyInfoWrapper assemblyInfo)

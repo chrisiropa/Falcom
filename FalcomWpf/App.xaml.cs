@@ -22,6 +22,10 @@ public partial class App : Application
       builder.Services.AddSingleton<MainWindow>();
 
       host = builder.Build();
+      ProgramStartBanner.WriteToLogfile(
+         host.Services.GetRequiredService<FalcomFileSink>(),
+         "FALCOM WPF",
+         "FALCOM WPF PROGRAMMSTART");
       await host.StartAsync();
 
       MainWindow = host.Services.GetRequiredService<MainWindow>();

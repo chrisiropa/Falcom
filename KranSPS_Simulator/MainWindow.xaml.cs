@@ -1,4 +1,4 @@
-﻿using Falcom;
+using Falcom;
 using Microsoft.Extensions.Logging;
 using Opc.UaFx;
 using Opc.UaFx.Client;
@@ -15,9 +15,9 @@ public partial class MainWindow : Window
 {
     private static readonly TimeSpan ConnectRetryDelay = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan ReconnectLogThrottle = TimeSpan.FromMinutes(1);
-    private const double DemoKranSpeedMmPerSecond = 960.0;
-    private const double DemoKatzeSpeedMmPerSecond = 960.0;
-    private const double DemoHubSpeedMmPerSecond = 720.0;
+    private const double DemoKranSpeedMmPerSecond = 9600.0;
+    private const double DemoKatzeSpeedMmPerSecond = 9600.0;
+    private const double DemoHubSpeedMmPerSecond = 7200.0;
     private const int DemoTelegrammNummer = -1;
     private const decimal MaxChargierIstGewichtKg = 1000m;
     private const decimal EinlagerIstGewichtKg = 800m;
@@ -107,12 +107,25 @@ public partial class MainWindow : Window
         grundstellung = configuration.Grundstellung;
         positionenById = configuration.Positionen;
         fileLogSink = new FalcomFileSink(configuration.LogfilePath);
+        ProgramStartBanner.WriteToLogfile(
+            fileLogSink,
+            "KranSPS_Simulator",
+            "KRAN-SPS-SIMULATOR PROGRAMMSTART");
 
         ConfigureTraegerLicense();
         CreateClientInstance();
 
         Log($"Logdatei aktiv: {configuration.LogfilePath}");
         Log($"OPC Endpoint aus FALCOM_PARAMETER.OpcServer: {opcEndpoint}");
+        if (configuration.SimulatorSubstitutionen.Count == 0)
+        {
+            Log("SimulatorSubstitution aus FALCOM_PARAMETER: keine Substitution aktiv.");
+        }
+        else
+        {
+            Log($"SimulatorSubstitution aus FALCOM_PARAMETER aktiv: {string.Join("; ", configuration.SimulatorSubstitutionen.Select(substitution => $"{substitution.Suchtext} -> {substitution.Ersatztext}"))}");
+        }
+
         if (string.IsNullOrWhiteSpace(kranSpsLebensZaehlerNodeId))
         {
             LogError("LebensZaehlerKran.LebensZaehler ist in der Datenbank nicht gültig konfiguriert. SPS->FALCOM Lebenszähler wird nicht geschrieben.");
@@ -408,7 +421,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            LogWarning($"0063|OPC Callback konnte nicht verarbeitet werden. Fehler={ex.GetType().Name}: {ex.Message}");
+            LogError($"0063|OPC Callback konnte nicht verarbeitet werden. Fehler={ex.GetType().Name}: {ex.Message}");
         }
     }
 
@@ -615,6 +628,50 @@ public partial class MainWindow : Window
         }
     }
 
+    private OpcValue ReadRequiredOpcPayloadWithNullRetryNoLock(
+        EventNodeConfiguration node)
+    {
+        OpcValue value = opcClient!.ReadNode(node.OpcNode);
+
+        if (!value.Status.IsGood)
+        {
+            throw new InvalidOperationException(
+                $"OPC-Lesen fehlgeschlagen. Variable={node.NodeName}, Node={node.OpcNode}, {DescribeOpcValue(value)}");
+        }
+
+        if (value.Value is not null)
+        {
+            return value;
+        }
+
+        LogError($"006F|OPC Payloadwert ist NULL. Variable={node.NodeName}, Node={node.OpcNode}, {DescribeOpcValue(value)}. Warte 500 ms und lese denselben Node erneut.");
+
+        Thread.Sleep(500);
+
+        OpcValue retryValue = opcClient.ReadNode(node.OpcNode);
+
+        if (!retryValue.Status.IsGood)
+        {
+            LogError($"006F|OPC Payloadwert-Reload nach 500 ms fehlgeschlagen. Variable={node.NodeName}, Node={node.OpcNode}, {DescribeOpcValue(retryValue)}.");
+            throw new InvalidOperationException(
+                $"OPC-Lesen nach NULL-Retry fehlgeschlagen. Variable={node.NodeName}, Node={node.OpcNode}, {DescribeOpcValue(retryValue)}");
+        }
+
+        if (retryValue.Value is null)
+        {
+            LogError($"006F|OPC Payloadwert ist auch nach 500 ms NULL. Variable={node.NodeName}, Node={node.OpcNode}, {DescribeOpcValue(retryValue)}. Event wird nicht weiterverarbeitet.");
+            throw new InvalidOperationException(
+                $"OPC Payloadwert ist auch nach 500 ms NULL. Variable={node.NodeName}, Node={node.OpcNode}");
+        }
+
+        Log($"006F|OPC Payloadwert nach NULL-Retry erfolgreich gelesen. Variable={node.NodeName}, Node={node.OpcNode}, {DescribeOpcValue(retryValue)}.");
+        return retryValue;
+    }
+
+    private static string DescribeOpcValue(OpcValue value)
+    {
+        return $"Status={value.Status.Code}, Beschreibung={value.Status.Description}, Wert={(value.Value is null ? "<null>" : value.Value)}, DataType={value.DataType}, SourceTimestamp={value.SourceTimestamp:O}, ServerTimestamp={value.ServerTimestamp:O}";
+    }
     private Dictionary<string, object?> ReadEventValuesNoLock(IReadOnlyList<EventNodeConfiguration> nodes)
     {
         var values = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
@@ -625,12 +682,7 @@ public partial class MainWindow : Window
                 continue;
             }
 
-            OpcValue value = opcClient!.ReadNode(node.OpcNode);
-            if (!value.Status.IsGood)
-            {
-                throw new InvalidOperationException(
-                    $"OPC-Lesen fehlgeschlagen. Variable={node.NodeName}, Node={node.OpcNode}, Status={value.Status.Code}, Beschreibung={value.Status.Description}");
-            }
+            OpcValue value = ReadRequiredOpcPayloadWithNullRetryNoLock(node);
 
             values[node.NodeName] = value.Value;
             LogOpcReceive($"006F|OPC Event lesen: {node.NodeName}={value.Value}");
@@ -645,20 +697,34 @@ public partial class MainWindow : Window
     {
         int geschrieben = 0;
         int uebersprungen = 0;
+        var triggerMappings = new List<SimEventMappingConfiguration>();
 
         foreach (SimEventMappingConfiguration mapping in kranfahrtBeendetZuordnungen)
         {
             string info = mapping.Info ?? mapping.TargetNode.NodeName;
             string typ = mapping.Zuordnungstyp.Trim().ToUpperInvariant();
 
+            if (string.Equals(typ, "TRIGGER_ERHOEHEN", StringComparison.OrdinalIgnoreCase))
+            {
+                triggerMappings.Add(mapping);
+                continue;
+            }
+
             if (string.Equals(typ, "DIREKT", StringComparison.OrdinalIgnoreCase))
             {
                 if (string.IsNullOrWhiteSpace(mapping.SourceNodeName)
                     || !auftragValues.TryGetValue(mapping.SourceNodeName, out object? sourceValue))
                 {
-                    uebersprungen++;
-                    LogWarning($"007D|SIM-Zuordnung nicht geschrieben, weil Quellwert fehlt. ID={mapping.ID}, Info={info}, SourceNode={mapping.SourceNodeName ?? "-"}.");
-                    continue;
+                    LogError($"007D|SIM-Zuordnung abgebrochen, weil Quellwert fehlt. ID={mapping.ID}, Info={info}, SourceNode={mapping.SourceNodeName ?? "-"}.");
+                    throw new InvalidOperationException(
+                        $"SIM-Zuordnung abgebrochen, weil Quellwert fehlt. ID={mapping.ID}, Info={info}, SourceNode={mapping.SourceNodeName ?? "-"}");
+                }
+
+                if (sourceValue is null)
+                {
+                    LogError($"007D|SIM-Zuordnung abgebrochen, weil Quellwert NULL ist. ID={mapping.ID}, Info={info}, SourceNode={mapping.SourceNodeName ?? "-"}.");
+                    throw new InvalidOperationException(
+                        $"SIM-Zuordnung abgebrochen, weil Quellwert NULL ist. ID={mapping.ID}, Info={info}, SourceNode={mapping.SourceNodeName ?? "-"}");
                 }
 
                 object? targetValue = BegrenzeIstGewichtWennNoetig(mapping.TargetNode, sourceValue);
@@ -676,27 +742,28 @@ public partial class MainWindow : Window
                 continue;
             }
 
-            if (string.Equals(typ, "TRIGGER_ERHOEHEN", StringComparison.OrdinalIgnoreCase))
-            {
-                if (!triggerErhoehen)
-                {
-                    uebersprungen++;
-                    Log($"0080|SIM-Zuordnung Trigger bleibt noch unveraendert: {info}.");
-                    continue;
-                }
-
-                ErhoeheKranfahrtBeendetTriggerNoLock(mapping.TargetNode, info);
-                geschrieben++;
-                continue;
-            }
-
             uebersprungen++;
             LogWarning($"0081|SIM-Zuordnung hat unbekannten Typ. ID={mapping.ID}, Typ={mapping.Zuordnungstyp}, Info={info}.");
         }
 
+        foreach (SimEventMappingConfiguration mapping in triggerMappings)
+        {
+            string info = mapping.Info ?? mapping.TargetNode.NodeName;
+
+            if (!triggerErhoehen)
+            {
+                uebersprungen++;
+                Log($"0080|SIM-Zuordnung Trigger bleibt noch unveraendert: {info}.");
+                continue;
+            }
+
+            // Der Trigger wird bewusst erst nach allen Payload-Zuordnungen geschrieben.
+            ErhoeheKranfahrtBeendetTriggerNoLock(mapping.TargetNode, info);
+            geschrieben++;
+        }
+
         Log($"0082|SIM-Zuordnungen fuer KranfahrtBeendet angewendet. Geschrieben={geschrieben}, Uebersprungen={uebersprungen}, TriggerErhoehen={triggerErhoehen}.");
     }
-
     private object? BegrenzeIstGewichtWennNoetig(
         EventNodeConfiguration targetNode,
         object? value)
@@ -791,6 +858,7 @@ public partial class MainWindow : Window
 
         SetEventValue(kranfahrtBeendetValues, node.NodeName, converted);
         LogOpcSend($"0070|OPC Senden KranfahrtBeendet: {node.NodeName}={FormatOpcValue(converted)}");
+        LogOpcSend($"0071|OPC Schreiben vom OPC-Server angenommen. Event=KranfahrtBeendet, Variable={node.NodeName}, Node={node.OpcNode}, Wert={FormatOpcValue(converted)}, Status={status.Code}");
     }
 
     private void ErhoeheKranfahrtBeendetTriggerNoLock(
@@ -827,6 +895,7 @@ public partial class MainWindow : Window
 
         SetEventValue(kranfahrtBeendetValues, triggerNode.NodeName, converted);
         LogOpcSend($"0073|OPC Senden KranfahrtBeendet Trigger: {triggerNode.NodeName}={FormatOpcValue(converted)}");
+        LogOpcSend($"0074|OPC Schreiben vom OPC-Server angenommen. Event=KranfahrtBeendet, Trigger={triggerNode.NodeName}, Node={triggerNode.OpcNode}, Wert={FormatOpcValue(converted)}, Status={writeStatus.Code}");
         Log($"0074|KranfahrtBeendet Trigger gesendet. {info}, NeuerWert={FormatOpcValue(converted)}.");
     }
 
@@ -988,6 +1057,8 @@ public partial class MainWindow : Window
                                     throw new InvalidOperationException(
                                         $"OPC-Schreiben fehlgeschlagen. Node={kranSpsLebensZaehlerNodeId}, Status={status.Code}, Beschreibung={status.Description}");
                                 }
+
+                                LogOpcSend($"0052|OPC Schreiben vom OPC-Server angenommen. Node={kranSpsLebensZaehlerNodeId}, Wert={value}, Status={status.Code}");
                             }
 
                             letzterSpsLebensZaehler = value;
@@ -1398,6 +1469,7 @@ public partial class MainWindow : Window
             nodeName,
             value.ToString(CultureInfo.InvariantCulture));
         LogOpcSend($"0061|OPC Senden KranPosition: {node.NodeName}={value}");
+        LogOpcSend($"0062|OPC Schreiben vom OPC-Server angenommen. Event=KranPosition, Variable={node.NodeName}, Node={node.OpcNode}, Wert={value}, Status={status.Code}");
     }
     private void SetMagnetAn(
         int value,
@@ -1769,5 +1841,6 @@ public partial class MainWindow : Window
         FahreZurGrundstellung
     }
 }
+
 
 

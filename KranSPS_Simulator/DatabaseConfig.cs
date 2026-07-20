@@ -1,4 +1,4 @@
-﻿using System.IO;
+using System.IO;
 using System.Text.Json;
 using Microsoft.Data.SqlClient;
 
@@ -8,6 +8,7 @@ internal sealed record SimulatorConfiguration(
     string ConnectionString,
     string OpcEndpoint,
     string LogfilePath,
+    IReadOnlyList<OpcNodeSubstitution> SimulatorSubstitutionen,
     string KranSpsLebensZaehlerNodeId,
     string FalcomLebensZaehlerNodeId,
     IReadOnlyList<EventNodeConfiguration> KranfahrtBeendetNodes,
@@ -16,6 +17,10 @@ internal sealed record SimulatorConfiguration(
     IReadOnlyList<EventNodeConfiguration> KranPositionNodes,
     KranPositionGroundPosition Grundstellung,
     IReadOnlyDictionary<long, SimKranPosition> Positionen);
+
+internal sealed record OpcNodeSubstitution(
+    string Suchtext,
+    string Ersatztext);
 
 internal sealed record EventNodeConfiguration(
     string NodeName,
@@ -66,26 +71,32 @@ internal static class DatabaseConfig
 
         IReadOnlyDictionary<long, SimKranPosition> simPositionen =
             LoadSimPositionen(builder.ConnectionString);
+        IReadOnlyList<OpcNodeSubstitution> simulatorSubstitutionen =
+            LoadSimulatorSubstitutionen(builder.ConnectionString);
 
         return new SimulatorConfiguration(
             builder.ConnectionString,
             LoadOpcEndpoint(builder.ConnectionString),
             LoadLogfilePath(settings),
-            LoadKranSpsLebensZaehlerNodeId(builder.ConnectionString),
-            LoadFalcomLebensZaehlerNodeId(builder.ConnectionString),
+            simulatorSubstitutionen,
+            SubstituteOpcNode(LoadKranSpsLebensZaehlerNodeId(builder.ConnectionString), simulatorSubstitutionen),
+            SubstituteOpcNode(LoadFalcomLebensZaehlerNodeId(builder.ConnectionString), simulatorSubstitutionen),
             LoadEventOpcNodes(
                 builder.ConnectionString,
                 "KranfahrtBeendet",
-                "KRAN_SPS->FALCOM"),
+                "KRAN_SPS->FALCOM",
+                simulatorSubstitutionen),
             LoadEventOpcNodes(
                 builder.ConnectionString,
                 "KranfahrtAuftrag",
-                "FALCOM->KRAN_SPS"),
-            LoadSimEventZuordnungen(builder.ConnectionString),
+                "FALCOM->KRAN_SPS",
+                simulatorSubstitutionen),
+            LoadSimEventZuordnungen(builder.ConnectionString, simulatorSubstitutionen),
             LoadEventOpcNodes(
                 builder.ConnectionString,
                 "KranPosition",
-                "KRAN_SPS->FALCOM"),
+                "KRAN_SPS->FALCOM",
+                simulatorSubstitutionen),
             LoadGrundstellung(
                 simPositionen,
                 new KranPositionGroundPosition(
@@ -135,6 +146,81 @@ internal static class DatabaseConfig
 
         return Convert.ToString(reader["Wert"])?.Trim()
                ?? "opc.tcp://localhost:4840";
+    }
+
+    private static IReadOnlyList<OpcNodeSubstitution> LoadSimulatorSubstitutionen(string connectionString)
+    {
+        string rawValue = LoadParameterValue(connectionString, "SimulatorSubstitution", string.Empty);
+        if (string.IsNullOrWhiteSpace(rawValue))
+        {
+            return Array.Empty<OpcNodeSubstitution>();
+        }
+
+        string[] parts = rawValue
+            .Split('|', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        var substitutionen = new List<OpcNodeSubstitution>();
+        for (int i = 0; i + 1 < parts.Length; i += 2)
+        {
+            if (string.IsNullOrWhiteSpace(parts[i]))
+            {
+                continue;
+            }
+
+            substitutionen.Add(new OpcNodeSubstitution(parts[i], parts[i + 1]));
+        }
+
+        return substitutionen;
+    }
+
+    private static string LoadParameterValue(
+        string connectionString,
+        string name,
+        string fallback)
+    {
+        using var connection = new SqlConnection(connectionString);
+        using var command = new SqlCommand(
+            "dbo.FALCOM_GetParameterValue",
+            connection)
+        {
+            CommandType = System.Data.CommandType.StoredProcedure,
+            CommandTimeout = 10
+        };
+
+        command.Parameters.Add(
+            "@Name",
+            System.Data.SqlDbType.NVarChar,
+            256).Value = name;
+
+        connection.Open();
+        using SqlDataReader reader = command.ExecuteReader();
+        if (!reader.Read())
+        {
+            return fallback;
+        }
+
+        string? value = Convert.ToString(reader["Wert"])?.Trim();
+        return string.IsNullOrWhiteSpace(value) ? fallback : value;
+    }
+
+    private static string SubstituteOpcNode(
+        string opcNode,
+        IReadOnlyList<OpcNodeSubstitution> substitutionen)
+    {
+        if (string.IsNullOrWhiteSpace(opcNode) || substitutionen.Count == 0)
+        {
+            return opcNode;
+        }
+
+        string substituted = opcNode;
+        foreach (OpcNodeSubstitution substitution in substitutionen)
+        {
+            substituted = substituted.Replace(
+                substitution.Suchtext,
+                substitution.Ersatztext,
+                StringComparison.OrdinalIgnoreCase);
+        }
+
+        return substituted;
     }
 
     private static string LoadKranSpsLebensZaehlerNodeId(string connectionString)
@@ -199,7 +285,9 @@ internal static class DatabaseConfig
     }
 
 
-    private static IReadOnlyList<SimEventMappingConfiguration> LoadSimEventZuordnungen(string connectionString)
+    private static IReadOnlyList<SimEventMappingConfiguration> LoadSimEventZuordnungen(
+        string connectionString,
+        IReadOnlyList<OpcNodeSubstitution> substitutionen)
     {
         using var connection = new SqlConnection(connectionString);
         using var command = new SqlCommand(
@@ -236,7 +324,7 @@ internal static class DatabaseConfig
                         Convert.ToString(reader["TargetNodeName"])?.Trim() ?? string.Empty,
                         Convert.ToString(reader["TargetNodeRole"])?.Trim() ?? string.Empty,
                         Convert.ToString(reader["TargetDataType"])?.Trim() ?? string.Empty,
-                        targetOpcNode),
+                        SubstituteOpcNode(targetOpcNode, substitutionen)),
                     Convert.ToString(reader["Zuordnungstyp"])?.Trim() ?? string.Empty,
                     reader["Fixwert"] == DBNull.Value
                         ? null
@@ -251,7 +339,8 @@ internal static class DatabaseConfig
     private static IReadOnlyList<EventNodeConfiguration> LoadEventOpcNodes(
         string connectionString,
         string eventName,
-        string direction)
+        string direction,
+        IReadOnlyList<OpcNodeSubstitution> substitutionen)
     {
         using var connection = new SqlConnection(connectionString);
         using var command = new SqlCommand(
@@ -289,7 +378,7 @@ internal static class DatabaseConfig
                     Convert.ToString(reader["NodeName"])?.Trim() ?? string.Empty,
                     Convert.ToString(reader["NodeRole"])?.Trim() ?? string.Empty,
                     Convert.ToString(reader["DataType"])?.Trim() ?? string.Empty,
-                    opcNode));
+                    SubstituteOpcNode(opcNode, substitutionen)));
         }
 
         return nodes;
