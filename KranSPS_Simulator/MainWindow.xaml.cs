@@ -20,8 +20,10 @@ public partial class MainWindow : Window
     private const double DemoHubSpeedMmPerSecond = 7200.0;
     private const int DemoTelegrammNummer = -1;
     private const decimal MaxChargierIstGewichtKg = 1000m;
-    private const decimal EinlagerIstGewichtKg = 800m;
+    private const int EinlagerIstGewichtMinKg = 700;
+    private const int EinlagerIstGewichtMaxKg = 900;
     private const string MagnetAnNodeName = "MagnetAn";
+    private const string MasseNettoNodeName = "MasseNetto";
 
     private readonly FalcomUiLogSink uiLogSink = new();
     private readonly FalcomFileSink fileLogSink;
@@ -67,6 +69,7 @@ public partial class MainWindow : Window
     private int? letzterFalcomLebensZaehler;
     private DateTime? letzterFalcomLebensZaehlerEmpfangenAm;
     private int gewuenschterMagnetAnWert;
+    private int masseNetto;
     private int? letzterGesendeterMagnetAnWert;
     private AktuelleFahrtSimulation? aktiveSimulationsFahrt;
     private AktuelleFahrtSimulation? letzteAbgefahreneFahrt;
@@ -789,10 +792,22 @@ public partial class MainWindow : Window
             return value;
         }
 
+        if (aktiveSimulationsFahrt?.IstGewichtKg is decimal istGewichtAusQuelle)
+        {
+            Log($"0152|Istgewicht fuer KranfahrtBeendet stammt aus Quellenaufnahme: IstGewicht={istGewichtAusQuelle:0.###} kg, Ursprungswert={istGewicht:0.###} kg.");
+            return istGewichtAusQuelle;
+        }
+
         if (IstAktiveFahrtEinlagerfahrt())
         {
-            Log($"0127|IstGewicht fuer Einlagerfahrt wird auf {EinlagerIstGewichtKg:0.###} kg gesetzt. Ursprungswert={istGewicht:0.###} kg.");
-            return EinlagerIstGewichtKg;
+            decimal einlagerIstGewicht = ErzeugeEinlagerIstGewichtKg();
+            if (aktiveSimulationsFahrt is not null)
+            {
+                aktiveSimulationsFahrt.IstGewichtKg = einlagerIstGewicht;
+            }
+
+            Log($"0153|Istgewicht war beim Eventversand noch nicht gesetzt. Fallback fuer Einlagerfahrt: IstGewicht={einlagerIstGewicht:0.###} kg, Bereich={EinlagerIstGewichtMinKg}..{EinlagerIstGewichtMaxKg} kg, Ursprungswert={istGewicht:0.###} kg.");
+            return einlagerIstGewicht;
         }
 
         if (istGewicht <= MaxChargierIstGewichtKg)
@@ -802,6 +817,45 @@ public partial class MainWindow : Window
 
         Log($"0128|IstGewicht fuer KranfahrtBeendet wird auf maximal {MaxChargierIstGewichtKg:0.###} kg begrenzt. Ursprungswert={istGewicht:0.###} kg.");
         return MaxChargierIstGewichtKg;
+    }
+
+    private void AktualisiereIstGewichtBeimQuellenErreichen()
+    {
+        if (aktiveSimulationsFahrt is null)
+        {
+            return;
+        }
+
+        if (IstAktiveFahrtEinlagerfahrt())
+        {
+            decimal istGewicht = ErzeugeEinlagerIstGewichtKg();
+            aktiveSimulationsFahrt.IstGewichtKg = istGewicht;
+            masseNetto = (int)Math.Round(istGewicht, MidpointRounding.AwayFromZero);
+            SetKranPositionValue(
+                MasseNettoNodeName,
+                masseNetto.ToString(CultureInfo.InvariantCulture));
+            Log($"0150|Istgewicht an Quelle ermittelt: Typ=EINLAGERN, IstGewicht={istGewicht:0.###} kg, Bereich={EinlagerIstGewichtMinKg}..{EinlagerIstGewichtMaxKg} kg, Quelle={aktiveSimulationsFahrt.QuelleBezeichnung} ({aktiveSimulationsFahrt.QuellePositionID}).");
+            return;
+        }
+
+        decimal chargierIstGewicht = aktiveSimulationsFahrt.SollMengeKg > 0
+            ? Math.Min(aktiveSimulationsFahrt.SollMengeKg, MaxChargierIstGewichtKg)
+            : MaxChargierIstGewichtKg;
+
+        aktiveSimulationsFahrt.IstGewichtKg = chargierIstGewicht;
+        masseNetto = (int)Math.Round(chargierIstGewicht, MidpointRounding.AwayFromZero);
+        SetKranPositionValue(
+            MasseNettoNodeName,
+            masseNetto.ToString(CultureInfo.InvariantCulture));
+        Log($"0151|Istgewicht an Quelle ermittelt: Typ=CHARGIEREN, IstGewicht={chargierIstGewicht:0.###} kg, SollMenge={aktiveSimulationsFahrt.SollMengeKg:0.###} kg, Max={MaxChargierIstGewichtKg:0.###} kg, Quelle={aktiveSimulationsFahrt.QuelleBezeichnung} ({aktiveSimulationsFahrt.QuellePositionID}).");
+    }
+
+    private decimal ErzeugeEinlagerIstGewichtKg()
+    {
+        lock (demoRandom)
+        {
+            return demoRandom.Next(EinlagerIstGewichtMinKg, EinlagerIstGewichtMaxKg + 1);
+        }
     }
 
     private bool IstAktiveFahrtEinlagerfahrt()
@@ -1105,6 +1159,10 @@ public partial class MainWindow : Window
         SetKranPositionValue(
             "PosHubZ",
             posHubZ.ToString(CultureInfo.InvariantCulture));
+        masseNetto = 0;
+        SetKranPositionValue(
+            MasseNettoNodeName,
+            masseNetto.ToString(CultureInfo.InvariantCulture));
         SetKranPositionValue(
             "LebensZaehler",
             spsLebensZaehler.ToString(CultureInfo.InvariantCulture));
@@ -1287,6 +1345,8 @@ public partial class MainWindow : Window
 
         if (fahrzustand == SimulationsFahrzustand.FahreZurQuelle && aktiveSimulationsFahrt is not null)
         {
+            AktualisiereIstGewichtBeimQuellenErreichen();
+
             SetMagnetAn(
                 1,
                 $"Quelle erreicht: {aktiveSimulationsFahrt.QuelleBezeichnung} ({aktiveSimulationsFahrt.QuellePositionID}), Ziel={aktiveSimulationsFahrt.ZielBezeichnung} ({aktiveSimulationsFahrt.ZielPositionID})");
@@ -1439,6 +1499,9 @@ public partial class MainWindow : Window
         WriteKranPositionNodeNoLock(
             MagnetAnNodeName,
             gewuenschterMagnetAnWert);
+        WriteKranPositionNodeNoLock(
+            MasseNettoNodeName,
+            masseNetto);
     }
 
     private void WriteKranPositionNodeNoLock(
@@ -1477,6 +1540,13 @@ public partial class MainWindow : Window
         bool force = false)
     {
         gewuenschterMagnetAnWert = value;
+        if (value == 0)
+        {
+            masseNetto = 0;
+            SetKranPositionValue(
+                MasseNettoNodeName,
+                masseNetto.ToString(CultureInfo.InvariantCulture));
+        }
 
         try
         {
@@ -1841,6 +1911,10 @@ public partial class MainWindow : Window
         FahreZurGrundstellung
     }
 }
+
+
+
+
 
 
 

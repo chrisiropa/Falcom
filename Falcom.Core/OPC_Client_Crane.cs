@@ -14,6 +14,7 @@ namespace Falcom
       private const string PosKatzeYNodeName = "PosKatzeY";
       private const string PosHubZNodeName = "PosHubZ";
       private const string MagnetAnNodeName = "MagnetAn";
+      private const string MasseNettoNodeName = "MasseNetto";
       private const string LebensZaehlerNodeName = "LebensZaehler";
       private const int KranfahrtBeendetEventId = 1;
       private const int KranfahrtAuftragEventId = 2;
@@ -55,6 +56,7 @@ namespace Falcom
       private int? aktuellePosKatzeY;
       private int? aktuellePosHubZ;
       private int? aktuellerMagnetAn;
+      private int? aktuelleMasseNetto;
       private string? lastKranfahrtAuftragConfigurationIssue;
       private readonly CancellationTokenSource backgroundReconnectCancellation = new();
       private bool disposed;
@@ -929,7 +931,7 @@ namespace Falcom
          return true;
       }
 
-      private void TryReadAndSendKranPositionFromTrigger(string triggerNodeId)
+      private void TryReadAndSendKranPositionFromTrigger(string triggerNodeId, object? triggerValue = null)
       {
          if (!IsKranPositionTriggerNode(triggerNodeId))
          {
@@ -947,6 +949,8 @@ namespace Falcom
 
          bool magnetAnConfigured =
             TryGetConfiguredKranPositionNode(MagnetAnNodeName, out string magnetAnNode);
+         bool masseNettoConfigured =
+            TryGetConfiguredKranPositionNode(MasseNettoNodeName, out string masseNettoNode);
 
          try
          {
@@ -954,6 +958,7 @@ namespace Falcom
             int posKatzeY;
             int posHubZ;
             int? magnetAn = null;
+            int? masseNetto = null;
 
             lock (_syncRoot)
             {
@@ -964,12 +969,18 @@ namespace Falcom
                {
                   magnetAn = ReadKranPositionPayloadInt32(magnetAnNode, MagnetAnNodeName);
                }
+
+               if (masseNettoConfigured)
+               {
+                  masseNetto = ReadKranPositionPayloadInt32(masseNettoNode, MasseNettoNodeName);
+               }
             }
 
             aktuellePosKranX = posKranX;
             aktuellePosKatzeY = posKatzeY;
             aktuellePosHubZ = posHubZ;
             aktuellerMagnetAn = magnetAn;
+            aktuelleMasseNetto = masseNetto;
             kranPositionEventsInCurrentMinute++;
 
             _ = _kranLiveSignalRClient.SendKranPositionAsync(
@@ -977,6 +988,33 @@ namespace Falcom
                aktuellePosKatzeY,
                aktuellePosHubZ,
                aktuellerMagnetAn,
+               aktuelleMasseNetto,
+               CancellationToken.None);
+
+            var eventValues = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+               [PosKranXNodeName] = aktuellePosKranX,
+               [PosKatzeYNodeName] = aktuellePosKatzeY,
+               [PosHubZNodeName] = aktuellePosHubZ
+            };
+
+            if (magnetAnConfigured)
+            {
+               eventValues[MagnetAnNodeName] = aktuellerMagnetAn;
+            }
+
+            if (masseNettoConfigured)
+            {
+               eventValues[MasseNettoNodeName] = aktuelleMasseNetto;
+            }
+
+            _ = _kranLiveSignalRClient.SendKranOpcEventAsync(
+               5,
+               KranPositionEventName,
+               KranPositionDirection,
+               LebensZaehlerNodeName,
+               triggerValue,
+               eventValues,
                CancellationToken.None);
 
             LogKranPositionSummaryIfDue();
@@ -1229,12 +1267,13 @@ namespace Falcom
          }
 
          _logger.LogInformation(
-            "005A|Kranposition aktiv. In den letzten 60 Sekunden wurden {EventCount} Positionswerte empfangen. X={PosKranX}, Y={PosKatzeY}, Z={PosHubZ}, MagnetAn={MagnetAn}.",
+            "005A|Kranposition aktiv. In den letzten 60 Sekunden wurden {EventCount} Positionswerte empfangen. X={PosKranX}, Y={PosKatzeY}, Z={PosHubZ}, MagnetAn={MagnetAn}, MasseNetto={MasseNetto}.",
             kranPositionEventsInCurrentMinute,
             aktuellePosKranX,
             aktuellePosKatzeY,
             aktuellePosHubZ,
-            aktuellerMagnetAn);
+            aktuellerMagnetAn,
+            aktuelleMasseNetto);
 
          kranPositionEventsInCurrentMinute = 0;
          nextKranPositionLogUtc = nowUtc.AddMinutes(1);
@@ -1282,12 +1321,12 @@ if (string.Equals(
                   lebensZaehler,
                   CancellationToken.None);
                LogKranSpsLebensZaehlerSummaryIfDue(lebensZaehler);
-               TryReadAndSendKranPositionFromTrigger(changedNodeId);
+               TryReadAndSendKranPositionFromTrigger(changedNodeId, neuerZaehlerWert);
                return;
             }
             if (IsKranPositionTriggerNode(changedNodeId))
             {
-               TryReadAndSendKranPositionFromTrigger(changedNodeId);
+               TryReadAndSendKranPositionFromTrigger(changedNodeId, neuerZaehlerWert);
                return;
             }
 
@@ -1504,6 +1543,8 @@ if (string.Equals(
       }
    }
 }
+
+
 
 
 

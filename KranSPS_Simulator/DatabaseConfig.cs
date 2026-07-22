@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Text.Json;
 using Microsoft.Data.SqlClient;
 
@@ -456,4 +456,8 @@ internal sealed record AktuelleFahrtSimulation(
     string QuelleBezeichnung,
     string ZielBezeichnung,
     KranPositionGroundPosition Quelle,
-    KranPositionGroundPosition Ziel);
+    KranPositionGroundPosition Ziel)
+{
+    public decimal? IstGewichtKg { get; set; }
+}
+

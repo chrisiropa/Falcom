@@ -73,6 +73,7 @@ public sealed class FalcomKranLiveStatusService
       int? posKatzeY,
       int? posHubZ,
       int? magnetAn,
+      int? masseNetto,
       DateTime timestampUtc,
       string source)
    {
@@ -81,6 +82,7 @@ public sealed class FalcomKranLiveStatusService
          posKatzeY,
          posHubZ,
          magnetAn,
+         masseNetto,
          timestampUtc,
          source);
 
@@ -137,6 +139,7 @@ public sealed record KranPositionSnapshot(
    int? PosKatzeY,
    int? PosHubZ,
    int? MagnetAn,
+   int? MasseNetto,
    DateTime TimestampUtc,
    string Source);
 
@@ -153,3 +156,4 @@ public sealed record KranOpcEventSnapshot(
 public sealed record KranOpcEventItemSnapshot(
    string NodeName,
    string Value);
+

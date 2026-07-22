@@ -37,6 +37,7 @@ public sealed class FalcomKranLiveSignalRClient
       int? posKatzeY,
       int? posHubZ,
       int? magnetAn,
+      int? masseNetto,
       CancellationToken cancellationToken)
    {
       if (cancellationToken.IsCancellationRequested)
@@ -49,6 +50,7 @@ public sealed class FalcomKranLiveSignalRClient
          posKatzeY,
          posHubZ,
          magnetAn,
+         masseNetto,
          DateTime.UtcNow,
          "Kran-SPS");
 
@@ -82,3 +84,4 @@ public sealed class FalcomKranLiveSignalRClient
       return Task.CompletedTask;
    }
 }
+
