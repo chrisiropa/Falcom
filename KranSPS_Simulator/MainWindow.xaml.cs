@@ -15,9 +15,9 @@ public partial class MainWindow : Window
 {
     private static readonly TimeSpan ConnectRetryDelay = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan ReconnectLogThrottle = TimeSpan.FromMinutes(1);
-    private const double DemoKranSpeedMmPerSecond = 9600.0;
-    private const double DemoKatzeSpeedMmPerSecond = 9600.0;
-    private const double DemoHubSpeedMmPerSecond = 7200.0;
+    private const double DemoKranSpeedMmPerSecond = 2400.0;
+    private const double DemoKatzeSpeedMmPerSecond = 2400.0;
+    private const double DemoHubSpeedMmPerSecond = 1800.0;
     private const int DemoTelegrammNummer = -1;
     private const decimal MaxChargierIstGewichtKg = 1000m;
     private const int EinlagerIstGewichtMinKg = 700;
@@ -1911,6 +1911,7 @@ public partial class MainWindow : Window
         FahreZurGrundstellung
     }
 }
+
 
 
 

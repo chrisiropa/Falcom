@@ -143,37 +143,21 @@ namespace Falcom
 
                               if (!sendResult.Success)
                               {
-                                 string bemerkung =
-                                    $"FEHLER beim Starten der Kranfahrt: {sendResult.Reason}";
                                  AktuelleFahrtResult sendFailureResult =
                                     _aktuelleFahrtRepository.MarkSpsSendFailure(
                                        result.AktuelleFahrtID,
                                        sendResult.Reason);
 
+                                 _runtimeStatus.SetAktuelleFahrt(sendFailureResult);
+
                                  _logger.LogWarning(
-                                    "008A|SPS-Fahrauftrag Sendefehler markiert: AktuelleFahrtID={AktuelleFahrtID}, AuftragID={AuftragID}, Grund={Reason}.",
+                                    "0110|Technischer SPS-Sendefehler. Aktuelle Fahrt bleibt aktiv und wird automatisch erneut gesendet: AktuelleFahrtID={AktuelleFahrtID}, AuftragID={AuftragID}, Teilfahrt={AuftragTeilfahrt}, Grund={Reason}.",
                                     sendFailureResult.AktuelleFahrtID,
                                     sendFailureResult.AuftragID,
+                                    sendFailureResult.AuftragTeilfahrt,
                                     sendResult.Reason);
 
-
-                                 AktuelleFahrtResult failResult =
-                                    _aktuelleFahrtRepository.FailAktuelleFahrt(
-                                       result.AktuelleFahrtID,
-                                       bemerkung);
-
-                                 _runtimeStatus.SetAktuelleFahrt(AktuelleFahrtResult.Empty(
-                                    "Keine aktive Fahrt."));
-
-                                 _logger.LogError(
-                                    "0109|Aktuelle Fahrt wegen nicht sendbarem SPS-Fahrauftrag historisiert: Erfolg={Success}, Grund={Reason}, AktuelleFahrtID={AktuelleFahrtID}, AuftragID={AuftragID}, Bemerkung={Bemerkung}.",
-                                    failResult.Success,
-                                    failResult.Reason,
-                                    failResult.AktuelleFahrtID,
-                                    failResult.AuftragID,
-                                    bemerkung);
-
-                                 SetState(ProcessState.Fehler);
+                                 SetState(ProcessState.OpcGestoert);
                               }
                               else
                               {
@@ -335,7 +319,7 @@ namespace Falcom
             _runtimeStatus.SetAktuelleFahrt(aktuelleFahrt);
 
             _logger.LogInformation(
-               "0054|Programmstart: Aktuelle Fahrt aus Datenbank erkannt. Rekonstruiere Zustand WarteAufSpsRueckmeldung. AktuelleFahrtID={AktuelleFahrtID}, AuftragID={AuftragID}, Typ={AuftragsTyp}, QuellePositionID={QuellePositionID}, ZielPositionID={ZielPositionID}, Quelle={Quelle}, Ziel={Ziel}, SollMengeKg={SollMengeKg}.",
+               "0054|Programmstart: Aktuelle Fahrt aus Datenbank erkannt. Rekonstruiere Zustand aus FALCOM_AKTUELLE_FAHRT. AktuelleFahrtID={AktuelleFahrtID}, AuftragID={AuftragID}, Typ={AuftragsTyp}, QuellePositionID={QuellePositionID}, ZielPositionID={ZielPositionID}, Quelle={Quelle}, Ziel={Ziel}, SollMengeKg={SollMengeKg}, SpsSendestatus={SpsSendestatus}.",
                aktuelleFahrt.AktuelleFahrtID,
                aktuelleFahrt.AuftragID,
                aktuelleFahrt.AuftragsTyp,
@@ -343,9 +327,23 @@ namespace Falcom
                aktuelleFahrt.ZielPositionID,
                aktuelleFahrt.Quelle,
                aktuelleFahrt.Ziel,
-               aktuelleFahrt.SollMengeKg);
+               aktuelleFahrt.SollMengeKg,
+               aktuelleFahrt.SpsSendestatus);
 
-            SetState(ProcessState.WarteAufSpsRueckmeldung);
+            if (string.Equals(aktuelleFahrt.SpsSendestatus, "FEHLER", StringComparison.OrdinalIgnoreCase))
+            {
+               _logger.LogWarning(
+                  "0111|Programmstart: Aktuelle Fahrt hat einen technischen SPS-Sendefehler. Sie bleibt aktiv und wird automatisch erneut gesendet. AktuelleFahrtID={AktuelleFahrtID}, AuftragID={AuftragID}, Teilfahrt={AuftragTeilfahrt}, Grund={Grund}.",
+                  aktuelleFahrt.AktuelleFahrtID,
+                  aktuelleFahrt.AuftragID,
+                  aktuelleFahrt.AuftragTeilfahrt,
+                  aktuelleFahrt.SpsSendefehler);
+               SetState(ProcessState.OpcGestoert);
+            }
+            else
+            {
+               SetState(ProcessState.WarteAufSpsRueckmeldung);
+            }
             return;
          }
 
@@ -378,9 +376,12 @@ namespace Falcom
             return "INITIAL";
          }
 
-         return state.Value == ProcessState.Fehler
-            ? "Störung"
-            : state.Value.ToString();
+         return state.Value switch
+         {
+            ProcessState.Fehler => "Störung",
+            ProcessState.OpcGestoert => "OPC_GESTOERT",
+            _ => state.Value.ToString()
+         };
       }
 
       private async Task ScheduleWatchdogEventsAsync(CancellationToken stoppingToken)
@@ -451,7 +452,7 @@ namespace Falcom
                _runtimeStatus.SetAktuelleFahrt(aktuelleFahrt);
 
                _logger.LogInformation(
-                  "0087|Bedieneranforderung: Aktuelle Fahrt wird erneut an die Kran-SPS gesendet. AktuelleFahrtID={AktuelleFahrtID}, AuftragID={AuftragID}, Teilfahrt={AuftragTeilfahrt}, Grund={Grund}, AngefordertVon={AngefordertVon}.",
+                  "0087|SPS-Sendeversuch fuer aktuelle Fahrt wird gestartet. AktuelleFahrtID={AktuelleFahrtID}, AuftragID={AuftragID}, Teilfahrt={AuftragTeilfahrt}, Grund={Grund}, AngefordertVon={AngefordertVon}.",
                   aktuelleFahrt.AktuelleFahrtID,
                   aktuelleFahrt.AuftragID,
                   aktuelleFahrt.AuftragTeilfahrt,
@@ -500,12 +501,12 @@ namespace Falcom
                _runtimeStatus.SetAktuelleFahrt(failedResult);
 
                _logger.LogWarning(
-                  "0089|Erneutes Senden der aktuellen Fahrt an die Kran-SPS ist fehlgeschlagen: AktuelleFahrtID={AktuelleFahrtID}, AuftragID={AuftragID}, Grund={Reason}.",
+                  "0089|SPS-Sendeversuch ist erneut technisch fehlgeschlagen. Aktuelle Fahrt bleibt aktiv und wird weiter automatisch versucht: AktuelleFahrtID={AktuelleFahrtID}, AuftragID={AuftragID}, Grund={Reason}.",
                   failedResult.AktuelleFahrtID,
                   failedResult.AuftragID,
                   sendResult.Reason);
 
-               SetState(ProcessState.Fehler);
+               SetState(ProcessState.OpcGestoert);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -530,6 +531,8 @@ namespace Falcom
       
    }
 }
+
+
 
 
 
