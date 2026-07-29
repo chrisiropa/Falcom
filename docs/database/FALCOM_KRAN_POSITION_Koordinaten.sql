@@ -15,7 +15,7 @@ BEGIN
       Breite_mm int NOT NULL,
       Laenge_mm int NOT NULL,
       StartKranY int NULL,
-      StopKranX int NULL,
+      StopKranY int NULL,
       StartKatzeX int NULL,
       StopKatzeX int NULL,
       PosHubZ_Oben_mm int NULL,
@@ -36,9 +36,9 @@ IF COL_LENGTH(N'dbo.FALCOM_KRAN_POSITION', N'AnfahrZ_mm') IS NULL ALTER TABLE db
 IF NOT EXISTS (SELECT 1 FROM dbo.FALCOM_KRAN_LAYOUT WHERE Name = N'Standard 24x24m')
 BEGIN
    INSERT dbo.FALCOM_KRAN_LAYOUT
-   (Name, Breite_mm, Laenge_mm, StartKranY, StopKranX, StartKatzeX, StopKatzeX, PosHubZ_Oben_mm, PosHubZ_Unten_mm, Aktiv, Bemerkung)
+   (Name, Breite_mm, Laenge_mm, StartKranY, StopKranY, StartKatzeX, StopKatzeX, PosHubZ_Oben_mm, PosHubZ_Unten_mm, Aktiv, Bemerkung)
    VALUES
-   (N'Standard 24x24m', 24000, 24000, 1000, 24000, 500, 23500, 200, 8500, 1, N'Standardlayout: CW oben, Lagerboxen mittig, LKW-Abladeplätze unten.');
+   (N'Standard 24x24m', 24000, 24000, 1000, 24000, 500, 23500, 200, 8500, 1, N'Standardlayout: CW oben, Lagerboxen mittig, LKW-Abladeplï¿½tze unten.');
 END;
 ELSE
 BEGIN
@@ -46,13 +46,13 @@ BEGIN
       SET Breite_mm = 24000,
           Laenge_mm = 24000,
           StartKranY = 1000,
-          StopKranX = 24000,
+          StopKranY = 24000,
           StartKatzeX = 500,
           StopKatzeX = 23500,
           PosHubZ_Oben_mm = 200,
           PosHubZ_Unten_mm = 8500,
           Aktiv = 1,
-          Bemerkung = N'Standardlayout: CW oben, Lagerboxen mittig, LKW-Abladeplätze unten.'
+          Bemerkung = N'Standardlayout: CW oben, Lagerboxen mittig, LKW-Abladeplï¿½tze unten.'
    WHERE Name = N'Standard 24x24m';
 END;
 
@@ -85,8 +85,8 @@ INSERT @positionen VALUES
 
 (1,  N'LAGERBOX', 1,  N'Lagerbox 1',  N'QUELLE_UND_ZIEL', N'Reihe 1 unten',      0,     17334, 6000, 2666),
 (4,  N'LAGERBOX', 4,  N'Lagerbox 4',  N'QUELLE_UND_ZIEL', N'Reihe 1 unten',      0,     14667, 6000, 2667),
-(7,  N'LAGERBOX', 7,  N'Lagerbox 7',  N'QUELLE_UND_ZIEL', N'Reihe 1 oben groß',  0,      9334, 6000, 5333),
-(10, N'LAGERBOX', 10, N'Lagerbox 10', N'QUELLE_UND_ZIEL', N'Reihe 1 oben groß',  0,      4000, 6000, 5334),
+(7,  N'LAGERBOX', 7,  N'Lagerbox 7',  N'QUELLE_UND_ZIEL', N'Reihe 1 oben groï¿½',  0,      9334, 6000, 5333),
+(10, N'LAGERBOX', 10, N'Lagerbox 10', N'QUELLE_UND_ZIEL', N'Reihe 1 oben groï¿½',  0,      4000, 6000, 5334),
 
 (2,  N'LAGERBOX', 2,  N'Lagerbox 2',  N'QUELLE_UND_ZIEL', N'Reihe 2', 6000, 16000, 6000, 4000),
 (5,  N'LAGERBOX', 5,  N'Lagerbox 5',  N'QUELLE_UND_ZIEL', N'Reihe 2', 6000, 12000, 6000, 4000),
