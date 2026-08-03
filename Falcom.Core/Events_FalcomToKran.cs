@@ -5,17 +5,18 @@ namespace Falcom
    /// </summary>
    public sealed class KranfahrtAuftragEvent : FalcomEventBase
    {
-      public const string EventName = "KranfahrtAuftrag";
+      public const string EventName = "Event_102";
       public const string Direction = "FALCOM->KRAN_SPS";
 
-      public const string AuftragNummerNodeName = "AuftragNummer";
-      public const string AuftragTeilfahrtNodeName = "AuftragTeilfahrt";
+      public const string AuftragNummerNodeName = "Nr";
+      public const string AuftragTeilfahrtNodeName = "TeilNr";
       public const string QuelleNodeName = "Quelle";
       public const string ZielNodeName = "Ziel";
       public const string SollMasseNodeName = "SollMasse";
       public const string ToleranzNodeName = "Toleranz";
-      public const string TelegrammNummerNodeName = "TelegrammNummer";
-      public const string ZaehlerAnfahrtNodeName = "ZaehlerAnfahrt";
+      public const string EventTriggerNodeName = EventName;
+      public const string ZaehlerAnfahrtNodeName = "ZielPos";
+      public const string MaterialNrNodeName = "MaterialNr";
 
       public KranfahrtAuftragEvent(
          long? aktuelleFahrtID,
@@ -25,7 +26,8 @@ namespace Falcom
          long zielPositionID,
          decimal sollMasseKg,
          decimal toleranzKg,
-         int zaehlerAnfahrt = 0)
+         int zaehlerAnfahrt = 0,
+         int materialNr = 0)
       {
          AktuelleFahrtID = aktuelleFahrtID;
          AuftragNummer = auftragNummer;
@@ -35,6 +37,7 @@ namespace Falcom
          SollMasseKg = sollMasseKg;
          ToleranzKg = toleranzKg;
          ZaehlerAnfahrt = zaehlerAnfahrt;
+         MaterialNr = materialNr;
       }
 
       public override string Source => "FALCOM";
@@ -56,6 +59,8 @@ namespace Falcom
       public decimal ToleranzKg { get; }
 
       public int ZaehlerAnfahrt { get; private set; }
+
+      public int MaterialNr { get; }
 
       public void SetZaehlerAnfahrt(int zaehlerAnfahrt)
       {

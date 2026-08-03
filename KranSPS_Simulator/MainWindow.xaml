@@ -89,7 +89,7 @@
                </Grid.ColumnDefinitions>
                <Ellipse x:Name="FalcomLifeLamp" Width="22" Height="22" Fill="#6B7280" Margin="0,4,12,0" />
                <StackPanel Grid.Column="1">
-                  <TextBlock Style="{StaticResource Caption}" Text="Lebenszähler Falcom → SPS" />
+                  <TextBlock Style="{StaticResource Caption}" Text="Event_101 Falcom → SPS" />
                   <TextBlock x:Name="FalcomLifeValueText" Style="{StaticResource Value}" Text="-" />
                   <TextBlock x:Name="FalcomLifeTimeText" Style="{StaticResource Caption}" Text="Noch nicht empfangen" />
                </StackPanel>
@@ -104,7 +104,7 @@
                </Grid.ColumnDefinitions>
                <Ellipse x:Name="SpsLifeLamp" Width="22" Height="22" Fill="#6B7280" Margin="0,4,12,0" />
                <StackPanel Grid.Column="1">
-                  <TextBlock Style="{StaticResource Caption}" Text="Lebenszähler SPS → Falcom" />
+                  <TextBlock Style="{StaticResource Caption}" Text="Event_201 SPS → Falcom" />
                   <TextBlock x:Name="SpsLifeValueText" Style="{StaticResource Value}" Text="-" />
                   <TextBlock x:Name="SpsLifeTimeText" Style="{StaticResource Caption}" Text="Noch nicht gesendet" />
                </StackPanel>
@@ -218,10 +218,10 @@
                            <DockPanel>
                               <StackPanel DockPanel.Dock="Top"
                                           Margin="0,0,0,12">
-                                 <TextBlock Text="Event 1"
+                                 <TextBlock Text="Event 202"
                                             Foreground="#9FD5CF"
                                             FontSize="13" />
-                                 <TextBlock Text="KranfahrtBeendet"
+                                 <TextBlock Text="Event_202"
                                             Foreground="#F4FFFC"
                                             FontSize="22"
                                             FontWeight="Bold" />
@@ -266,10 +266,10 @@
                            <DockPanel>
                               <StackPanel DockPanel.Dock="Top"
                                           Margin="0,0,0,12">
-                                 <TextBlock Text="Event 2"
+                                 <TextBlock Text="Event 102"
                                             Foreground="#9FD5CF"
                                             FontSize="13" />
-                                 <TextBlock Text="KranfahrtAuftrag"
+                                 <TextBlock Text="Event_102"
                                             Foreground="#F4FFFC"
                                             FontSize="22"
                                             FontWeight="Bold" />
@@ -314,10 +314,10 @@
                            <DockPanel>
                               <StackPanel DockPanel.Dock="Top"
                                           Margin="0,0,0,12">
-                                 <TextBlock Text="Event 5"
+                                  <TextBlock Text="Event 203"
                                             Foreground="#9FD5CF"
                                             FontSize="13" />
-                                 <TextBlock Text="KranPosition"
+                                  <TextBlock Text="Event_203"
                                             Foreground="#F4FFFC"
                                             FontSize="22"
                                             FontWeight="Bold" />
@@ -326,7 +326,7 @@
                                             FontSize="12" />
                               </StackPanel>
 
-                              <ItemsControl x:Name="KranPositionEventItems">
+                              <ItemsControl x:Name="Event203EventItems">
                                  <ItemsControl.ItemTemplate>
                                     <DataTemplate>
                                        <Grid Margin="0,4">

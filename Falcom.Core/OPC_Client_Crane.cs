@@ -2,25 +2,29 @@
 using Opc.UaFx;
 using Opc.UaFx.Client;
 using System.Data;
+using System.Globalization;
 
 namespace Falcom
 {
    public sealed class OPC_Client_Crane : IDisposable
    {
       private static readonly TimeSpan ConnectRetryDelay = TimeSpan.FromSeconds(5);
-      private const string KranPositionEventName = "KranPosition";
-      private const string KranPositionDirection = "KRAN_SPS->FALCOM";
-      private const string PosKranXNodeName = "PosKranX";
-      private const string PosKatzeYNodeName = "PosKatzeY";
-      private const string PosHubZNodeName = "PosHubZ";
+      private const int Event101Id = 101;
+      private const string Event101Direction = "FALCOM->KRAN_SPS";
+      private const int Event203Id = 203;
+      private const string Event203Name = "Event_203";
+      private const string Event203Direction = "KRAN_SPS->FALCOM";
+      private const string PosKranNodeName = "PosKran";
+      private const string PosKatzeNodeName = "PosKatze";
+      private const string PosHubNodeName = "PosHub";
       private const string MagnetAnNodeName = "MagnetAn";
       private const string MasseNettoNodeName = "MasseNetto";
-      private const string LebensZaehlerNodeName = "LebensZaehler";
-      private const int KranfahrtBeendetEventId = 1;
-      private const int KranfahrtAuftragEventId = 2;
-      private const string KranfahrtAuftragEventName = "KranfahrtAuftrag";
+      private const string Event203TriggerNodeName = "Event_203";
+      private const int KranfahrtBeendetEventId = 202;
+      private const int KranfahrtAuftragEventId = 102;
+      private const string KranfahrtAuftragEventName = KranfahrtAuftragEvent.EventName;
       private const string KranfahrtAuftragDirection = "FALCOM->KRAN_SPS";
-      private const string TelegrammNummerNodeName = "TelegrammNummer";
+      private const string Event102TriggerNodeName = KranfahrtAuftragEvent.EventTriggerNodeName;
 
       private readonly ILogger<OPC_Client_Crane> _logger;
       private readonly ConfigManager _configManager;
@@ -31,9 +35,9 @@ namespace Falcom
       private readonly object _syncRoot = new();
       private readonly List<OpcMonitoredItem> monitoredItems = new();
       private readonly string opcServerEndpoint;
-      private readonly string falcomWatchdogNodeId;
-      private readonly string kranSpsLebensZaehlerNodeId;
-      private readonly Dictionary<string, string> kranPositionOpcNodesByName;
+      private readonly string event101NodeId;
+      private readonly string event201NodeId;
+      private readonly Dictionary<string, string> event203OpcNodesByName;
       private readonly Dictionary<string, string> kranfahrtAuftragLiveOpcNodesByName;
       private OpcClient? client = null;
       private OpcSubscription? subscription = null;
@@ -41,13 +45,14 @@ namespace Falcom
       private volatile bool spsLebensZaehlerFreigegeben;
       private DateTime nextDataFlowErrorLogUtc = DateTime.MinValue;
       private DateTime nextKranSpsLebensZaehlerLogUtc = DateTime.UtcNow.AddMinutes(1);
-      private DateTime nextKranPositionLogUtc = DateTime.UtcNow.AddMinutes(1);
-      private DateTime nextKranPositionConfigurationLogUtc = DateTime.MinValue;
+      private DateTime nextEvent203LogUtc = DateTime.UtcNow.AddMinutes(1);
+      private DateTime nextEvent203ConfigurationLogUtc = DateTime.MinValue;
       private DateTime nextBackgroundReconnectLogUtc = DateTime.MinValue;
       private int kranfahrtAuftragTelegrammNummer;
       private int kranfahrtAuftragZaehlerAnfahrt;
+      private bool kranfahrtAuftragZaehlerInitialisiert;
       private int kranSpsLebensZaehlerEventsInCurrentMinute;
-      private int kranPositionEventsInCurrentMinute;
+      private int event203EventsInCurrentMinute;
       private int backgroundReconnectLoopRunning;
       private int? lastKranfahrtAuftragTelegrammNummer;
       private int? lastKranfahrtBeendetAenderungsZaehler;
@@ -79,17 +84,17 @@ namespace Falcom
          _eventQueue = eventQueue; // Zuweisung fuer den spaeteren Zugriff
          TraegerLicense();
          KranfahrtBeendetEvent.LoadOpcNodes(configManager);
-         falcomWatchdogNodeId = LoadRequiredEventOpcNode(
+         event101NodeId = LoadRequiredEventOpcNode(
             eventName: WatchdogEvent.EventName,
             direction: "FALCOM->KRAN_SPS",
-            nodeName: "LebensZaehler");
-         kranSpsLebensZaehlerNodeId = LoadRequiredEventOpcNode(
+            nodeName: WatchdogEvent.EventName);
+         event201NodeId = LoadRequiredEventOpcNode(
             eventName: KranSpsLebensZaehlerEvent.EventName,
             direction: "KRAN_SPS->FALCOM",
-            nodeName: "LebensZaehler");
-         kranPositionOpcNodesByName = LoadOptionalEventOpcNodes(
-            KranPositionEventName,
-            KranPositionDirection);
+            nodeName: KranSpsLebensZaehlerEvent.EventName);
+         event203OpcNodesByName = LoadOptionalEventOpcNodes(
+            Event203Name,
+            Event203Direction);
          kranfahrtAuftragLiveOpcNodesByName = LoadOptionalEventOpcNodes(
             KranfahrtAuftragEventName,
             KranfahrtAuftragDirection);
@@ -352,6 +357,7 @@ namespace Falcom
          try
          {
             EnsureConnected();
+            EnsureKranfahrtAuftragZaehlerInitialisiert(nodes);
 
             int telegrammNummer = kranfahrtAuftragTelegrammNummer == int.MaxValue
                ? 0
@@ -372,25 +378,31 @@ namespace Falcom
                nodes.Ziel,
                Convert.ToInt32(kranfahrtAuftragEvent.ZielPositionID),
                KranfahrtAuftragEvent.ZielNodeName);
-            WriteRequiredNode(nodes.SollMasse, Convert.ToDouble(kranfahrtAuftragEvent.SollMasseKg));
-            WriteRequiredNode(nodes.Toleranz, Convert.ToDouble(kranfahrtAuftragEvent.ToleranzKg));
+            WriteRequiredNode(
+               nodes.SollMasse,
+               decimal.ToInt32(decimal.Round(kranfahrtAuftragEvent.SollMasseKg, 0, MidpointRounding.AwayFromZero)));
+            WriteRequiredNode(
+               nodes.Toleranz,
+               decimal.ToInt32(decimal.Round(kranfahrtAuftragEvent.ToleranzKg, 0, MidpointRounding.AwayFromZero)));
+            WriteRequiredNode(nodes.MaterialNr, kranfahrtAuftragEvent.MaterialNr);
             WriteRequiredNode(nodes.ZaehlerAnfahrt, kranfahrtAuftragEvent.ZaehlerAnfahrt);
 
-            // TelegrammNummer ist der eigentliche Trigger fuer die Kran-SPS/Simulation.
+            // Event_102 ist der eigentliche Trigger fuer die Kran-SPS/Simulation.
             // Deshalb bewusst zuletzt schreiben, nachdem alle Payload-Werte stehen.
-            WriteRequiredNode(nodes.TelegrammNummer, telegrammNummer);
+            WriteRequiredNode(nodes.EventTrigger, telegrammNummer);
 
             kranfahrtAuftragTelegrammNummer = telegrammNummer;
             kranfahrtAuftragZaehlerAnfahrt = zaehlerAnfahrt;
 
             _logger.LogInformation(
-               "0047|KranfahrtAuftrag an SPS gesendet: Auftrag={AuftragID}, Teilfahrt={AuftragTeilfahrt}, QuellePositionID={QuellePositionID}, ZielPositionID={ZielPositionID}, SollMasseKg={SollMasseKg}, ToleranzKg={ToleranzKg}, TelegrammNummer={TelegrammNummer}, ZaehlerAnfahrt={ZaehlerAnfahrt}.",
+               "0047|Event_102 an SPS gesendet: Nr={AuftragID}, TeilNr={AuftragTeilfahrt}, Quelle={QuellePositionID}, Ziel={ZielPositionID}, SollMasse={SollMasseKg}, Toleranz={ToleranzKg}, MaterialNr={MaterialNr}, Event_102={TelegrammNummer}, ZielPos={ZaehlerAnfahrt}.",
                kranfahrtAuftragEvent.AuftragNummer,
                kranfahrtAuftragEvent.AuftragTeilfahrt,
                kranfahrtAuftragEvent.QuellePositionID,
                kranfahrtAuftragEvent.ZielPositionID,
                kranfahrtAuftragEvent.SollMasseKg,
                kranfahrtAuftragEvent.ToleranzKg,
+               kranfahrtAuftragEvent.MaterialNr,
                telegrammNummer,
                kranfahrtAuftragEvent.ZaehlerAnfahrt);
 
@@ -421,20 +433,32 @@ namespace Falcom
 
             lock (_syncRoot)
             {
-               WriteRequiredNode(falcomWatchdogNodeId, lebensZaehler);
+               WriteRequiredNode(event101NodeId, lebensZaehler);
             }
+
+            _ = _kranLiveSignalRClient.SendKranOpcEventAsync(
+               Event101Id,
+               WatchdogEvent.EventName,
+               Event101Direction,
+               WatchdogEvent.EventName,
+               lebensZaehler,
+               new Dictionary<string, object?>
+               {
+                  [WatchdogEvent.EventName] = lebensZaehler
+               },
+               CancellationToken.None);
 
             MarkOpcDataFlowAvailable("Verbunden");
             return Task.FromResult(OpcSendResult.Ok());
          }
          catch (Exception ex)
          {
-            MarkOpcDataFlowUnavailable("Reconnect laeuft", "Falcom-LebensZaehler konnte nicht geschrieben werden");
-            StartBackgroundReconnectLoop("Falcom-LebensZaehler konnte nicht geschrieben werden");
+            MarkOpcDataFlowUnavailable("Reconnect laeuft", "Event_101 konnte nicht geschrieben werden");
+            StartBackgroundReconnectLoop("Event_101 konnte nicht geschrieben werden");
 
             return Task.FromResult(
                OpcSendResult.Failed(
-                  $"Falcom-LebensZaehler konnte nicht an die Kran-SPS gesendet werden. Node={falcomWatchdogNodeId}, Wert={lebensZaehler}, Fehler={ex.GetType().Name}: {ex.Message}"));
+                  $"Event_101 konnte nicht an die Kran-SPS gesendet werden. Node={event101NodeId}, Wert={lebensZaehler}, Fehler={ex.GetType().Name}: {ex.Message}"));
          }
       }
       private void EnsureConnected()
@@ -500,8 +524,9 @@ namespace Falcom
             KranfahrtAuftragEvent.ZielNodeName,
             KranfahrtAuftragEvent.SollMasseNodeName,
             KranfahrtAuftragEvent.ToleranzNodeName,
-            KranfahrtAuftragEvent.TelegrammNummerNodeName,
-            KranfahrtAuftragEvent.ZaehlerAnfahrtNodeName
+            KranfahrtAuftragEvent.EventTriggerNodeName,
+            KranfahrtAuftragEvent.ZaehlerAnfahrtNodeName,
+            KranfahrtAuftragEvent.MaterialNrNodeName
          ];
 
          foreach (string nodeName in requiredNodeNames)
@@ -524,8 +549,9 @@ namespace Falcom
             opcNodes[KranfahrtAuftragEvent.ZielNodeName].Trim(),
             opcNodes[KranfahrtAuftragEvent.SollMasseNodeName].Trim(),
             opcNodes[KranfahrtAuftragEvent.ToleranzNodeName].Trim(),
-            opcNodes[KranfahrtAuftragEvent.TelegrammNummerNodeName].Trim(),
-            opcNodes[KranfahrtAuftragEvent.ZaehlerAnfahrtNodeName].Trim());
+            opcNodes[KranfahrtAuftragEvent.EventTriggerNodeName].Trim(),
+            opcNodes[KranfahrtAuftragEvent.ZaehlerAnfahrtNodeName].Trim(),
+            opcNodes[KranfahrtAuftragEvent.MaterialNrNodeName].Trim());
       }
 
       private Dictionary<string, string> LoadOptionalEventOpcNodes(
@@ -700,6 +726,7 @@ namespace Falcom
             client?.Connect();
 
             RecreateSubscription();
+            kranfahrtAuftragZaehlerInitialisiert = false;
 
             _logger.LogInformation("001B|OPC-Verbindung und Kanalregistrierung sind bereit.");
          }
@@ -737,8 +764,9 @@ namespace Falcom
          string Ziel,
          string SollMasse,
          string Toleranz,
-         string TelegrammNummer,
-         string ZaehlerAnfahrt);
+         string EventTrigger,
+         string ZaehlerAnfahrt,
+         string MaterialNr);
 
       public sealed record OpcSendResult(bool Success, string Reason, int? TelegrammNummer = null, int? ZaehlerAnfahrt = null)
       {
@@ -840,7 +868,7 @@ namespace Falcom
       {
          if (subscription == null || client == null) return false;
 
-         var zaehlerItem = new OpcMonitoredItem(kranSpsLebensZaehlerNodeId, OpcAttribute.Value);
+         var zaehlerItem = new OpcMonitoredItem(event201NodeId, OpcAttribute.Value);
          zaehlerItem.DataChangeReceived += HandleDataChange;
          subscription.AddMonitoredItem(zaehlerItem);
          monitoredItems.Add(zaehlerItem);
@@ -851,11 +879,11 @@ namespace Falcom
          kranfahrtBeendetItem.DataChangeReceived += HandleDataChange;
          subscription.AddMonitoredItem(kranfahrtBeendetItem);
          monitoredItems.Add(kranfahrtBeendetItem);
-         if (TryGetConfiguredKranfahrtAuftragLiveNode(TelegrammNummerNodeName, out string telegrammNummerNode))
+         if (TryGetConfiguredKranfahrtAuftragLiveNode(Event102TriggerNodeName, out string telegrammNummerNode))
          {
             var kranfahrtAuftragTelegrammItem = new OpcMonitoredItem(telegrammNummerNode, OpcAttribute.Value)
             {
-               Tag = "KranfahrtAuftrag.TelegrammNummer"
+               Tag = "Event_102.Event_102"
             };
             kranfahrtAuftragTelegrammItem.DataChangeReceived += HandleDataChange;
             subscription.AddMonitoredItem(kranfahrtAuftragTelegrammItem);
@@ -863,16 +891,16 @@ namespace Falcom
          }
          else
          {
-            _logger.LogWarning("0061|KranfahrtAuftrag Live-Anzeige ist nicht aktiv: TelegrammNummer-Node ist nicht gueltig konfiguriert.");
+            _logger.LogWarning("0061|Event_102 Live-Anzeige ist nicht aktiv: Trigger-Node Event_102 ist nicht gueltig konfiguriert.");
          }
 
-         if (kranPositionOpcNodesByName.TryGetValue(LebensZaehlerNodeName, out string? kranPositionTriggerNode)
+         if (event203OpcNodesByName.TryGetValue(Event203TriggerNodeName, out string? kranPositionTriggerNode)
              && IsConfiguredOpcNode(kranPositionTriggerNode)
-             && !string.Equals(kranPositionTriggerNode, kranSpsLebensZaehlerNodeId, StringComparison.Ordinal))
+             && !string.Equals(kranPositionTriggerNode, event201NodeId, StringComparison.Ordinal))
          {
             var positionTriggerItem = new OpcMonitoredItem(kranPositionTriggerNode, OpcAttribute.Value)
             {
-               Tag = "KranPosition.LebensZaehler"
+               Tag = "Event_203.Event_203"
             };
             positionTriggerItem.DataChangeReceived += HandleDataChange;
             subscription.AddMonitoredItem(positionTriggerItem);
@@ -895,7 +923,7 @@ namespace Falcom
          }
 
          _logger.LogInformation(
-            "004E|Kran-SPS LebensZaehler aktiv. In den letzten 60 Sekunden wurden {EventCount} LebensZaehler-Events empfangen. Aktueller LebensZaehler={LebensZaehler}.",
+            "004E|Event_201 aktiv. In den letzten 60 Sekunden wurden {EventCount} Event_201-Telegramme empfangen. Aktueller Zaehler={LebensZaehler}.",
             kranSpsLebensZaehlerEventsInCurrentMinute,
             currentLebensZaehler);
 
@@ -903,16 +931,16 @@ namespace Falcom
          nextKranSpsLebensZaehlerLogUtc = nowUtc.AddMinutes(1);
       }
 
-      private bool IsKranPositionTriggerNode(string nodeId)
+      private bool IsEvent203TriggerNode(string nodeId)
       {
-         return kranPositionOpcNodesByName.TryGetValue(LebensZaehlerNodeName, out string? triggerNode)
+         return event203OpcNodesByName.TryGetValue(Event203TriggerNodeName, out string? triggerNode)
                 && IsConfiguredOpcNode(triggerNode)
                 && string.Equals(nodeId, triggerNode, StringComparison.Ordinal);
       }
 
       private bool IsKranfahrtAuftragTelegrammTriggerNode(string nodeId)
       {
-         return kranfahrtAuftragLiveOpcNodesByName.TryGetValue(TelegrammNummerNodeName, out string? triggerNode)
+         return kranfahrtAuftragLiveOpcNodesByName.TryGetValue(Event102TriggerNodeName, out string? triggerNode)
                 && IsConfiguredOpcNode(triggerNode)
                 && string.Equals(nodeId, triggerNode, StringComparison.Ordinal);
       }
@@ -931,57 +959,34 @@ namespace Falcom
          return true;
       }
 
-      private void TryReadAndSendKranPositionFromTrigger(string triggerNodeId, object? triggerValue = null)
+      private void TryReadAndSendEvent203FromTrigger(string triggerNodeId, object? triggerValue = null)
       {
-         if (!IsKranPositionTriggerNode(triggerNodeId))
+         if (!IsEvent203TriggerNode(triggerNodeId))
          {
             return;
          }
 
-         if (!TryGetConfiguredKranPositionNode(PosKranXNodeName, out string posKranXNode)
-             || !TryGetConfiguredKranPositionNode(PosKatzeYNodeName, out string posKatzeYNode)
-             || !TryGetConfiguredKranPositionNode(PosHubZNodeName, out string posHubZNode))
+         if (!TryGetConfiguredEvent203Node(PosKranNodeName, out _)
+             || !TryGetConfiguredEvent203Node(PosKatzeNodeName, out _)
+             || !TryGetConfiguredEvent203Node(PosHubNodeName, out _))
          {
-            LogKranPositionConfigurationIssueIfDue(
-               "KranPosition-Trigger empfangen, aber mindestens ein Payload-Node PosKranX/PosKatzeY/PosHubZ ist nicht gueltig konfiguriert.");
+            LogEvent203ConfigurationIssueIfDue(
+               "Event_203-Trigger empfangen, aber mindestens ein Payload-Node PosKran/PosKatze/PosHub ist nicht gueltig konfiguriert.");
             return;
          }
-
-         bool magnetAnConfigured =
-            TryGetConfiguredKranPositionNode(MagnetAnNodeName, out string magnetAnNode);
-         bool masseNettoConfigured =
-            TryGetConfiguredKranPositionNode(MasseNettoNodeName, out string masseNettoNode);
 
          try
          {
-            int posKranX;
-            int posKatzeY;
-            int posHubZ;
-            int? magnetAn = null;
-            int? masseNetto = null;
+            Dictionary<string, object?> eventValues = ReadConfiguredEventValues(
+               event203OpcNodesByName,
+               Event203Name);
 
-            lock (_syncRoot)
-            {
-               posKranX = ReadKranPositionPayloadInt32(posKranXNode, PosKranXNodeName);
-               posKatzeY = ReadKranPositionPayloadInt32(posKatzeYNode, PosKatzeYNodeName);
-               posHubZ = ReadKranPositionPayloadInt32(posHubZNode, PosHubZNodeName);
-               if (magnetAnConfigured)
-               {
-                  magnetAn = ReadKranPositionPayloadInt32(magnetAnNode, MagnetAnNodeName);
-               }
-
-               if (masseNettoConfigured)
-               {
-                  masseNetto = ReadKranPositionPayloadInt32(masseNettoNode, MasseNettoNodeName);
-               }
-            }
-
-            aktuellePosKranX = posKranX;
-            aktuellePosKatzeY = posKatzeY;
-            aktuellePosHubZ = posHubZ;
-            aktuellerMagnetAn = magnetAn;
-            aktuelleMasseNetto = masseNetto;
-            kranPositionEventsInCurrentMinute++;
+            aktuellePosKranX = GetRequiredEventInt32(eventValues, PosKranNodeName);
+            aktuellePosKatzeY = GetRequiredEventInt32(eventValues, PosKatzeNodeName);
+            aktuellePosHubZ = GetRequiredEventInt32(eventValues, PosHubNodeName);
+            aktuellerMagnetAn = GetOptionalEventInt32(eventValues, MagnetAnNodeName);
+            aktuelleMasseNetto = GetOptionalEventInt32(eventValues, MasseNettoNodeName);
+            event203EventsInCurrentMinute++;
 
             _ = _kranLiveSignalRClient.SendKranPositionAsync(
                aktuellePosKranX,
@@ -991,39 +996,22 @@ namespace Falcom
                aktuelleMasseNetto,
                CancellationToken.None);
 
-            var eventValues = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
-            {
-               [PosKranXNodeName] = aktuellePosKranX,
-               [PosKatzeYNodeName] = aktuellePosKatzeY,
-               [PosHubZNodeName] = aktuellePosHubZ
-            };
-
-            if (magnetAnConfigured)
-            {
-               eventValues[MagnetAnNodeName] = aktuellerMagnetAn;
-            }
-
-            if (masseNettoConfigured)
-            {
-               eventValues[MasseNettoNodeName] = aktuelleMasseNetto;
-            }
-
             _ = _kranLiveSignalRClient.SendKranOpcEventAsync(
-               5,
-               KranPositionEventName,
-               KranPositionDirection,
-               LebensZaehlerNodeName,
+               Event203Id,
+               Event203Name,
+               Event203Direction,
+               Event203TriggerNodeName,
                triggerValue,
                eventValues,
                CancellationToken.None);
 
-            LogKranPositionSummaryIfDue();
+            LogEvent203SummaryIfDue();
          }
          catch (Exception ex)
          {
             _logger.LogWarning(
                ex,
-               "005C|KranPosition wurde durch LebensZaehler getriggert, aber die Payloads konnten nicht gelesen werden. TriggerNode={TriggerNode}.",
+               "005C|Event_203 wurde getriggert, aber die Payloads konnten nicht vollstaendig gelesen werden. TriggerNode={TriggerNode}.",
                triggerNodeId);
          }
       }
@@ -1045,7 +1033,7 @@ namespace Falcom
          {
             _logger.LogWarning(
                ex,
-               "0062|KranfahrtAuftrag.TelegrammNummer konnte nicht als Int32 interpretiert werden. Node={Node}, Wert={Value}.",
+               "0062|Event_102-Trigger konnte nicht als Int32 interpretiert werden. Node={Node}, Wert={Value}.",
                triggerNodeId,
                triggerValue);
             return;
@@ -1066,20 +1054,20 @@ namespace Falcom
                KranfahrtAuftragEventId,
                KranfahrtAuftragEventName,
                KranfahrtAuftragDirection,
-               TelegrammNummerNodeName,
+               Event102TriggerNodeName,
                telegrammNummer,
                values,
                CancellationToken.None);
 
             _logger.LogInformation(
-               "0063|KranfahrtAuftrag Live-Snapshot an Webanwendung vorgemerkt. TelegrammNummer={TelegrammNummer}.",
+               "0063|Event_102 Live-Snapshot an Webanwendung vorgemerkt. Triggerwert={TelegrammNummer}.",
                telegrammNummer);
          }
          catch (Exception ex)
          {
             _logger.LogWarning(
                ex,
-               "0064|KranfahrtAuftrag Live-Snapshot konnte nach TelegrammNr-Trigger nicht gelesen werden. TriggerNode={TriggerNode}.",
+               "0064|Event_102 Live-Snapshot konnte nach Event_102-Trigger nicht gelesen werden. TriggerNode={TriggerNode}.",
                triggerNodeId);
          }
       }
@@ -1095,20 +1083,20 @@ namespace Falcom
       {
          var values = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
          {
-            ["AenderungsZaehler"] = aenderungsZaehler,
-            ["AuftragsNummer"] = auftragId,
-            ["AuftragTeilfahrt"] = teilfahrtID,
-            ["KranQuelle"] = kranQuelle,
-            ["KranZiel"] = kranZiel,
-            ["Status"] = status,
-            ["IstGewicht"] = istGewicht
+            [KranfahrtBeendetEvent.TriggerNodeName] = aenderungsZaehler,
+            [KranfahrtBeendetEvent.AuftragNummerNodeName] = auftragId,
+            [KranfahrtBeendetEvent.AuftragTeilfahrtNodeName] = teilfahrtID,
+            [KranfahrtBeendetEvent.QuelleNodeName] = kranQuelle,
+            [KranfahrtBeendetEvent.ZielNodeName] = kranZiel,
+            [KranfahrtBeendetEvent.StatusNodeName] = status,
+            [KranfahrtBeendetEvent.IstGewichtNodeName] = istGewicht
          };
 
          _ = _kranLiveSignalRClient.SendKranOpcEventAsync(
             KranfahrtBeendetEventId,
-            "KranfahrtBeendet",
+            KranfahrtBeendetEvent.EventName,
             "KRAN_SPS->FALCOM",
-            "AenderungsZaehler",
+            KranfahrtBeendetEvent.TriggerNodeName,
             aenderungsZaehler,
             values,
             CancellationToken.None);
@@ -1182,7 +1170,8 @@ namespace Falcom
          return $"Status={value.Status.Code}, Beschreibung={value.Status.Description}, Wert={(value.Value is null ? "<null>" : value.Value)}, DataType={value.DataType}, SourceTimestamp={value.SourceTimestamp:O}, ServerTimestamp={value.ServerTimestamp:O}";
       }
       private Dictionary<string, object?> ReadConfiguredEventValues(
-         IReadOnlyDictionary<string, string> opcNodesByName)
+         IReadOnlyDictionary<string, string> opcNodesByName,
+         string eventName = "KonfiguriertesOPCEvent")
       {
          var values = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
 
@@ -1201,7 +1190,7 @@ namespace Falcom
                }
 
                OpcValue value = ReadRequiredOpcPayloadWithNullRetry(
-                  "KonfiguriertesOPCEvent",
+                   eventName,
                   node.Key,
                   node.Value);
 
@@ -1212,11 +1201,63 @@ namespace Falcom
          return values;
       }
 
-      private bool TryGetConfiguredKranPositionNode(string nodeName, out string opcNode)
+      private void EnsureKranfahrtAuftragZaehlerInitialisiert(
+         KranfahrtAuftragOpcNodes nodes)
+      {
+         if (kranfahrtAuftragZaehlerInitialisiert)
+         {
+            return;
+         }
+
+         OpcValue triggerValue = ReadRequiredOpcPayloadWithNullRetry(
+            KranfahrtAuftragEvent.EventName,
+            KranfahrtAuftragEvent.EventTriggerNodeName,
+            nodes.EventTrigger);
+         OpcValue zielPosValue = ReadRequiredOpcPayloadWithNullRetry(
+            KranfahrtAuftragEvent.EventName,
+            KranfahrtAuftragEvent.ZaehlerAnfahrtNodeName,
+            nodes.ZaehlerAnfahrt);
+
+         kranfahrtAuftragTelegrammNummer = Convert.ToInt32(
+            triggerValue.Value,
+            CultureInfo.InvariantCulture);
+         kranfahrtAuftragZaehlerAnfahrt = Convert.ToInt32(
+            zielPosValue.Value,
+            CultureInfo.InvariantCulture);
+         kranfahrtAuftragZaehlerInitialisiert = true;
+
+         _logger.LogInformation(
+            "0154|Event_102-Zaehler aus OPC synchronisiert. Event_102={Event102}, ZielPos={ZielPos}.",
+            kranfahrtAuftragTelegrammNummer,
+            kranfahrtAuftragZaehlerAnfahrt);
+      }
+
+      private static int GetRequiredEventInt32(
+         IReadOnlyDictionary<string, object?> values,
+         string nodeName)
+      {
+         if (!values.TryGetValue(nodeName, out object? value) || value is null)
+         {
+            throw new InvalidOperationException($"Event_203.{nodeName} fehlt im gelesenen Payload.");
+         }
+
+         return Convert.ToInt32(value);
+      }
+
+      private static int? GetOptionalEventInt32(
+         IReadOnlyDictionary<string, object?> values,
+         string nodeName)
+      {
+         return values.TryGetValue(nodeName, out object? value) && value is not null
+            ? Convert.ToInt32(value)
+            : null;
+      }
+
+      private bool TryGetConfiguredEvent203Node(string nodeName, out string opcNode)
       {
          opcNode = string.Empty;
 
-         if (!kranPositionOpcNodesByName.TryGetValue(nodeName, out string? configuredNode)
+         if (!event203OpcNodesByName.TryGetValue(nodeName, out string? configuredNode)
              || !IsConfiguredOpcNode(configuredNode))
          {
             return false;
@@ -1226,57 +1267,42 @@ namespace Falcom
          return true;
       }
 
-      private int ReadKranPositionPayloadInt32(string opcNode, string nodeName)
-      {
-         if (client is null)
-         {
-            throw new InvalidOperationException($"OPC-Client ist nicht initialisiert. KranPosition.{nodeName} konnte nicht gelesen werden. Node={opcNode}");
-         }
-
-         OpcValue value = ReadRequiredOpcPayloadWithNullRetry(
-            "KranPosition",
-            nodeName,
-            opcNode);
-
-         return Convert.ToInt32(value.Value);
-      }
-
-      private void LogKranPositionConfigurationIssueIfDue(string reason)
+      private void LogEvent203ConfigurationIssueIfDue(string reason)
       {
          DateTime nowUtc = DateTime.UtcNow;
 
-         if (nowUtc < nextKranPositionConfigurationLogUtc)
+         if (nowUtc < nextEvent203ConfigurationLogUtc)
          {
             return;
          }
 
          _logger.LogWarning(
-            "005B|KranPosition-Konfiguration ist nicht sendebereit: {Reason}",
+            "005B|Event_203-Konfiguration ist nicht lesebereit: {Reason}",
             reason);
 
-         nextKranPositionConfigurationLogUtc = nowUtc.AddMinutes(1);
+         nextEvent203ConfigurationLogUtc = nowUtc.AddMinutes(1);
       }
 
-      private void LogKranPositionSummaryIfDue()
+      private void LogEvent203SummaryIfDue()
       {
          DateTime nowUtc = DateTime.UtcNow;
 
-         if (nowUtc < nextKranPositionLogUtc)
+         if (nowUtc < nextEvent203LogUtc)
          {
             return;
          }
 
          _logger.LogInformation(
-            "005A|Kranposition aktiv. In den letzten 60 Sekunden wurden {EventCount} Positionswerte empfangen. X={PosKranX}, Y={PosKatzeY}, Z={PosHubZ}, MagnetAn={MagnetAn}, MasseNetto={MasseNetto}.",
-            kranPositionEventsInCurrentMinute,
+            "005A|Event_203 aktiv. In den letzten 60 Sekunden wurden {EventCount} Status-Telegramme empfangen. PosKran={PosKran}, PosKatze={PosKatze}, PosHub={PosHub}, MagnetAn={MagnetAn}, MasseNetto={MasseNetto}.",
+            event203EventsInCurrentMinute,
             aktuellePosKranX,
             aktuellePosKatzeY,
             aktuellePosHubZ,
             aktuellerMagnetAn,
             aktuelleMasseNetto);
 
-         kranPositionEventsInCurrentMinute = 0;
-         nextKranPositionLogUtc = nowUtc.AddMinutes(1);
+         event203EventsInCurrentMinute = 0;
+         nextEvent203LogUtc = nowUtc.AddMinutes(1);
       }
       private void HandleDataChange(object sender, OpcDataChangeReceivedEventArgs e)
       {
@@ -1292,7 +1318,7 @@ namespace Falcom
                neuerZaehlerWert);
 if (string.Equals(
                e.MonitoredItem.NodeId.ToString(),
-               kranSpsLebensZaehlerNodeId,
+               event201NodeId,
                StringComparison.Ordinal))
             {
                int lebensZaehler = Convert.ToInt32(neuerZaehlerWert);
@@ -1300,7 +1326,7 @@ if (string.Equals(
                if (!spsLebensZaehlerFreigegeben)
                {
                   _logger.LogInformation(
-                     "0057|SPS-LebensZaehler empfangen. OPC-Datenfluss wird wieder freigegeben. Node={Node}, Wert={Value}",
+                     "0057|Event_201 empfangen. OPC-Datenfluss wird wieder freigegeben. Node={Node}, Wert={Value}",
                      e.MonitoredItem.NodeId,
                      lebensZaehler);
                }
@@ -1311,7 +1337,7 @@ if (string.Equals(
 
                if (!_eventQueue.Writer.TryWrite(lebensZaehlerEvent))
                {
-                  _logger.LogError("004F|KranSpsLebensZaehlerEvent konnte nicht in die Event-Queue geschrieben werden.");
+                  _logger.LogError("004F|Event_201 konnte nicht in die Event-Queue geschrieben werden.");
                   return;
                }
 
@@ -1321,12 +1347,11 @@ if (string.Equals(
                   lebensZaehler,
                   CancellationToken.None);
                LogKranSpsLebensZaehlerSummaryIfDue(lebensZaehler);
-               TryReadAndSendKranPositionFromTrigger(changedNodeId, neuerZaehlerWert);
                return;
             }
-            if (IsKranPositionTriggerNode(changedNodeId))
+            if (IsEvent203TriggerNode(changedNodeId))
             {
-               TryReadAndSendKranPositionFromTrigger(changedNodeId, neuerZaehlerWert);
+               TryReadAndSendEvent203FromTrigger(changedNodeId, neuerZaehlerWert);
                return;
             }
 
@@ -1399,12 +1424,12 @@ if (string.Equals(
       }
       private KranfahrtBeendetPayload ReadKranfahrtBeendetPayload(int aenderungsZaehler)
       {
-         object auftragIdValue = ReadRequiredKranfahrtBeendetPayloadValue("AuftragsNummer", KranfahrtBeendetEvent.AuftragsNummerOPCNode);
-         object teilfahrtValue = ReadRequiredKranfahrtBeendetPayloadValue("AuftragTeilfahrt", KranfahrtBeendetEvent.TeilfahrtIDOPCNode);
-         object quelleValue = ReadRequiredKranfahrtBeendetPayloadValue("KranQuelle", KranfahrtBeendetEvent.KranQuelleOPCNode);
-         object zielValue = ReadRequiredKranfahrtBeendetPayloadValue("KranZiel", KranfahrtBeendetEvent.KranZielOPCNode);
-         object statusValue = ReadRequiredKranfahrtBeendetPayloadValue("Status", KranfahrtBeendetEvent.StatusOPCNode);
-         object istGewichtValue = ReadRequiredKranfahrtBeendetPayloadValue("IstGewicht", KranfahrtBeendetEvent.IstGewichtOPCNode);
+         object auftragIdValue = ReadRequiredKranfahrtBeendetPayloadValue(KranfahrtBeendetEvent.AuftragNummerNodeName, KranfahrtBeendetEvent.AuftragsNummerOPCNode);
+         object teilfahrtValue = ReadRequiredKranfahrtBeendetPayloadValue(KranfahrtBeendetEvent.AuftragTeilfahrtNodeName, KranfahrtBeendetEvent.TeilfahrtIDOPCNode);
+         object quelleValue = ReadRequiredKranfahrtBeendetPayloadValue(KranfahrtBeendetEvent.QuelleNodeName, KranfahrtBeendetEvent.KranQuelleOPCNode);
+         object zielValue = ReadRequiredKranfahrtBeendetPayloadValue(KranfahrtBeendetEvent.ZielNodeName, KranfahrtBeendetEvent.KranZielOPCNode);
+         object statusValue = ReadRequiredKranfahrtBeendetPayloadValue(KranfahrtBeendetEvent.StatusNodeName, KranfahrtBeendetEvent.StatusOPCNode);
+         object istGewichtValue = ReadRequiredKranfahrtBeendetPayloadValue(KranfahrtBeendetEvent.IstGewichtNodeName, KranfahrtBeendetEvent.IstGewichtOPCNode);
 
          int auftragId = Convert.ToInt32(auftragIdValue);
          int teilfahrtID = Convert.ToInt32(teilfahrtValue);

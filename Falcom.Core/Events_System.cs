@@ -2,7 +2,7 @@ namespace Falcom
 {
    public sealed class WatchdogEvent : FalcomEventBase
    {
-      public const string EventName = "LebensZaehlerFalcom";
+      public const string EventName = "Event_101";
       public WatchdogEvent(int lebensZaehler)
       {
          LebensZaehler = lebensZaehler;

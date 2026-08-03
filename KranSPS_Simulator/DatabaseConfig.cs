@@ -1,4 +1,4 @@
-﻿using System.IO;
+using System.IO;
 using System.Text.Json;
 using Microsoft.Data.SqlClient;
 
@@ -9,12 +9,12 @@ internal sealed record SimulatorConfiguration(
     string OpcEndpoint,
     string LogfilePath,
     IReadOnlyList<OpcNodeSubstitution> SimulatorSubstitutionen,
-    string KranSpsLebensZaehlerNodeId,
-    string FalcomLebensZaehlerNodeId,
+    string Event201NodeId,
+    string Event101NodeId,
     IReadOnlyList<EventNodeConfiguration> KranfahrtBeendetNodes,
     IReadOnlyList<EventNodeConfiguration> KranfahrtAuftragNodes,
     IReadOnlyList<SimEventMappingConfiguration> KranfahrtBeendetZuordnungen,
-    IReadOnlyList<EventNodeConfiguration> KranPositionNodes,
+    IReadOnlyList<EventNodeConfiguration> Event203Nodes,
     KranPositionGroundPosition Grundstellung,
     IReadOnlyDictionary<long, SimKranPosition> Positionen);
 
@@ -79,22 +79,22 @@ internal static class DatabaseConfig
             LoadOpcEndpoint(builder.ConnectionString),
             LoadLogfilePath(settings),
             simulatorSubstitutionen,
-            SubstituteOpcNode(LoadKranSpsLebensZaehlerNodeId(builder.ConnectionString), simulatorSubstitutionen),
-            SubstituteOpcNode(LoadFalcomLebensZaehlerNodeId(builder.ConnectionString), simulatorSubstitutionen),
+            SubstituteOpcNode(LoadEvent201NodeId(builder.ConnectionString), simulatorSubstitutionen),
+            SubstituteOpcNode(LoadEvent101NodeId(builder.ConnectionString), simulatorSubstitutionen),
             LoadEventOpcNodes(
                 builder.ConnectionString,
-                "KranfahrtBeendet",
+                "Event_202",
                 "KRAN_SPS->FALCOM",
                 simulatorSubstitutionen),
             LoadEventOpcNodes(
                 builder.ConnectionString,
-                "KranfahrtAuftrag",
+                "Event_102",
                 "FALCOM->KRAN_SPS",
                 simulatorSubstitutionen),
             LoadSimEventZuordnungen(builder.ConnectionString, simulatorSubstitutionen),
             LoadEventOpcNodes(
                 builder.ConnectionString,
-                "KranPosition",
+                "Event_203",
                 "KRAN_SPS->FALCOM",
                 simulatorSubstitutionen),
             LoadGrundstellung(
@@ -223,26 +223,29 @@ internal static class DatabaseConfig
         return substituted;
     }
 
-    private static string LoadKranSpsLebensZaehlerNodeId(string connectionString)
+    private static string LoadEvent201NodeId(string connectionString)
     {
         return LoadLebensZaehlerNodeId(
             connectionString,
-            "LebensZaehlerKran",
-            "KRAN_SPS->FALCOM");
+            "Event_201",
+            "KRAN_SPS->FALCOM",
+            "Event_201");
     }
 
-    private static string LoadFalcomLebensZaehlerNodeId(string connectionString)
+    private static string LoadEvent101NodeId(string connectionString)
     {
         return LoadLebensZaehlerNodeId(
             connectionString,
-            "LebensZaehlerFalcom",
-            "FALCOM->KRAN_SPS");
+            "Event_101",
+            "FALCOM->KRAN_SPS",
+            "Event_101");
     }
 
     private static string LoadLebensZaehlerNodeId(
         string connectionString,
         string eventName,
-        string direction)
+        string direction,
+        string expectedNodeName)
     {
         using var connection = new SqlConnection(connectionString);
         using var command = new SqlCommand(
@@ -268,7 +271,7 @@ internal static class DatabaseConfig
         while (reader.Read())
         {
             string nodeName = Convert.ToString(reader["NodeName"])?.Trim() ?? string.Empty;
-            if (!string.Equals(nodeName, "LebensZaehler", StringComparison.OrdinalIgnoreCase))
+            if (!string.Equals(nodeName, expectedNodeName, StringComparison.OrdinalIgnoreCase))
             {
                 continue;
             }
@@ -431,15 +434,17 @@ internal static class DatabaseConfig
         IReadOnlyDictionary<long, SimKranPosition> positionen,
         KranPositionGroundPosition fallback)
     {
+        SimKranPosition? grundstellung = positionen.Values.FirstOrDefault(
+            position => string.Equals(position.PositionsTyp, "GRUNDSTELLUNG", StringComparison.OrdinalIgnoreCase));
+        if (grundstellung is not null)
+        {
+            return grundstellung.Position;
+        }
+
         SimKranPosition? lagerbox8 = positionen.Values.FirstOrDefault(
             position => string.Equals(position.PositionsTyp, "LAGERBOX", StringComparison.OrdinalIgnoreCase)
                         && position.PositionsNr == 8);
-        if (lagerbox8 is null)
-        {
-            return fallback;
-        }
-
-        return lagerbox8.Position;
+        return lagerbox8?.Position ?? fallback;
     }
 }
 

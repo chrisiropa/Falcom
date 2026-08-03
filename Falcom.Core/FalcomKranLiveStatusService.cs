@@ -135,9 +135,9 @@ public sealed record SpsLebensZaehlerSnapshot(
    string Source);
 
 public sealed record KranPositionSnapshot(
-   int? PosKranX,
-   int? PosKatzeY,
-   int? PosHubZ,
+   int? PosKran,
+   int? PosKatze,
+   int? PosHub,
    int? MagnetAn,
    int? MasseNetto,
    DateTime TimestampUtc,

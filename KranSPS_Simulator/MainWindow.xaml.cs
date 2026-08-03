@@ -1,4 +1,4 @@
-﻿using Falcom;
+using Falcom;
 using Microsoft.Extensions.Logging;
 using Opc.UaFx;
 using Opc.UaFx.Client;
@@ -19,9 +19,19 @@ public partial class MainWindow : Window
     private const double DemoKatzeSpeedMmPerSecond = 2400.0;
     private const double DemoHubSpeedMmPerSecond = 1800.0;
     private const int DemoTelegrammNummer = -1;
+    private const string Event102TriggerNodeName = "Event_102";
+    private const string Event202TriggerNodeName = "Event_202";
+    private const string AuftragNummerNodeName = "Nr";
+    private const string AuftragTeilfahrtNodeName = "TeilNr";
+    private const string IstMasseNodeName = "IstMasse";
     private const decimal MaxChargierIstGewichtKg = 1000m;
     private const int EinlagerIstGewichtMinKg = 700;
     private const int EinlagerIstGewichtMaxKg = 900;
+    private const string Event203Name = "Event_203";
+    private const string Event203TriggerNodeName = "Event_203";
+    private const string PosKranNodeName = "PosKran";
+    private const string PosKatzeNodeName = "PosKatze";
+    private const string PosHubNodeName = "PosHub";
     private const string MagnetAnNodeName = "MagnetAn";
     private const string MasseNettoNodeName = "MasseNetto";
 
@@ -32,19 +42,19 @@ public partial class MainWindow : Window
     private readonly Random demoRandom = new();
     private readonly object opcSyncRoot = new();
     private readonly string opcEndpoint;
-    private readonly string kranSpsLebensZaehlerNodeId;
-    private readonly string falcomLebensZaehlerNodeId;
+    private readonly string event201NodeId;
+    private readonly string event101NodeId;
     private readonly IReadOnlyList<EventNodeConfiguration> kranfahrtBeendetNodes;
     private readonly IReadOnlyList<EventNodeConfiguration> kranfahrtAuftragNodes;
     private readonly IReadOnlyList<SimEventMappingConfiguration> kranfahrtBeendetZuordnungen;
-    private readonly IReadOnlyList<EventNodeConfiguration> kranPositionNodes;
+    private readonly IReadOnlyList<EventNodeConfiguration> event203Nodes;
     private readonly Dictionary<string, EventNodeConfiguration> kranfahrtBeendetNodesByName = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, EventNodeConfiguration> kranfahrtAuftragNodesByName = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> kranfahrtBeendetValues = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> kranfahrtAuftragValues = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, object?> letzteKranfahrtAuftragPayload = new(StringComparer.OrdinalIgnoreCase);
     private int? letzteVerarbeiteteAuftragTelegrammNummer;
-    private readonly Dictionary<string, string> kranPositionValues = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> event203Values = new(StringComparer.OrdinalIgnoreCase);
     private readonly KranPositionGroundPosition grundstellung;
     private readonly IReadOnlyDictionary<long, SimKranPosition> positionenById;
     private readonly CancellationTokenSource reconnectCancellation = new();
@@ -58,12 +68,14 @@ public partial class MainWindow : Window
     private bool disposed;
     private DateTime nextReconnectLogUtc = DateTime.MinValue;
     private DateTime nextLebensZaehlerErrorLogUtc = DateTime.MinValue;
+    private DateTime nextEvent203ErrorLogUtc = DateTime.MinValue;
     private string opcStatusText = "Initialisierung";
     private string opcStatusDetailText = string.Empty;
     private int posKranX;
     private int posKatzeY;
     private int posHubZ;
     private int spsLebensZaehler;
+    private int event203Zaehler;
     private int? letzterSpsLebensZaehler;
     private DateTime? letzterSpsLebensZaehlerGesendetAm;
     private int? letzterFalcomLebensZaehler;
@@ -93,8 +105,8 @@ public partial class MainWindow : Window
 
         SimulatorConfiguration configuration = DatabaseConfig.Load();
         opcEndpoint = configuration.OpcEndpoint.Trim();
-        kranSpsLebensZaehlerNodeId = configuration.KranSpsLebensZaehlerNodeId.Trim();
-        falcomLebensZaehlerNodeId = configuration.FalcomLebensZaehlerNodeId.Trim();
+        event201NodeId = configuration.Event201NodeId.Trim();
+        event101NodeId = configuration.Event101NodeId.Trim();
         kranfahrtBeendetNodes = configuration.KranfahrtBeendetNodes;
         kranfahrtAuftragNodes = configuration.KranfahrtAuftragNodes;
         kranfahrtBeendetZuordnungen = configuration.KranfahrtBeendetZuordnungen;
@@ -106,7 +118,17 @@ public partial class MainWindow : Window
         {
             kranfahrtAuftragNodesByName[node.NodeName] = node;
         }
-        kranPositionNodes = configuration.KranPositionNodes;
+        event203Nodes = configuration.Event203Nodes;
+        foreach (EventNodeConfiguration node in event203Nodes)
+        {
+            event203Values[node.NodeName] = node.NodeName switch
+            {
+                "Bereit" => bool.TrueString,
+                "Automatik" => bool.TrueString,
+                _ when string.Equals(node.DataType, "Bit", StringComparison.OrdinalIgnoreCase) => bool.FalseString,
+                _ => "0"
+            };
+        }
         grundstellung = configuration.Grundstellung;
         positionenById = configuration.Positionen;
         fileLogSink = new FalcomFileSink(configuration.LogfilePath);
@@ -129,28 +151,28 @@ public partial class MainWindow : Window
             Log($"010E|SimulatorSubstitution aus FALCOM_PARAMETER aktiv: {string.Join("; ", configuration.SimulatorSubstitutionen.Select(substitution => $"{substitution.Suchtext} -> {substitution.Ersatztext}"))}");
         }
 
-        if (string.IsNullOrWhiteSpace(kranSpsLebensZaehlerNodeId))
+        if (string.IsNullOrWhiteSpace(event201NodeId))
         {
-            LogError("010A|LebensZaehlerKran.LebensZaehler ist in der Datenbank nicht gueltig konfiguriert. SPS->FALCOM Lebenszaehler wird nicht geschrieben.");
+            LogError("010A|Event_201.Event_201 ist in der Datenbank nicht gueltig konfiguriert. SPS->FALCOM Event_201 wird nicht geschrieben.");
         }
         else
         {
-            Log($"010F|LebensZaehlerKran.LebensZaehler Node: {kranSpsLebensZaehlerNodeId}");
+            Log($"010F|Event_201.Event_201 Node: {event201NodeId}");
         }
 
-        if (string.IsNullOrWhiteSpace(falcomLebensZaehlerNodeId))
+        if (string.IsNullOrWhiteSpace(event101NodeId))
         {
-            LogError("0110|LebensZaehlerFalcom.LebensZaehler ist in der Datenbank nicht gueltig konfiguriert. FALCOM->SPS Lebenszaehler wird nicht empfangen.");
+            LogError("0110|Event_101.Event_101 ist in der Datenbank nicht gueltig konfiguriert. FALCOM->SPS Event_101 wird nicht empfangen.");
         }
         else
         {
-            Log($"0111|LebensZaehlerFalcom.LebensZaehler Node: {falcomLebensZaehlerNodeId}");
+            Log($"0111|Event_101.Event_101 Node: {event101NodeId}");
         }
 
-        Log($"0112|Event 1 KranfahrtBeendet Variablen: {string.Join(", ", kranfahrtBeendetNodes.Select(node => node.NodeName))}");
-        Log($"0113|Event 1/2 Sim-Zuordnungen geladen: {kranfahrtBeendetZuordnungen.Count}. {string.Join("; ", kranfahrtBeendetZuordnungen.Select(mapping => mapping.Info ?? mapping.TargetNode.NodeName))}");
-        Log($"0114|Event 2 KranfahrtAuftrag Variablen: {string.Join(", ", kranfahrtAuftragNodes.Select(node => node.NodeName))}");
-        Log($"0115|Event 5 KranPosition Variablen: {string.Join(", ", kranPositionNodes.Select(node => node.NodeName))}");
+        Log($"0112|Event_202 Variablen: {string.Join(", ", kranfahrtBeendetNodes.Select(node => node.NodeName))}");
+        Log($"0113|Event_102/202 Sim-Zuordnungen geladen: {kranfahrtBeendetZuordnungen.Count}. {string.Join("; ", kranfahrtBeendetZuordnungen.Select(mapping => mapping.Info ?? mapping.TargetNode.NodeName))}");
+        Log($"0114|Event_102 Variablen: {string.Join(", ", kranfahrtAuftragNodes.Select(node => node.NodeName))}");
+        Log($"0115|Event 203 {Event203Name} Variablen: {string.Join(", ", event203Nodes.Select(node => node.NodeName))}");
         FahreGrundstellungAn();
         Log("0116|Kran-SPS-Simulator bereit.");
         RefreshLogs();
@@ -328,32 +350,32 @@ public partial class MainWindow : Window
 
         subscription = opcClient.SubscribeNodes();
 
-        if (!string.IsNullOrWhiteSpace(falcomLebensZaehlerNodeId))
+        if (!string.IsNullOrWhiteSpace(event101NodeId))
         {
-            var falcomLifeItem = new OpcMonitoredItem(falcomLebensZaehlerNodeId, OpcAttribute.Value)
+            var falcomLifeItem = new OpcMonitoredItem(event101NodeId, OpcAttribute.Value)
             {
-                Tag = "LebensZaehlerFalcom.LebensZaehler"
+                Tag = "Event_101.Event_101"
             };
             falcomLifeItem.DataChangeReceived += HandleOpcDataChange;
             subscription.AddMonitoredItem(falcomLifeItem);
             monitoredItems.Add(falcomLifeItem);
-            Log($"0144|OPC Empfangskanal registriert. Event=LebensZaehlerFalcom, Node={falcomLebensZaehlerNodeId}");
+            Log($"0144|OPC Empfangskanal registriert. Event=Event_101, Node={event101NodeId}");
         }
 
-        if (TryGetKranfahrtAuftragNode("TelegrammNummer", out EventNodeConfiguration telegrammNode))
+        if (TryGetKranfahrtAuftragNode(Event102TriggerNodeName, out EventNodeConfiguration telegrammNode))
         {
             var telegrammItem = new OpcMonitoredItem(telegrammNode.OpcNode, OpcAttribute.Value)
             {
-                Tag = "KranfahrtAuftrag.TelegrammNummer"
+                Tag = "Event_102.Event_102"
             };
             telegrammItem.DataChangeReceived += HandleOpcDataChange;
             subscription.AddMonitoredItem(telegrammItem);
             monitoredItems.Add(telegrammItem);
-            Log($"006D|OPC Empfangskanal registriert. Event=KranfahrtAuftrag, Trigger=TelegrammNummer, Node={telegrammNode.OpcNode}");
+            Log($"006D|OPC Empfangskanal registriert. Event=Event_102, Trigger=Event_102, Node={telegrammNode.OpcNode}");
         }
         else
         {
-            LogWarning("0145|KranfahrtAuftrag.TelegrammNummer ist nicht konfiguriert. Event 2 kann nicht empfangen werden.");
+            LogWarning("0145|Event_102.Event_102 ist nicht konfiguriert. Event_102 kann nicht empfangen werden.");
         }
 
         subscription.ApplyChanges();
@@ -362,7 +384,7 @@ public partial class MainWindow : Window
 
     private void InitialisiereKranfahrtAuftragTelegrammNoLock()
     {
-        if (!TryGetKranfahrtAuftragNode("TelegrammNummer", out EventNodeConfiguration telegrammNode))
+        if (!TryGetKranfahrtAuftragNode(Event102TriggerNodeName, out EventNodeConfiguration telegrammNode))
         {
             return;
         }
@@ -408,14 +430,14 @@ public partial class MainWindow : Window
 
             LogOpcReceive($"0119|OPC Empfang: Node={changedNodeId}, Wert={rawValue}");
 
-            if (string.Equals(changedNodeId, falcomLebensZaehlerNodeId, StringComparison.Ordinal))
+            if (string.Equals(changedNodeId, event101NodeId, StringComparison.Ordinal))
             {
                 int value = Convert.ToInt32(rawValue, CultureInfo.InvariantCulture);
                 SetFalcomLebensZaehlerFromBackground(value, DateTime.Now);
                 return;
             }
 
-            if (TryGetKranfahrtAuftragNode("TelegrammNummer", out EventNodeConfiguration telegrammNode)
+            if (TryGetKranfahrtAuftragNode(Event102TriggerNodeName, out EventNodeConfiguration telegrammNode)
                 && string.Equals(changedNodeId, telegrammNode.OpcNode, StringComparison.Ordinal))
             {
                 int telegrammNummer = Convert.ToInt32(rawValue, CultureInfo.InvariantCulture);
@@ -497,20 +519,20 @@ public partial class MainWindow : Window
     {
         begruendung = "Initialer Event-2-Fahrauftrag gilt als offen.";
 
-        if (!TryGetPayloadInt32(auftragPayload, "TelegrammNummer", out int auftragTelegrammNummer)
+        if (!TryGetPayloadInt32(auftragPayload, Event102TriggerNodeName, out int auftragTelegrammNummer)
             || auftragTelegrammNummer <= 0)
         {
-            begruendung = "Event 2 enthaelt keine plausible TelegrammNummer; Initialauftrag wird nicht gefahren.";
+            begruendung = "Event_102 enthaelt keinen plausiblen Triggerwert; Initialauftrag wird nicht gefahren.";
             return true;
         }
 
         Dictionary<string, object?> beendetPayload = ReadEventValuesNoLock(kranfahrtBeendetNodes);
         SetEventValues(kranfahrtBeendetValues, beendetPayload);
 
-        TryGetPayloadInt32(beendetPayload, "AenderungsZaehler", out int beendetAenderungsZaehler);
+        TryGetPayloadInt32(beendetPayload, Event202TriggerNodeName, out int beendetAenderungsZaehler);
         begruendung =
-            $"Event 1 und Event 2 verwenden getrennte Telegrammzaehler. " +
-            $"Event2 TelegrammNummer={auftragTelegrammNummer}; Event1 AenderungsZaehler={beendetAenderungsZaehler}. " +
+            $"Event_202 und Event_102 verwenden getrennte Telegrammzaehler. " +
+            $"Event_102 Trigger={auftragTelegrammNummer}; Event_202 Trigger={beendetAenderungsZaehler}. " +
             "Der Initialauftrag wird deshalb als offen verarbeitet.";
         return false;
     }
@@ -538,8 +560,8 @@ public partial class MainWindow : Window
             return null;
         }
 
-        TryGetPayloadInt64(payload, "AuftragNummer", out long auftragNummer);
-        TryGetPayloadInt32(payload, "AuftragTeilfahrt", out int auftragTeilfahrt);
+        TryGetPayloadInt64(payload, AuftragNummerNodeName, out long auftragNummer);
+        TryGetPayloadInt32(payload, AuftragTeilfahrtNodeName, out int auftragTeilfahrt);
         TryGetPayloadDecimal(payload, "SollMasse", out decimal sollMasse);
 
         var fahrt = new AktuelleFahrtSimulation(
@@ -771,7 +793,7 @@ public partial class MainWindow : Window
         EventNodeConfiguration targetNode,
         object? value)
     {
-        if (!string.Equals(targetNode.NodeName, "IstGewicht", StringComparison.OrdinalIgnoreCase))
+        if (!string.Equals(targetNode.NodeName, IstMasseNodeName, StringComparison.OrdinalIgnoreCase))
         {
             return value;
         }
@@ -831,7 +853,7 @@ public partial class MainWindow : Window
             decimal istGewicht = ErzeugeEinlagerIstGewichtKg();
             aktiveSimulationsFahrt.IstGewichtKg = istGewicht;
             masseNetto = (int)Math.Round(istGewicht, MidpointRounding.AwayFromZero);
-            SetKranPositionValue(
+            SetEvent203Value(
                 MasseNettoNodeName,
                 masseNetto.ToString(CultureInfo.InvariantCulture));
             Log($"0150|Istgewicht an Quelle ermittelt: Typ=EINLAGERN, IstGewicht={istGewicht:0.###} kg, Bereich={EinlagerIstGewichtMinKg}..{EinlagerIstGewichtMaxKg} kg, Quelle={aktiveSimulationsFahrt.QuelleBezeichnung} ({aktiveSimulationsFahrt.QuellePositionID}).");
@@ -844,7 +866,7 @@ public partial class MainWindow : Window
 
         aktiveSimulationsFahrt.IstGewichtKg = chargierIstGewicht;
         masseNetto = (int)Math.Round(chargierIstGewicht, MidpointRounding.AwayFromZero);
-        SetKranPositionValue(
+        SetEvent203Value(
             MasseNettoNodeName,
             masseNetto.ToString(CultureInfo.InvariantCulture));
         Log($"0151|Istgewicht an Quelle ermittelt: Typ=CHARGIEREN, IstGewicht={chargierIstGewicht:0.###} kg, SollMenge={aktiveSimulationsFahrt.SollMengeKg:0.###} kg, Max={MaxChargierIstGewichtKg:0.###} kg, Quelle={aktiveSimulationsFahrt.QuelleBezeichnung} ({aktiveSimulationsFahrt.QuellePositionID}).");
@@ -988,8 +1010,8 @@ public partial class MainWindow : Window
         object? convertedValue,
         object? originalValue)
     {
-        if (!string.Equals(nodeName, "KranQuelle", StringComparison.OrdinalIgnoreCase)
-            && !string.Equals(nodeName, "KranZiel", StringComparison.OrdinalIgnoreCase))
+        if (!string.Equals(nodeName, "Quelle", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(nodeName, "Ziel", StringComparison.OrdinalIgnoreCase))
         {
             return false;
         }
@@ -1067,7 +1089,78 @@ public partial class MainWindow : Window
     }
     private void StartLebensZaehlerLoop()
     {
-        if (string.IsNullOrWhiteSpace(kranSpsLebensZaehlerNodeId))
+        StartEvent203Loop();
+        StartEvent201Loop();
+    }
+
+    private void StartEvent203Loop()
+    {
+        bool triggerConfigured = event203Nodes.Any(
+            node => string.Equals(node.NodeName, Event203TriggerNodeName, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(node.NodeRole, "Trigger", StringComparison.OrdinalIgnoreCase)
+                    && !string.IsNullOrWhiteSpace(node.OpcNode));
+        if (!triggerConfigured)
+        {
+            LogError("01A0|Event_203.Event_203 ist in der Datenbank nicht gueltig konfiguriert. Der zyklische Status-Trigger wird nicht geschrieben.");
+            return;
+        }
+
+        _ = Task.Run(
+            async () =>
+            {
+                CancellationToken cancellationToken = lebensZaehlerCancellation.Token;
+
+                try
+                {
+                    while (!disposed && !cancellationToken.IsCancellationRequested)
+                    {
+                        await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
+
+                        if (opcClient?.State != OpcClientState.Connected)
+                        {
+                            continue;
+                        }
+
+                        AktualisiereFahrposition(DateTime.UtcNow);
+                        int event203Value = NextEvent203Zaehler();
+
+                        try
+                        {
+                            lock (opcSyncRoot)
+                            {
+                                if (opcClient?.State != OpcClientState.Connected)
+                                {
+                                    continue;
+                                }
+
+                                WriteEvent203PayloadNodesNoLock();
+                                WriteEvent203NodeNoLock(Event203TriggerNodeName, event203Value);
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            SetOpcReconnectFromBackground("Reconnect laeuft");
+                            StartBackgroundReconnectLoop("Event_203 konnte nicht geschrieben werden");
+
+                            if (DateTime.UtcNow >= nextEvent203ErrorLogUtc)
+                            {
+                                LogError(
+                                    $"01A1|Event_203 konnte nicht geschrieben werden. Zaehler={event203Value}, Fehler={ex.GetType().Name}: {ex.Message}");
+                                nextEvent203ErrorLogUtc = DateTime.UtcNow.AddMinutes(1);
+                            }
+                        }
+                    }
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                }
+            },
+            lebensZaehlerCancellation.Token);
+    }
+
+    private void StartEvent201Loop()
+    {
+        if (string.IsNullOrWhiteSpace(event201NodeId))
         {
             return;
         }
@@ -1089,7 +1182,6 @@ public partial class MainWindow : Window
                         }
 
                         int value = NextSpsLebensZaehler();
-                        AktualisiereFahrposition(DateTime.UtcNow);
 
                         try
                         {
@@ -1100,38 +1192,33 @@ public partial class MainWindow : Window
                                     continue;
                                 }
 
-                                WriteKranPositionPayloadNodesNoLock();
-
                                 OpcStatus status = opcClient.WriteNode(
-                                    kranSpsLebensZaehlerNodeId,
+                                    event201NodeId,
                                     value);
 
                                 if (status.IsBad)
                                 {
                                     throw new InvalidOperationException(
-                                        $"OPC-Schreiben fehlgeschlagen. Node={kranSpsLebensZaehlerNodeId}, Status={status.Code}, Beschreibung={status.Description}");
+                                        $"OPC-Schreiben fehlgeschlagen. Node={event201NodeId}, Status={status.Code}, Beschreibung={status.Description}");
                                 }
 
-                                LogOpcSend($"012C|OPC Schreiben vom OPC-Server angenommen. Node={kranSpsLebensZaehlerNodeId}, Wert={value}, Status={status.Code}");
+                                LogOpcSend($"012C|OPC Schreiben vom OPC-Server angenommen. Event=Event_201, Node={event201NodeId}, Wert={value}, Status={status.Code}");
                             }
 
                             letzterSpsLebensZaehler = value;
                             letzterSpsLebensZaehlerGesendetAm = DateTime.Now;
-                            SetKranPositionValue(
-                                "LebensZaehler",
-                                value.ToString(CultureInfo.InvariantCulture));
                             SetSpsLebensZaehlerFromBackground(value, letzterSpsLebensZaehlerGesendetAm.Value);
-                            LogOpcSend($"012D|OPC Senden: Node={kranSpsLebensZaehlerNodeId}, Wert={value}");
+                            LogOpcSend($"012D|OPC Senden Event_201: Node={event201NodeId}, Wert={value}");
                         }
                         catch (Exception ex)
                         {
                             SetOpcReconnectFromBackground("Reconnect laeuft");
-                            StartBackgroundReconnectLoop("SPS-LebensZaehler konnte nicht geschrieben werden");
+                            StartBackgroundReconnectLoop("Event_201 konnte nicht geschrieben werden");
 
                             if (DateTime.UtcNow >= nextLebensZaehlerErrorLogUtc)
                             {
                                 LogError(
-                                    $"SPS->FALCOM LebensZaehler konnte nicht geschrieben werden. Node={kranSpsLebensZaehlerNodeId}, Wert={value}, Fehler={ex.GetType().Name}: {ex.Message}");
+                                    $"SPS->FALCOM Event_201 konnte nicht geschrieben werden. Node={event201NodeId}, Wert={value}, Fehler={ex.GetType().Name}: {ex.Message}");
                                 nextLebensZaehlerErrorLogUtc = DateTime.UtcNow.AddMinutes(1);
                             }
                         }
@@ -1150,29 +1237,27 @@ public partial class MainWindow : Window
         posKatzeY = grundstellung.PosKatzeY;
         posHubZ = grundstellung.PosHubZ;
 
-        SetKranPositionValue(
-            "PosKranX",
+        SetEvent203Value(
+            PosKranNodeName,
             posKranX.ToString(CultureInfo.InvariantCulture));
-        SetKranPositionValue(
-            "PosKatzeY",
+        SetEvent203Value(
+            PosKatzeNodeName,
             posKatzeY.ToString(CultureInfo.InvariantCulture));
-        SetKranPositionValue(
-            "PosHubZ",
+        SetEvent203Value(
+            PosHubNodeName,
             posHubZ.ToString(CultureInfo.InvariantCulture));
         masseNetto = 0;
-        SetKranPositionValue(
+        SetEvent203Value(
             MasseNettoNodeName,
             masseNetto.ToString(CultureInfo.InvariantCulture));
-        SetKranPositionValue(
-            "LebensZaehler",
-            spsLebensZaehler.ToString(CultureInfo.InvariantCulture));
+        SetEvent203Value(Event203TriggerNodeName, event203Zaehler.ToString(CultureInfo.InvariantCulture));
 
         SetMagnetAn(0, "Grundstellung angefahren");
 
         Log(
             "012E|Grundstellung angefahren: " +
-            $"PosKranX={posKranX}, PosKatzeY={posKatzeY}, PosHubZ={posHubZ}. " +
-            "Position liegt ueber Lagerbox 8.");
+            $"PosKran={posKranX}, PosKatze={posKatzeY}, PosHub={posHubZ}. " +
+            "Position liegt auf der konfigurierten Grundstellung.");
     }
 
     private void DemoModeButton_Click(object sender, RoutedEventArgs e)
@@ -1192,7 +1277,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        Log("008D|Demo-Modus beendet. Grundstellung ueber Lagerbox 8 wird angefahren.");
+        Log("008D|Demo-Modus beendet. Konfigurierte Grundstellung wird angefahren.");
         aktiveSimulationsFahrt = null;
         aktuelleBewegung = null;
         warteAufNeueFahrtBisUtc = null;
@@ -1200,7 +1285,7 @@ public partial class MainWindow : Window
             grundstellung,
             DateTime.UtcNow,
             SimulationsFahrzustand.FahreZurGrundstellung,
-            "012F|Demo-Modus beendet. Grundstellung ueber Lagerbox 8 wird angefahren.");
+            "012F|Demo-Modus beendet. Konfigurierte Grundstellung wird angefahren.");
     }
 
     private void StarteNaechsteDemoFahrt(DateTime nowUtc)
@@ -1292,7 +1377,7 @@ public partial class MainWindow : Window
                     grundstellung,
                     nowUtc,
                     SimulationsFahrzustand.FahreZurGrundstellung,
-                    "0131|Nach 10 Sekunden ohne neue Fahrt wird die Grundstellung ueber Lagerbox 8 angefahren.");
+                    "0131|Nach 10 Sekunden ohne neue Fahrt wird die konfigurierte Grundstellung angefahren.");
             }
 
             return;
@@ -1404,11 +1489,11 @@ public partial class MainWindow : Window
                 "0133|Warten auf naechste Fahrt. " +
                 $"Letzte Fahrt war TelegrammNummer={letzteAbgefahreneFahrt.TelegrammNummer}, " +
                 $"AuftragID={letzteAbgefahreneFahrt.AuftragID}, Teilfahrt={letzteAbgefahreneFahrt.AuftragTeilfahrt}. " +
-                "Wenn 10 Sekunden nichts Neues kommt, wird Lagerbox 8 als Grundstellung angefahren.");
+                "Wenn 10 Sekunden nichts Neues kommt, wird die konfigurierte Grundstellung angefahren.");
             Dispatcher.BeginInvoke(() =>
             {
                 SimulationStatusText.Text = "Warte auf neue Fahrt";
-                SimulationDetailText.Text = "Fahrt abgefahren. Wenn 10 Sekunden nichts Neues kommt, wird Lagerbox 8 als Grundstellung angefahren.";
+                SimulationDetailText.Text = "Fahrt abgefahren. Wenn 10 Sekunden nichts Neues kommt, wird die konfigurierte Grundstellung angefahren.";
             });
             return;
         }
@@ -1416,11 +1501,11 @@ public partial class MainWindow : Window
         if (fahrzustand == SimulationsFahrzustand.FahreZurGrundstellung)
         {
             fahrzustand = SimulationsFahrzustand.Grundstellung;
-            Log("006B|Grundstellung ueber Lagerbox 8 erreicht.");
+            Log("006B|Konfigurierte Grundstellung erreicht.");
             Dispatcher.BeginInvoke(() =>
             {
                 SimulationStatusText.Text = "Grundstellung";
-                SimulationDetailText.Text = "Kran steht mittig ueber Lagerbox 8.";
+                SimulationDetailText.Text = "Kran steht an der konfigurierten Grundstellung.";
             });
         }
     }
@@ -1485,35 +1570,53 @@ public partial class MainWindow : Window
             MidpointRounding.AwayFromZero);
     }
 
-    private void WriteKranPositionPayloadNodesNoLock()
+    private void WriteEvent203PayloadNodesNoLock()
     {
-        WriteKranPositionNodeNoLock(
-            "PosKranX",
-            posKranX);
-        WriteKranPositionNodeNoLock(
-            "PosKatzeY",
-            posKatzeY);
-        WriteKranPositionNodeNoLock(
-            "PosHubZ",
-            posHubZ);
-        WriteKranPositionNodeNoLock(
-            MagnetAnNodeName,
-            gewuenschterMagnetAnWert);
-        WriteKranPositionNodeNoLock(
-            MasseNettoNodeName,
-            masseNetto);
+        SetEvent203Value(PosKranNodeName, posKranX.ToString(CultureInfo.InvariantCulture));
+        SetEvent203Value(PosKatzeNodeName, posKatzeY.ToString(CultureInfo.InvariantCulture));
+        SetEvent203Value(PosHubNodeName, posHubZ.ToString(CultureInfo.InvariantCulture));
+        SetEvent203Value(MagnetAnNodeName, gewuenschterMagnetAnWert.ToString(CultureInfo.InvariantCulture));
+        SetEvent203Value(MasseNettoNodeName, masseNetto.ToString(CultureInfo.InvariantCulture));
+        SetEvent203Value("GattierenAktiv", (!IstAktiveFahrtEinlagerfahrt() && aktiveSimulationsFahrt is not null).ToString());
+        SetEvent203Value("UmlagernAktiv", IstAktiveFahrtEinlagerfahrt().ToString());
+
+        foreach (EventNodeConfiguration node in event203Nodes.Where(
+                     node => string.Equals(node.NodeRole, "Payload", StringComparison.OrdinalIgnoreCase)))
+        {
+            string configuredValue;
+            lock (event203Values)
+            {
+                configuredValue = event203Values.TryGetValue(node.NodeName, out string? value)
+                    ? value
+                    : "0";
+            }
+
+            WriteEvent203NodeNoLock(node, ConvertEvent203Value(node, configuredValue));
+        }
     }
 
-    private void WriteKranPositionNodeNoLock(
+    private void WriteEvent203NodeNoLock(
         string nodeName,
-        int value)
+        object value)
     {
-        EventNodeConfiguration? node = kranPositionNodes.FirstOrDefault(
+        EventNodeConfiguration? node = event203Nodes.FirstOrDefault(
             configuredNode => string.Equals(
                 configuredNode.NodeName,
                 nodeName,
                 StringComparison.OrdinalIgnoreCase));
         if (node is null || string.IsNullOrWhiteSpace(node.OpcNode))
+        {
+            return;
+        }
+
+        WriteEvent203NodeNoLock(node, ConvertEvent203Value(node, value));
+    }
+
+    private void WriteEvent203NodeNoLock(
+        EventNodeConfiguration node,
+        object value)
+    {
+        if (string.IsNullOrWhiteSpace(node.OpcNode))
         {
             return;
         }
@@ -1528,11 +1631,29 @@ public partial class MainWindow : Window
                 $"OPC-Schreiben fehlgeschlagen. Variable={node.NodeName}, Node={node.OpcNode}, Wert={value}, Status={status.Code}, Beschreibung={status.Description}");
         }
 
-        SetKranPositionValue(
-            nodeName,
-            value.ToString(CultureInfo.InvariantCulture));
-        LogOpcSend($"0134|OPC Senden KranPosition: {node.NodeName}={value}");
-        LogOpcSend($"0135|OPC Schreiben vom OPC-Server angenommen. Event=KranPosition, Variable={node.NodeName}, Node={node.OpcNode}, Wert={value}, Status={status.Code}");
+        SetEvent203Value(
+            node.NodeName,
+            Convert.ToString(value, CultureInfo.InvariantCulture) ?? "-");
+        LogOpcSend($"0134|OPC Senden Event_203: {node.NodeName}={value}");
+        LogOpcSend($"0135|OPC Schreiben vom OPC-Server angenommen. Event=Event_203, Variable={node.NodeName}, Node={node.OpcNode}, Wert={value}, Status={status.Code}");
+    }
+
+    private static object ConvertEvent203Value(EventNodeConfiguration node, object value)
+    {
+        if (string.Equals(node.DataType, "Bit", StringComparison.OrdinalIgnoreCase))
+        {
+            if (value is bool boolValue)
+            {
+                return boolValue;
+            }
+
+            string text = Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty;
+            return bool.TryParse(text, out bool parsedBool)
+                ? parsedBool
+                : Convert.ToInt32(value, CultureInfo.InvariantCulture) != 0;
+        }
+
+        return Convert.ToInt32(value, CultureInfo.InvariantCulture);
     }
     private void SetMagnetAn(
         int value,
@@ -1543,7 +1664,7 @@ public partial class MainWindow : Window
         if (value == 0)
         {
             masseNetto = 0;
-            SetKranPositionValue(
+            SetEvent203Value(
                 MasseNettoNodeName,
                 masseNetto.ToString(CultureInfo.InvariantCulture));
         }
@@ -1563,25 +1684,25 @@ public partial class MainWindow : Window
                     return;
                 }
 
-                WriteKranPositionNodeNoLock(MagnetAnNodeName, value);
+                WriteEvent203NodeNoLock(MagnetAnNodeName, value);
                 letzterGesendeterMagnetAnWert = value;
                 Log($"0136|MagnetAn gesetzt: Wert={value}, Grund={grund}.");
             }
         }
         catch (Exception ex)
         {
-            LogWarning($"0137|MagnetAn konnte nicht geschrieben werden. Wert={value}, Grund={grund}, Event=KranPosition, Variable={MagnetAnNodeName}, Fehler={ex.GetType().Name}: {ex.Message}");
+            LogWarning($"0137|MagnetAn konnte nicht geschrieben werden. Wert={value}, Grund={grund}, Event=Event_203, Variable={MagnetAnNodeName}, Fehler={ex.GetType().Name}: {ex.Message}");
             StartBackgroundReconnectLoop("MagnetAn konnte nicht geschrieben werden");
         }
     }
 
-    private void SetKranPositionValue(
+    private void SetEvent203Value(
         string nodeName,
         string value)
     {
-        lock (kranPositionValues)
+        lock (event203Values)
         {
-            kranPositionValues[nodeName] = value;
+            event203Values[nodeName] = value;
         }
 
         Dispatcher.BeginInvoke(RefreshEventView);
@@ -1599,6 +1720,14 @@ public partial class MainWindow : Window
         }
 
         return spsLebensZaehler;
+    }
+
+    private int NextEvent203Zaehler()
+    {
+        event203Zaehler = event203Zaehler == int.MaxValue
+            ? 0
+            : event203Zaehler + 1;
+        return event203Zaehler;
     }
 
     private void OnClientStateChanged(
@@ -1823,9 +1952,9 @@ public partial class MainWindow : Window
         KranfahrtAuftragEventItems.ItemsSource = CreateEventItems(
             kranfahrtAuftragNodes,
             kranfahrtAuftragValues);
-        KranPositionEventItems.ItemsSource = CreateEventItems(
-            kranPositionNodes,
-            kranPositionValues);
+        Event203EventItems.ItemsSource = CreateEventItems(
+            event203Nodes,
+            event203Values);
     }
 
     private static List<EventVisualItem> CreateEventItems(

@@ -74,7 +74,7 @@
                </Grid.ColumnDefinitions>
                <Ellipse x:Name="WatchdogLamp" Width="22" Height="22" Fill="#DC2626" Margin="0,4,12,0" />
                <StackPanel Grid.Column="1">
-                  <TextBlock Style="{StaticResource Caption}" Text="Watchdog Falcom → SPS" />
+                  <TextBlock Style="{StaticResource Caption}" Text="Event_101 Falcom → SPS" />
                   <TextBlock x:Name="WatchdogValueText" Style="{StaticResource Value}" Text="-" />
                   <TextBlock x:Name="WatchdogTimeText" Style="{StaticResource Caption}" />
                </StackPanel>
@@ -89,7 +89,7 @@
                </Grid.ColumnDefinitions>
                <Ellipse x:Name="SpsLifeLamp" Width="22" Height="22" Fill="#DC2626" Margin="0,4,12,0" />
                <StackPanel Grid.Column="1">
-                  <TextBlock Style="{StaticResource Caption}" Text="Lebenszähler SPS → Falcom" />
+                  <TextBlock Style="{StaticResource Caption}" Text="Event_201 SPS → Falcom" />
                   <TextBlock x:Name="SpsLifeValueText" Style="{StaticResource Value}" Text="-" />
                   <TextBlock x:Name="SpsLifeTimeText" Style="{StaticResource Caption}" />
                </StackPanel>

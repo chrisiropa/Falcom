@@ -6,13 +6,20 @@ namespace Falcom
    /// <summary> Signalisiert das Ende eines physischen Hubs </summary>
    public sealed class KranfahrtBeendetEvent : FalcomEventBase
    {
-      private const string EventName = "KranfahrtBeendet";
+      public const string EventName = "Event_202";
+      public const string TriggerNodeName = EventName;
+      public const string AuftragNummerNodeName = "Nr";
+      public const string AuftragTeilfahrtNodeName = "TeilNr";
+      public const string QuelleNodeName = "Quelle";
+      public const string ZielNodeName = "Ziel";
+      public const string StatusNodeName = "Status";
+      public const string IstGewichtNodeName = "IstMasse";
 
       public override string Source => "Kran-SPS";
       public override bool IsStateTrigger => true;
 
-      public static string ÄnderungsZaehlerOPCNode { get; private set; } = string.Empty;
-      public static string AenderungsZaehlerOPCNode => ÄnderungsZaehlerOPCNode;
+      public static string Ã„nderungsZaehlerOPCNode { get; private set; } = string.Empty;
+      public static string AenderungsZaehlerOPCNode => Ã„nderungsZaehlerOPCNode;
       public static string AuftragsNummerOPCNode { get; private set; } = string.Empty;
       public static string TeilfahrtIDOPCNode { get; private set; } = string.Empty;
       public static string KranQuelleOPCNode { get; private set; } = string.Empty;
@@ -26,7 +33,7 @@ namespace Falcom
       public string KranZiel { get; init; }
       public int Status { get; init; }
       public double IstGewicht { get; init; }
-      public int ÄnderungsZähler { get; init; }
+      public int Ã„nderungsZÃ¤hler { get; init; }
 
       public static void LoadOpcNodes(ConfigManager configManager)
       {
@@ -61,17 +68,17 @@ namespace Falcom
          catch (Exception ex)
          {
             throw new InvalidOperationException(
-               "Die OPC-Nodes für KranfahrtBeendet konnten nicht aus der Event-Konfiguration geladen werden.",
+               $"Die OPC-Nodes fÃ¼r {EventName} konnten nicht aus der Event-Konfiguration geladen werden.",
                ex);
          }
 
-         ÄnderungsZaehlerOPCNode = GetRequiredOpcNode(opcNodes, "AenderungsZaehler");
-         AuftragsNummerOPCNode = GetRequiredOpcNode(opcNodes, "AuftragsNummer");
-         TeilfahrtIDOPCNode = GetRequiredOpcNode(opcNodes, "AuftragTeilfahrt");
-         KranQuelleOPCNode = GetRequiredOpcNode(opcNodes, "KranQuelle");
-         KranZielOPCNode = GetRequiredOpcNode(opcNodes, "KranZiel");
-         StatusOPCNode = GetRequiredOpcNode(opcNodes, "Status");
-         IstGewichtOPCNode = GetRequiredOpcNode(opcNodes, "IstGewicht");
+         Ã„nderungsZaehlerOPCNode = GetRequiredOpcNode(opcNodes, TriggerNodeName);
+         AuftragsNummerOPCNode = GetRequiredOpcNode(opcNodes, AuftragNummerNodeName);
+         TeilfahrtIDOPCNode = GetRequiredOpcNode(opcNodes, AuftragTeilfahrtNodeName);
+         KranQuelleOPCNode = GetRequiredOpcNode(opcNodes, QuelleNodeName);
+         KranZielOPCNode = GetRequiredOpcNode(opcNodes, ZielNodeName);
+         StatusOPCNode = GetRequiredOpcNode(opcNodes, StatusNodeName);
+         IstGewichtOPCNode = GetRequiredOpcNode(opcNodes, IstGewichtNodeName);
       }
 
       private static string GetRequiredOpcNode(
@@ -82,7 +89,7 @@ namespace Falcom
              || string.IsNullOrWhiteSpace(opcNode))
          {
             throw new InvalidOperationException(
-               $"Für '{EventName}.{nodeName}' fehlt ein gültiger Eintrag in der Event-Konfiguration.");
+               $"FÃ¼r '{EventName}.{nodeName}' fehlt ein gÃ¼ltiger Eintrag in der Event-Konfiguration.");
          }
 
          return opcNode.Trim();
@@ -93,7 +100,7 @@ namespace Falcom
       //11..20 Lagerboxen
       //100..103 Chargierwagen
 
-      public KranfahrtBeendetEvent(int auftragsNummer, int teilfahrtID, string kranQuelle, string kranZiel, int status, double istGewicht, int änderungsZähler)
+      public KranfahrtBeendetEvent(int auftragsNummer, int teilfahrtID, string kranQuelle, string kranZiel, int status, double istGewicht, int Ã¤nderungsZÃ¤hler)
       {
          AuftragsNummer = auftragsNummer;
          TeilfahrtID = teilfahrtID;
@@ -101,28 +108,28 @@ namespace Falcom
          KranZiel = kranZiel;
          Status = status;
          IstGewicht = istGewicht;
-         ÄnderungsZähler = änderungsZähler;
+         Ã„nderungsZÃ¤hler = Ã¤nderungsZÃ¤hler;
       }
    }
    public sealed class KranfahrtGestartetEvent : FalcomEventBase
    {
       public override string Source => "Kran-SPS";
       public override bool IsStateTrigger => true;
-      public static string ÄnderungsZaehlerOPCNode { get; set; } = "KranSPS.KranfahrtGestartet.AenderungsZaehler";
+      public static string Ã„nderungsZaehlerOPCNode { get; set; } = "KranSPS.KranfahrtGestartet.AenderungsZaehler";
 
       public int AuftragsNummer { get; init; }
       public int TeilfahrtID { get; init; }
       public string KranQuelle { get; init; }
       public string KranZiel { get; init; }
       public double Toleranz { get; init; }
-      public int ÄnderungsZähler { get; init; }
+      public int Ã„nderungsZÃ¤hler { get; init; }
 
       //Quelle und Ziel sind Werte aus FALCOM_KRAN_POSITION
       //1..3 LKW
       //11..20 Lagerboxen
       //100..103 Chargierwagen
 
-      public KranfahrtGestartetEvent(int auftragsNummer, int teilfahrtID, string kranQuelle, string kranZiel, double toleranz, int änderungsZähler)
+      public KranfahrtGestartetEvent(int auftragsNummer, int teilfahrtID, string kranQuelle, string kranZiel, double toleranz, int Ã¤nderungsZÃ¤hler)
       {
          //SPS meldet das der Kran losgefahren ist, nachdem er von Falcom die
          //Aufforderung dazu bekommen hat.
@@ -132,7 +139,7 @@ namespace Falcom
          KranQuelle = kranQuelle;
          KranZiel = kranZiel;
          Toleranz = toleranz;
-         ÄnderungsZähler = änderungsZähler;
+         Ã„nderungsZÃ¤hler = Ã¤nderungsZÃ¤hler;
       }
    }
 
@@ -140,7 +147,7 @@ namespace Falcom
    {
       public override string Source => "Kran-SPS";
       public override bool IsStateTrigger => false;
-      public static string ÄnderungsZaehlerOPCNode { get; set; } = "KranSPS.KranfahrtStatus.AenderungsZaehler";
+      public static string Ã„nderungsZaehlerOPCNode { get; set; } = "KranSPS.KranfahrtStatus.AenderungsZaehler";
 
       public int AuftragsNummer { get; init; }
       public int TeilfahrtID { get; init; }
@@ -148,9 +155,9 @@ namespace Falcom
       public double YPos { get; init; }
       public double ZPos { get; init; }
       public int Fahrtzeit { get; init; } // in ms
-      public int ÄnderungsZähler { get; init; }
+      public int Ã„nderungsZÃ¤hler { get; init; }
 
-      public KranfahrtStatusEvent(int auftragsNummer, int teilfahrtID, double xPos, double yPos, double zPos, int fahrtzeit, int änderungsZähler)
+      public KranfahrtStatusEvent(int auftragsNummer, int teilfahrtID, double xPos, double yPos, double zPos, int fahrtzeit, int Ã¤nderungsZÃ¤hler)
       {
          AuftragsNummer = auftragsNummer;
          TeilfahrtID = teilfahrtID;
@@ -158,7 +165,7 @@ namespace Falcom
          YPos = yPos;
          ZPos = zPos;
          Fahrtzeit = fahrtzeit;
-         ÄnderungsZähler = änderungsZähler;
+         Ã„nderungsZÃ¤hler = Ã¤nderungsZÃ¤hler;
       }
    }
 
@@ -166,18 +173,18 @@ namespace Falcom
    {
       public override string Source => "Kran-SPS";
       public override bool IsStateTrigger => true;
-      public static string ÄnderungsZaehlerOPCNode { get; set; } = "KranSPS.LkwPlatzLeer.AenderungsZaehler";
+      public static string Ã„nderungsZaehlerOPCNode { get; set; } = "KranSPS.LkwPlatzLeer.AenderungsZaehler";
 
       public int LkwPlatzNr { get; init; }
-      public int ÄnderungsZähler { get; init; }
+      public int Ã„nderungsZÃ¤hler { get; init; }
 
-      // Wertebereich für LkwPlatzNr analog zu den vorherigen Definitionen:
-      // 1..3 LKW-Plätze
+      // Wertebereich fÃ¼r LkwPlatzNr analog zu den vorherigen Definitionen:
+      // 1..3 LKW-PlÃ¤tze
 
-      public LkwPlatzLeerEvent(int lkwPlatzNr, int änderungsZähler)
+      public LkwPlatzLeerEvent(int lkwPlatzNr, int Ã¤nderungsZÃ¤hler)
       {
          LkwPlatzNr = lkwPlatzNr;
-         ÄnderungsZähler = änderungsZähler;
+         Ã„nderungsZÃ¤hler = Ã¤nderungsZÃ¤hler;
       }
    }
 }
