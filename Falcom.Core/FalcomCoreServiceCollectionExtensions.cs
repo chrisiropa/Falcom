@@ -21,6 +21,7 @@ public static class FalcomCoreServiceCollectionExtensions
       services.AddSingleton<FalcomKranLiveSignalRClient>();
       services.AddHostedService<FalcomKranLiveSignalRServer>();
       services.AddSingleton<AktuelleFahrtRepository>();
+      services.AddSingleton<BunkerMaterialRepository>();
       services.AddHostedService<DatabaseOrderPoller>();
       services.AddHostedService<Worker>();
 

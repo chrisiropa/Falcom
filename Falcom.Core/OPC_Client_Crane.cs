@@ -20,6 +20,12 @@ namespace Falcom
       private const string MagnetAnNodeName = "MagnetAn";
       private const string MasseNettoNodeName = "MasseNetto";
       private const string Event203TriggerNodeName = "Event_203";
+      private const string Event104Name = "Event_104";
+      private const string Event104Direction = "FALCOM->KRAN_SPS";
+      private const string Event104TriggerNodeName = "Event_104";
+      private const string Event204Name = "Event_204";
+      private const string Event204Direction = "KRAN_SPS->FALCOM";
+      private const string Event204TriggerNodeName = "Event_204";
       private const int KranfahrtBeendetEventId = 202;
       private const int KranfahrtAuftragEventId = 102;
       private const string KranfahrtAuftragEventName = KranfahrtAuftragEvent.EventName;
@@ -38,6 +44,8 @@ namespace Falcom
       private readonly string event101NodeId;
       private readonly string event201NodeId;
       private readonly Dictionary<string, string> event203OpcNodesByName;
+      private readonly Dictionary<string, string> event104OpcNodesByName;
+      private readonly Dictionary<string, string> event204OpcNodesByName;
       private readonly Dictionary<string, string> kranfahrtAuftragLiveOpcNodesByName;
       private OpcClient? client = null;
       private OpcSubscription? subscription = null;
@@ -57,6 +65,10 @@ namespace Falcom
       private int? lastKranfahrtAuftragTelegrammNummer;
       private int? lastKranfahrtBeendetAenderungsZaehler;
       private bool kranfahrtBeendetInitialwertGesehen;
+      private int? lastLkwPlatzLeerAenderungsZaehler;
+      private bool lkwPlatzLeerInitialwertGesehen;
+      private int? lastEvent204AnforderungsZaehler;
+      private bool event204InitialwertGesehen;
       private int? aktuellePosKranX;
       private int? aktuellePosKatzeY;
       private int? aktuellePosHubZ;
@@ -84,6 +96,7 @@ namespace Falcom
          _eventQueue = eventQueue; // Zuweisung fuer den spaeteren Zugriff
          TraegerLicense();
          KranfahrtBeendetEvent.LoadOpcNodes(configManager);
+         LkwPlatzLeer207Event.LoadOpcNodes(configManager);
          event101NodeId = LoadRequiredEventOpcNode(
             eventName: WatchdogEvent.EventName,
             direction: "FALCOM->KRAN_SPS",
@@ -95,6 +108,12 @@ namespace Falcom
          event203OpcNodesByName = LoadOptionalEventOpcNodes(
             Event203Name,
             Event203Direction);
+         event104OpcNodesByName = LoadOptionalEventOpcNodes(
+            Event104Name,
+            Event104Direction);
+         event204OpcNodesByName = LoadOptionalEventOpcNodes(
+            Event204Name,
+            Event204Direction);
          kranfahrtAuftragLiveOpcNodesByName = LoadOptionalEventOpcNodes(
             KranfahrtAuftragEventName,
             KranfahrtAuftragDirection);
@@ -461,6 +480,73 @@ namespace Falcom
                   $"Event_101 konnte nicht an die Kran-SPS gesendet werden. Node={event101NodeId}, Wert={lebensZaehler}, Fehler={ex.GetType().Name}: {ex.Message}"));
          }
       }
+
+      public Task<OpcSendResult> SendBunkerMaterialResponseAsync(
+         int anforderungsZaehler,
+         BunkerMaterialSnapshot snapshot,
+         CancellationToken cancellationToken)
+      {
+         cancellationToken.ThrowIfCancellationRequested();
+
+         try
+         {
+            EnsureConnected();
+
+            lock (_syncRoot)
+            {
+               for (int index = 0; index < 21; index++)
+               {
+                  BunkerMaterialEintrag? eintrag = snapshot.Eintraege
+                     .FirstOrDefault(item => item.ArrayIndex == index);
+
+                  WriteRequiredNode(
+                     GetRequiredConfiguredEventNode(event104OpcNodesByName, Event104Name, $"Bunker{index:00}_BuNr"),
+                     eintrag?.BuNr ?? 0);
+                  WriteRequiredNode(
+                     GetRequiredConfiguredEventNode(event104OpcNodesByName, Event104Name, $"Bunker{index:00}_MaterialNr"),
+                     eintrag?.MaterialNr ?? 0);
+               }
+
+               // Der korrelierte Trigger wird bewusst zuletzt geschrieben.
+               WriteRequiredNode(
+                  GetRequiredConfiguredEventNode(event104OpcNodesByName, Event104Name, Event104TriggerNodeName),
+                  anforderungsZaehler);
+            }
+
+            _logger.LogInformation(
+               "01D7|Event_104 an Kran-SPS gesendet: AnforderungsZaehler={AnforderungsZaehler}, AnzahlBunker={AnzahlBunker}, belegteArrayPlaetze={BelegteArrayPlaetze}.",
+               anforderungsZaehler,
+               snapshot.AnzahlBunker,
+               string.Join(",", snapshot.Eintraege.Select(item => item.ArrayIndex)));
+
+            return Task.FromResult(OpcSendResult.Ok(anforderungsZaehler));
+         }
+         catch (Exception ex)
+         {
+            _logger.LogError(
+               "01D8|Event_104 konnte nicht an die Kran-SPS gesendet werden. AnforderungsZaehler={AnforderungsZaehler}, Fehler={ExceptionType}: {Message}.",
+               anforderungsZaehler,
+               ex.GetType().Name,
+               ex.Message);
+            return Task.FromResult(OpcSendResult.Failed(ex.Message));
+         }
+      }
+
+      private static string GetRequiredConfiguredEventNode(
+         IReadOnlyDictionary<string, string> nodes,
+         string eventName,
+         string nodeName)
+      {
+         if (!nodes.TryGetValue(nodeName, out string? nodeId)
+             || !IsConfiguredOpcNode(nodeId))
+         {
+            throw new InvalidOperationException(
+               $"OPC-Node fuer {eventName}.{nodeName} ist nicht gueltig konfiguriert.");
+         }
+
+         return nodeId.Trim();
+      }
+
       private void EnsureConnected()
       {
          lock (_syncRoot)
@@ -879,6 +965,35 @@ namespace Falcom
          kranfahrtBeendetItem.DataChangeReceived += HandleDataChange;
          subscription.AddMonitoredItem(kranfahrtBeendetItem);
          monitoredItems.Add(kranfahrtBeendetItem);
+
+         lkwPlatzLeerInitialwertGesehen = false;
+         lastLkwPlatzLeerAenderungsZaehler = null;
+         var lkwPlatzLeerItem = new OpcMonitoredItem(LkwPlatzLeer207Event.AenderungsZaehlerOPCNode, OpcAttribute.Value)
+         {
+            Tag = "Event_207.Event_207"
+         };
+         lkwPlatzLeerItem.DataChangeReceived += HandleDataChange;
+         subscription.AddMonitoredItem(lkwPlatzLeerItem);
+         monitoredItems.Add(lkwPlatzLeerItem);
+
+         event204InitialwertGesehen = false;
+         lastEvent204AnforderungsZaehler = null;
+         if (event204OpcNodesByName.TryGetValue(Event204TriggerNodeName, out string? event204TriggerNode)
+             && IsConfiguredOpcNode(event204TriggerNode))
+         {
+            var event204Item = new OpcMonitoredItem(event204TriggerNode, OpcAttribute.Value)
+            {
+               Tag = "Event_204.Event_204"
+            };
+            event204Item.DataChangeReceived += HandleDataChange;
+            subscription.AddMonitoredItem(event204Item);
+            monitoredItems.Add(event204Item);
+         }
+         else
+         {
+            _logger.LogWarning(
+               "01D9|Event_204 ist nicht aktiv: Trigger-Node Event_204 ist nicht gueltig konfiguriert.");
+         }
          if (TryGetConfiguredKranfahrtAuftragLiveNode(Event102TriggerNodeName, out string telegrammNummerNode))
          {
             var kranfahrtAuftragTelegrammItem = new OpcMonitoredItem(telegrammNummerNode, OpcAttribute.Value)
@@ -1201,6 +1316,83 @@ namespace Falcom
          return values;
       }
 
+      private bool IsEvent204TriggerNode(string nodeId)
+      {
+         return event204OpcNodesByName.TryGetValue(Event204TriggerNodeName, out string? triggerNode)
+                && IsConfiguredOpcNode(triggerNode)
+                && string.Equals(nodeId, triggerNode, StringComparison.Ordinal);
+      }
+
+      private void HandleEvent204Trigger(int anforderungsZaehler)
+      {
+         bool istInitialwert = !event204InitialwertGesehen;
+         event204InitialwertGesehen = true;
+
+         if (anforderungsZaehler <= 0)
+         {
+            lastEvent204AnforderungsZaehler = anforderungsZaehler;
+            _logger.LogInformation(
+               "01DA|Event_204 Trigger ist 0 und wird als leere Anforderung ignoriert.");
+            return;
+         }
+
+         if (lastEvent204AnforderungsZaehler == anforderungsZaehler)
+         {
+            return;
+         }
+
+         lastEvent204AnforderungsZaehler = anforderungsZaehler;
+
+         if (istInitialwert
+             && TryReadEvent104ResponseTrigger(out int responseTrigger)
+             && responseTrigger == anforderungsZaehler)
+         {
+            _logger.LogInformation(
+               "01DB|Event_204 Initialwert wurde bereits durch Event_104 beantwortet und wird ignoriert. AnforderungsZaehler={AnforderungsZaehler}.",
+               anforderungsZaehler);
+            return;
+         }
+
+         if (!_eventQueue.Writer.TryWrite(
+                new BunkerMaterialAnforderungEvent(anforderungsZaehler, istInitialwert)))
+         {
+            _logger.LogError(
+               "01DC|Event_204 konnte nicht in die Event-Queue geschrieben werden. AnforderungsZaehler={AnforderungsZaehler}.",
+               anforderungsZaehler);
+            return;
+         }
+
+         _logger.LogInformation(
+            "01DD|Event_204 eingereiht. AnforderungsZaehler={AnforderungsZaehler}, Initialwert={IstInitialwert}.",
+            anforderungsZaehler,
+            istInitialwert);
+      }
+
+      private bool TryReadEvent104ResponseTrigger(out int triggerValue)
+      {
+         triggerValue = 0;
+         try
+         {
+            string nodeId = GetRequiredConfiguredEventNode(
+               event104OpcNodesByName,
+               Event104Name,
+               Event104TriggerNodeName);
+            OpcValue value = client!.ReadNode(nodeId);
+            if (!value.Status.IsGood || value.Value is null)
+            {
+               return false;
+            }
+
+            triggerValue = Convert.ToInt32(value.Value);
+            return true;
+         }
+         catch
+         {
+            // Ohne lesbaren Antwortzaehler wird die Anfrage idempotent neu beantwortet.
+            return false;
+         }
+      }
+
       private void EnsureKranfahrtAuftragZaehlerInitialisiert(
          KranfahrtAuftragOpcNodes nodes)
       {
@@ -1354,10 +1546,61 @@ if (string.Equals(
                TryReadAndSendEvent203FromTrigger(changedNodeId, neuerZaehlerWert);
                return;
             }
+            if (IsEvent204TriggerNode(changedNodeId))
+            {
+               HandleEvent204Trigger(Convert.ToInt32(neuerZaehlerWert));
+               return;
+            }
 
             if (IsKranfahrtAuftragTelegrammTriggerNode(changedNodeId))
             {
                TryReadAndSendKranfahrtAuftragLiveSnapshot(changedNodeId, neuerZaehlerWert);
+               return;
+            }
+
+            if (string.Equals(
+               changedNodeId,
+               LkwPlatzLeer207Event.AenderungsZaehlerOPCNode,
+               StringComparison.Ordinal))
+            {
+               int aenderungsZaehler = Convert.ToInt32(neuerZaehlerWert);
+
+               if (!lkwPlatzLeerInitialwertGesehen)
+               {
+                  lkwPlatzLeerInitialwertGesehen = true;
+                  lastLkwPlatzLeerAenderungsZaehler = aenderungsZaehler;
+                  if (aenderungsZaehler <= 0)
+                  {
+                     _logger.LogInformation(
+                        "01BD|Event_207 Initialtrigger ist 0 und wird ohne Payload-Lesen ignoriert.");
+                     return;
+                  }
+
+                  LkwPlatzLeerPayload initialPayload = ReadLkwPlatzLeerPayload(aenderungsZaehler);
+                  if (initialPayload.AuftragID <= 0
+                      || initialPayload.TeilfahrtID <= 0
+                      || initialPayload.LkwPlatzPositionID <= 0)
+                  {
+                     _logger.LogInformation(
+                        "01BD|Event_207 Initialwert ist leer und wird ignoriert: Auftrag={AuftragID}, Teilfahrt={TeilfahrtID}, LkwPlatz={LkwPlatz}, AenderungsZaehler={AenderungsZaehler}.",
+                        initialPayload.AuftragID,
+                        initialPayload.TeilfahrtID,
+                        initialPayload.LkwPlatzPositionID,
+                        initialPayload.AenderungsZaehler);
+                     return;
+                  }
+
+                  QueueLkwPlatzLeerEvent(initialPayload, true);
+                  return;
+               }
+
+               if (lastLkwPlatzLeerAenderungsZaehler == aenderungsZaehler)
+               {
+                  return;
+               }
+
+               lastLkwPlatzLeerAenderungsZaehler = aenderungsZaehler;
+               QueueLkwPlatzLeerEvent(ReadLkwPlatzLeerPayload(aenderungsZaehler), false);
                return;
             }
 
@@ -1421,6 +1664,64 @@ if (string.Equals(
             opcNode);
 
          return value.Value;
+      }
+
+      private LkwPlatzLeerPayload ReadLkwPlatzLeerPayload(int aenderungsZaehler)
+      {
+         object auftragValue = ReadRequiredOpcPayloadWithNullRetry(
+            LkwPlatzLeer207Event.EventName,
+            LkwPlatzLeer207Event.AuftragNummerNodeName,
+            LkwPlatzLeer207Event.AuftragsNummerOPCNode).Value;
+         object teilfahrtValue = ReadRequiredOpcPayloadWithNullRetry(
+            LkwPlatzLeer207Event.EventName,
+            LkwPlatzLeer207Event.AuftragTeilfahrtNodeName,
+            LkwPlatzLeer207Event.TeilfahrtIDOPCNode).Value;
+         object lkwPlatzValue = ReadRequiredOpcPayloadWithNullRetry(
+            LkwPlatzLeer207Event.EventName,
+            LkwPlatzLeer207Event.LkwPlatzNodeName,
+            LkwPlatzLeer207Event.LkwPlatzOPCNode).Value;
+
+         var payload = new LkwPlatzLeerPayload(
+            Convert.ToInt32(auftragValue),
+            Convert.ToInt32(teilfahrtValue),
+            Convert.ToInt32(lkwPlatzValue),
+            aenderungsZaehler);
+
+         _logger.LogInformation(
+            "01B0|Event_207 Payload aus OPC gelesen: Auftrag={AuftragID}, Teilfahrt={TeilfahrtID}, LkwPlatz={LkwPlatz}, AenderungsZaehler={AenderungsZaehler}.",
+            payload.AuftragID,
+            payload.TeilfahrtID,
+            payload.LkwPlatzPositionID,
+            payload.AenderungsZaehler);
+
+         return payload;
+      }
+
+      private void QueueLkwPlatzLeerEvent(LkwPlatzLeerPayload payload, bool istInitialwert)
+      {
+         var falcomEvent = new LkwPlatzLeer207Event(
+            payload.AuftragID,
+            payload.TeilfahrtID,
+            payload.LkwPlatzPositionID,
+            payload.AenderungsZaehler);
+
+         if (!_eventQueue.Writer.TryWrite(falcomEvent))
+         {
+            _logger.LogError(
+               "01B1|Event_207 konnte nicht in die Event-Queue geschrieben werden. Auftrag={AuftragID}, Teilfahrt={TeilfahrtID}, LkwPlatz={LkwPlatz}.",
+               payload.AuftragID,
+               payload.TeilfahrtID,
+               payload.LkwPlatzPositionID);
+            return;
+         }
+
+         _logger.LogInformation(
+            "01B2|Event_207 eingereiht: Auftrag={AuftragID}, Teilfahrt={TeilfahrtID}, LkwPlatz={LkwPlatz}, AenderungsZaehler={AenderungsZaehler}, Initialwert={IstInitialwert}.",
+            payload.AuftragID,
+            payload.TeilfahrtID,
+            payload.LkwPlatzPositionID,
+            payload.AenderungsZaehler,
+            istInitialwert);
       }
       private KranfahrtBeendetPayload ReadKranfahrtBeendetPayload(int aenderungsZaehler)
       {
@@ -1532,6 +1833,12 @@ if (string.Equals(
          string KranZiel,
          int Status,
          double IstGewicht,
+         int AenderungsZaehler);
+
+      private sealed record LkwPlatzLeerPayload(
+         int AuftragID,
+         int TeilfahrtID,
+         int LkwPlatzPositionID,
          int AenderungsZaehler);
       #region Verbindungs-Event-Handler
 

@@ -15,6 +15,9 @@ internal sealed record SimulatorConfiguration(
     IReadOnlyList<EventNodeConfiguration> KranfahrtAuftragNodes,
     IReadOnlyList<SimEventMappingConfiguration> KranfahrtBeendetZuordnungen,
     IReadOnlyList<EventNodeConfiguration> Event203Nodes,
+    IReadOnlyList<EventNodeConfiguration> Event207Nodes,
+    IReadOnlyList<EventNodeConfiguration> Event104Nodes,
+    IReadOnlyList<EventNodeConfiguration> Event204Nodes,
     KranPositionGroundPosition Grundstellung,
     IReadOnlyDictionary<long, SimKranPosition> Positionen);
 
@@ -97,6 +100,26 @@ internal static class DatabaseConfig
                 "Event_203",
                 "KRAN_SPS->FALCOM",
                 simulatorSubstitutionen),
+            LoadEventOpcNodes(
+                builder.ConnectionString,
+                "Event_207",
+                "KRAN_SPS->FALCOM",
+                simulatorSubstitutionen),
+            LoadEventOpcNodes(
+                builder.ConnectionString,
+                "Event_104",
+                "FALCOM->KRAN_SPS",
+                simulatorSubstitutionen),
+            LoadEventOpcNodes(
+                builder.ConnectionString,
+                "Event_204",
+                "KRAN_SPS->FALCOM",
+                simulatorSubstitutionen)
+                .Where(node => string.Equals(
+                    node.NodeRole,
+                    "Trigger",
+                    StringComparison.OrdinalIgnoreCase))
+                .ToList(),
             LoadGrundstellung(
                 simPositionen,
                 new KranPositionGroundPosition(

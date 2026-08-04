@@ -1,4 +1,5 @@
 using Falcom;
+using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Logging;
 using Opc.UaFx;
 using Opc.UaFx.Client;
@@ -34,6 +35,11 @@ public partial class MainWindow : Window
     private const string PosHubNodeName = "PosHub";
     private const string MagnetAnNodeName = "MagnetAn";
     private const string MasseNettoNodeName = "MasseNetto";
+    private const string Event207Name = "Event_207";
+    private const string Event207TriggerNodeName = "Event_207";
+    private const string Event207LkwPlatzNodeName = "LKWPlatz";
+    private const string Event104TriggerNodeName = "Event_104";
+    private const string Event204TriggerNodeName = "Event_204";
 
     private readonly FalcomUiLogSink uiLogSink = new();
     private readonly FalcomFileSink fileLogSink;
@@ -42,19 +48,26 @@ public partial class MainWindow : Window
     private readonly Random demoRandom = new();
     private readonly object opcSyncRoot = new();
     private readonly string opcEndpoint;
+    private readonly string databaseConnectionString;
     private readonly string event201NodeId;
     private readonly string event101NodeId;
     private readonly IReadOnlyList<EventNodeConfiguration> kranfahrtBeendetNodes;
     private readonly IReadOnlyList<EventNodeConfiguration> kranfahrtAuftragNodes;
     private readonly IReadOnlyList<SimEventMappingConfiguration> kranfahrtBeendetZuordnungen;
     private readonly IReadOnlyList<EventNodeConfiguration> event203Nodes;
+    private readonly IReadOnlyList<EventNodeConfiguration> event207Nodes;
+    private readonly IReadOnlyList<EventNodeConfiguration> event104Nodes;
+    private readonly IReadOnlyList<EventNodeConfiguration> event204Nodes;
     private readonly Dictionary<string, EventNodeConfiguration> kranfahrtBeendetNodesByName = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, EventNodeConfiguration> kranfahrtAuftragNodesByName = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> kranfahrtBeendetValues = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> kranfahrtAuftragValues = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, object?> letzteKranfahrtAuftragPayload = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<long, EinlagerLeerSimulationState> einlagerLeerSimulationen = new();
     private int? letzteVerarbeiteteAuftragTelegrammNummer;
     private readonly Dictionary<string, string> event203Values = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> event104Values = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> event204Values = new(StringComparer.OrdinalIgnoreCase);
     private readonly KranPositionGroundPosition grundstellung;
     private readonly IReadOnlyDictionary<long, SimKranPosition> positionenById;
     private readonly CancellationTokenSource reconnectCancellation = new();
@@ -76,6 +89,7 @@ public partial class MainWindow : Window
     private int posHubZ;
     private int spsLebensZaehler;
     private int event203Zaehler;
+    private int event204AnforderungsZaehler;
     private int? letzterSpsLebensZaehler;
     private DateTime? letzterSpsLebensZaehlerGesendetAm;
     private int? letzterFalcomLebensZaehler;
@@ -104,6 +118,7 @@ public partial class MainWindow : Window
         statusRefreshTimer.Start();
 
         SimulatorConfiguration configuration = DatabaseConfig.Load();
+        databaseConnectionString = configuration.ConnectionString;
         opcEndpoint = configuration.OpcEndpoint.Trim();
         event201NodeId = configuration.Event201NodeId.Trim();
         event101NodeId = configuration.Event101NodeId.Trim();
@@ -128,6 +143,17 @@ public partial class MainWindow : Window
                 _ when string.Equals(node.DataType, "Bit", StringComparison.OrdinalIgnoreCase) => bool.FalseString,
                 _ => "0"
             };
+        }
+        event207Nodes = configuration.Event207Nodes;
+        event104Nodes = configuration.Event104Nodes;
+        event204Nodes = configuration.Event204Nodes;
+        foreach (EventNodeConfiguration node in event104Nodes)
+        {
+            event104Values[node.NodeName] = "-";
+        }
+        foreach (EventNodeConfiguration node in event204Nodes)
+        {
+            event204Values[node.NodeName] = "-";
         }
         grundstellung = configuration.Grundstellung;
         positionenById = configuration.Positionen;
@@ -173,6 +199,9 @@ public partial class MainWindow : Window
         Log($"0113|Event_102/202 Sim-Zuordnungen geladen: {kranfahrtBeendetZuordnungen.Count}. {string.Join("; ", kranfahrtBeendetZuordnungen.Select(mapping => mapping.Info ?? mapping.TargetNode.NodeName))}");
         Log($"0114|Event_102 Variablen: {string.Join(", ", kranfahrtAuftragNodes.Select(node => node.NodeName))}");
         Log($"0115|Event 203 {Event203Name} Variablen: {string.Join(", ", event203Nodes.Select(node => node.NodeName))}");
+        Log($"01B6|Event 207 {Event207Name} Variablen: {string.Join(", ", event207Nodes.Select(node => node.NodeName))}");
+        Log($"01DE|Event 104 Variablen: {string.Join(", ", event104Nodes.Select(node => node.NodeName))}");
+        Log($"01DF|Event 204 Variablen: {string.Join(", ", event204Nodes.Select(node => node.NodeName))}");
         FahreGrundstellungAn();
         Log("0116|Kran-SPS-Simulator bereit.");
         RefreshLogs();
@@ -378,6 +407,24 @@ public partial class MainWindow : Window
             LogWarning("0145|Event_102.Event_102 ist nicht konfiguriert. Event_102 kann nicht empfangen werden.");
         }
 
+        EventNodeConfiguration? event104Trigger = event104Nodes.FirstOrDefault(
+            node => string.Equals(node.NodeName, Event104TriggerNodeName, StringComparison.OrdinalIgnoreCase));
+        if (event104Trigger is not null && !string.IsNullOrWhiteSpace(event104Trigger.OpcNode))
+        {
+            var event104Item = new OpcMonitoredItem(event104Trigger.OpcNode, OpcAttribute.Value)
+            {
+                Tag = "Event_104.Event_104"
+            };
+            event104Item.DataChangeReceived += HandleOpcDataChange;
+            subscription.AddMonitoredItem(event104Item);
+            monitoredItems.Add(event104Item);
+            Log($"01E0|OPC Empfangskanal registriert. Event=Event_104, Node={event104Trigger.OpcNode}");
+        }
+        else
+        {
+            LogWarning("01E1|Event_104.Event_104 ist nicht konfiguriert. Bunkermaterial-Antworten koennen nicht empfangen werden.");
+        }
+
         subscription.ApplyChanges();
         InitialisiereKranfahrtAuftragTelegrammNoLock();
     }
@@ -434,6 +481,23 @@ public partial class MainWindow : Window
             {
                 int value = Convert.ToInt32(rawValue, CultureInfo.InvariantCulture);
                 SetFalcomLebensZaehlerFromBackground(value, DateTime.Now);
+                return;
+            }
+
+            EventNodeConfiguration? event104Trigger = event104Nodes.FirstOrDefault(
+                node => string.Equals(node.NodeName, Event104TriggerNodeName, StringComparison.OrdinalIgnoreCase));
+            if (event104Trigger is not null
+                && string.Equals(changedNodeId, event104Trigger.OpcNode, StringComparison.Ordinal))
+            {
+                int responseZaehler = Convert.ToInt32(rawValue, CultureInfo.InvariantCulture);
+                Dictionary<string, object?> payload;
+                lock (opcSyncRoot)
+                {
+                    payload = ReadEventValuesNoLock(event104Nodes);
+                }
+
+                SetEventValues(event104Values, payload);
+                Log($"01E2|Event_104 empfangen: AntwortZaehler={responseZaehler}, Bunkerwerte={payload.Count - 1}.");
                 return;
             }
 
@@ -996,6 +1060,227 @@ public partial class MainWindow : Window
             Log("012B|KranfahrtBeendet gesendet. Alle aktiven SIM-Zuordnungen inklusive Trigger wurden verarbeitet.");
         }
     }
+
+    private void PruefeUndSendeLkwPlatzLeerEvent(AktuelleFahrtSimulation fahrt)
+    {
+        if (!positionenById.TryGetValue(fahrt.QuellePositionID, out SimKranPosition? quelle)
+            || !string.Equals(quelle.PositionsTyp, "LKW_PLATZ", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        int lkwPlatzPositionId = checked((int)quelle.PositionID);
+
+        if (!einlagerLeerSimulationen.TryGetValue(fahrt.AuftragID, out EinlagerLeerSimulationState? state))
+        {
+            int zielFahrten;
+            lock (demoRandom)
+            {
+                zielFahrten = demoRandom.Next(5, 9);
+            }
+
+            state = new EinlagerLeerSimulationState(zielFahrten);
+            einlagerLeerSimulationen[fahrt.AuftragID] = state;
+            Log($"01B7|Event_207 Simulation initialisiert: Auftrag={fahrt.AuftragID}, LkwPlatzPositionID={lkwPlatzPositionId}, Leer-Meldung nach insgesamt {zielFahrten} tatsaechlichen Fahrten.");
+        }
+
+        EinlagerTeilfahrtStand? datenbankStand = LadeEinlagerTeilfahrtStand(
+            fahrt.AuftragID,
+            fahrt.AuftragTeilfahrt);
+        int lokalMitAktuellerFahrt = state.AbgeschlosseneFahrten == int.MaxValue
+            ? int.MaxValue
+            : state.AbgeschlosseneFahrten + 1;
+
+        if (datenbankStand is not null)
+        {
+            long tatsaechlicherStand = datenbankStand.HistorisierteTeilfahrten
+                + (datenbankStand.AktuelleTeilfahrtBereitsHistorisiert ? 0L : 1L);
+            int datenbankMitAktuellerFahrt = tatsaechlicherStand >= int.MaxValue
+                ? int.MaxValue
+                : (int)tatsaechlicherStand;
+            state.AbgeschlosseneFahrten = Math.Max(
+                lokalMitAktuellerFahrt,
+                datenbankMitAktuellerFahrt);
+
+            Log($"01BF|Event_207 Teilfahrtstand aus Datenbank uebernommen: Auftrag={fahrt.AuftragID}, Historisiert={datenbankStand.HistorisierteTeilfahrten}, AktuelleTeilfahrt={fahrt.AuftragTeilfahrt}, AktuelleBereitsHistorisiert={datenbankStand.AktuelleTeilfahrtBereitsHistorisiert}, Gesamtstand={state.AbgeschlosseneFahrten}.");
+        }
+        else
+        {
+            state.AbgeschlosseneFahrten = lokalMitAktuellerFahrt;
+        }
+
+        Log($"01B8|Einlagerfahrt fuer Event_207 gezaehlt: Auftrag={fahrt.AuftragID}, Teilfahrt={fahrt.AuftragTeilfahrt}, LkwPlatzPositionID={lkwPlatzPositionId}, Stand={state.AbgeschlosseneFahrten}/{state.ZielFahrten}.");
+
+        if (state.EventGesendet || state.AbgeschlosseneFahrten < state.ZielFahrten)
+        {
+            return;
+        }
+
+        lock (opcSyncRoot)
+        {
+            if (opcClient?.State != OpcClientState.Connected)
+            {
+                LogWarning($"01B9|Event_207 kann noch nicht gesendet werden, weil OPC nicht verbunden ist. Auftrag={fahrt.AuftragID}, LkwPlatzPositionID={lkwPlatzPositionId}.");
+                return;
+            }
+
+            EventNodeConfiguration trigger = GetRequiredEvent207Node(Event207TriggerNodeName);
+            WriteEvent207NodeNoLock(GetRequiredEvent207Node(AuftragNummerNodeName), fahrt.AuftragID);
+            WriteEvent207NodeNoLock(GetRequiredEvent207Node(AuftragTeilfahrtNodeName), fahrt.AuftragTeilfahrt);
+            WriteEvent207NodeNoLock(GetRequiredEvent207Node(Event207LkwPlatzNodeName), lkwPlatzPositionId);
+            int triggerValue = IncrementEvent207TriggerNoLock(trigger);
+
+            state.EventGesendet = true;
+            Log($"01BA|Event_207 gesendet: Auftrag={fahrt.AuftragID}, Teilfahrt={fahrt.AuftragTeilfahrt}, LkwPlatzPositionID={lkwPlatzPositionId}, Trigger={triggerValue}, Fahrten={state.AbgeschlosseneFahrten}.");
+        }
+    }
+
+    private void BunkerMaterialAnfordern_Click(object sender, RoutedEventArgs e)
+    {
+        SendeEvent204Anforderung("Manuelle Anforderung");
+    }
+
+    private bool SendeEvent204Anforderung(string grund)
+    {
+        try
+        {
+            EventNodeConfiguration trigger = event204Nodes.First(
+                node => string.Equals(node.NodeName, Event204TriggerNodeName, StringComparison.OrdinalIgnoreCase));
+
+            lock (opcSyncRoot)
+            {
+                if (opcClient?.State != OpcClientState.Connected)
+                {
+                    throw new InvalidOperationException("OPC ist nicht verbunden.");
+                }
+
+                if (event204AnforderungsZaehler == 0)
+                {
+                    OpcValue current = opcClient.ReadNode(trigger.OpcNode);
+                    if (current.Status.IsGood && current.Value is not null)
+                    {
+                        event204AnforderungsZaehler = Convert.ToInt32(
+                            current.Value,
+                            CultureInfo.InvariantCulture);
+                    }
+                }
+
+                event204AnforderungsZaehler = event204AnforderungsZaehler == int.MaxValue
+                    ? 1
+                    : event204AnforderungsZaehler + 1;
+                OpcStatus status = opcClient.WriteNode(trigger.OpcNode, event204AnforderungsZaehler);
+                if (status.IsBad)
+                {
+                    throw new InvalidOperationException(
+                        $"OPC-Schreiben abgelehnt. Status={status.Code}, Beschreibung={status.Description}");
+                }
+            }
+
+            SetEventValue(event204Values, Event204TriggerNodeName, event204AnforderungsZaehler);
+            Log($"01E3|Event_204 gesendet: AnforderungsZaehler={event204AnforderungsZaehler}, Grund={grund}.");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            LogError($"01E4|Event_204 konnte nicht gesendet werden. Grund={grund}, Fehler={ex.GetType().Name}: {ex.Message}");
+            return false;
+        }
+    }
+
+    private EinlagerTeilfahrtStand? LadeEinlagerTeilfahrtStand(
+        long einlagerAuftragId,
+        int auftragTeilfahrt)
+    {
+        try
+        {
+            using var connection = new SqlConnection(databaseConnectionString);
+            using var command = new SqlCommand(
+                "dbo.FALCOM_SIM_GetEinlagerTeilfahrtStand",
+                connection)
+            {
+                CommandType = System.Data.CommandType.StoredProcedure,
+                CommandTimeout = 10
+            };
+
+            command.Parameters.Add("@EinlagerAuftragID", System.Data.SqlDbType.BigInt).Value = einlagerAuftragId;
+            command.Parameters.Add("@AuftragTeilfahrt", System.Data.SqlDbType.Int).Value = auftragTeilfahrt;
+
+            connection.Open();
+            using SqlDataReader reader = command.ExecuteReader();
+            if (!reader.Read())
+            {
+                LogError($"01C0|Datenbank lieferte keinen Event_207-Teilfahrtstand. Auftrag={einlagerAuftragId}, Teilfahrt={auftragTeilfahrt}. Es wird mit dem internen Zaehler weitergearbeitet.");
+                return null;
+            }
+
+            return new EinlagerTeilfahrtStand(
+                Convert.ToInt64(reader["HistorisierteTeilfahrten"], CultureInfo.InvariantCulture),
+                Convert.ToBoolean(reader["AktuelleTeilfahrtBereitsHistorisiert"], CultureInfo.InvariantCulture));
+        }
+        catch (Exception ex)
+        {
+            LogError($"01C1|Event_207-Teilfahrtstand konnte nicht aus der Datenbank gelesen werden. Auftrag={einlagerAuftragId}, Teilfahrt={auftragTeilfahrt}, Fehler={ex.GetType().Name}: {ex.Message}. Es wird mit dem internen Zaehler weitergearbeitet.");
+            return null;
+        }
+    }
+
+    private EventNodeConfiguration GetRequiredEvent207Node(string nodeName)
+    {
+        EventNodeConfiguration? node = event207Nodes.FirstOrDefault(
+            candidate => string.Equals(candidate.NodeName, nodeName, StringComparison.OrdinalIgnoreCase));
+        return node ?? throw new InvalidOperationException(
+            $"{Event207Name}.{nodeName} ist in der Datenbank nicht konfiguriert.");
+    }
+
+    private void WriteEvent207NodeNoLock(EventNodeConfiguration node, object value)
+    {
+        object converted = ConvertValueForOpc(value, node.DataType) ?? value;
+        OpcStatus status = opcClient!.WriteNode(node.OpcNode, converted);
+        if (status.IsBad
+            && string.Equals(
+                node.NodeName,
+                Event207LkwPlatzNodeName,
+                StringComparison.OrdinalIgnoreCase)
+            && converted is not string)
+        {
+            string stringFallback = Convert.ToString(
+                value,
+                CultureInfo.InvariantCulture) ?? string.Empty;
+            LogWarning(
+                $"01C2|Event_207.LKWPlatz akzeptiert den Integer aktuell nicht. Der Zahlenwert wird tolerant als String geschrieben. Node={node.OpcNode}, Wert={stringFallback}, Status={status.Code}, Beschreibung={status.Description}");
+
+            status = opcClient.WriteNode(node.OpcNode, stringFallback);
+            if (!status.IsBad)
+            {
+                converted = stringFallback;
+                LogOpcSend(
+                    $"01C3|OPC Schreiben vom OPC-Server als String angenommen. Event={Event207Name}, Variable={node.NodeName}, Node={node.OpcNode}, Wert={FormatOpcValue(converted)}, Status={status.Code}");
+            }
+        }
+
+        if (status.IsBad)
+        {
+            throw new InvalidOperationException(
+                $"OPC-Schreiben fehlgeschlagen. Event={Event207Name}, Variable={node.NodeName}, Node={node.OpcNode}, Wert={FormatOpcValue(converted)}, Status={status.Code}, Beschreibung={status.Description}");
+        }
+
+        LogOpcSend($"01BB|OPC Schreiben vom OPC-Server angenommen. Event={Event207Name}, Variable={node.NodeName}, Node={node.OpcNode}, Wert={FormatOpcValue(converted)}, Status={status.Code}");
+    }
+
+    private int IncrementEvent207TriggerNoLock(EventNodeConfiguration trigger)
+    {
+        int current = 0;
+        OpcValue value = opcClient!.ReadNode(trigger.OpcNode);
+        if (value.Status.IsGood && value.Value is not null)
+        {
+            current = Convert.ToInt32(value.Value, CultureInfo.InvariantCulture);
+        }
+
+        int next = current == int.MaxValue ? 1 : current + 1;
+        WriteEvent207NodeNoLock(trigger, next);
+        return next;
+    }
+
     private bool TryGetKranfahrtAuftragNode(string nodeName, out EventNodeConfiguration node)
     {
         return kranfahrtAuftragNodesByName.TryGetValue(nodeName, out node!);
@@ -1091,6 +1376,44 @@ public partial class MainWindow : Window
     {
         StartEvent203Loop();
         StartEvent201Loop();
+        StartEvent204AnforderungsLoop();
+    }
+
+    private void StartEvent204AnforderungsLoop()
+    {
+        if (!event204Nodes.Any(
+                node => string.Equals(node.NodeName, Event204TriggerNodeName, StringComparison.OrdinalIgnoreCase)
+                        && string.Equals(node.NodeRole, "Trigger", StringComparison.OrdinalIgnoreCase)
+                        && !string.IsNullOrWhiteSpace(node.OpcNode)))
+        {
+            LogError("01E5|Event_204.Event_204 ist nicht gueltig konfiguriert. Die minuetliche Bunkerdaten-Anforderung wird nicht gestartet.");
+            return;
+        }
+
+        _ = Task.Run(
+            async () =>
+            {
+                CancellationToken cancellationToken = lebensZaehlerCancellation.Token;
+
+                try
+                {
+                    using var timer = new PeriodicTimer(TimeSpan.FromMinutes(1));
+                    while (await timer.WaitForNextTickAsync(cancellationToken))
+                    {
+                        if (opcClient?.State != OpcClientState.Connected)
+                        {
+                            LogWarning("01E6|Minuetliche Event_204-Anforderung ausgesetzt, weil OPC nicht verbunden ist.");
+                            continue;
+                        }
+
+                        SendeEvent204Anforderung("Minuetliche automatische Anforderung");
+                    }
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                }
+            },
+            lebensZaehlerCancellation.Token);
     }
 
     private void StartEvent203Loop()
@@ -1476,6 +1799,14 @@ public partial class MainWindow : Window
                     $"FahrtID={aktiveSimulationsFahrt.ID}, AuftragID={aktiveSimulationsFahrt.AuftragID}, " +
                     $"Quelle={aktiveSimulationsFahrt.QuellePositionID}, Ziel={aktiveSimulationsFahrt.ZielPositionID}.");
                 SendeKranfahrtBeendetTelegramm();
+                try
+                {
+                    PruefeUndSendeLkwPlatzLeerEvent(aktiveSimulationsFahrt);
+                }
+                catch (Exception ex)
+                {
+                    LogError($"01BC|Event_207 konnte nicht gesendet werden. Auftrag={aktiveSimulationsFahrt.AuftragID}, Teilfahrt={aktiveSimulationsFahrt.AuftragTeilfahrt}, Fehler={ex.GetType().Name}: {ex.Message}");
+                }
             }
             catch (Exception ex)
             {
@@ -1955,6 +2286,12 @@ public partial class MainWindow : Window
         Event203EventItems.ItemsSource = CreateEventItems(
             event203Nodes,
             event203Values);
+        Event104EventItems.ItemsSource = CreateEventItems(
+            event104Nodes,
+            event104Values);
+        Event204EventItems.ItemsSource = CreateEventItems(
+            event204Nodes,
+            event204Values);
     }
 
     private static List<EventVisualItem> CreateEventItems(
@@ -2030,6 +2367,22 @@ public partial class MainWindow : Window
         KranPositionGroundPosition Target,
         DateTime StartUtc,
         TimeSpan Duration);
+
+    private sealed class EinlagerLeerSimulationState
+    {
+        public EinlagerLeerSimulationState(int zielFahrten)
+        {
+            ZielFahrten = zielFahrten;
+        }
+
+        public int ZielFahrten { get; }
+        public int AbgeschlosseneFahrten { get; set; }
+        public bool EventGesendet { get; set; }
+    }
+
+    private sealed record EinlagerTeilfahrtStand(
+        long HistorisierteTeilfahrten,
+        bool AktuelleTeilfahrtBereitsHistorisiert);
 
     private enum SimulationsFahrzustand
     {

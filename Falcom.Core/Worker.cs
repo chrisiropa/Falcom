@@ -16,6 +16,7 @@ namespace Falcom
       private readonly FalcomEventQueue _eventQueue; // NEU: Die Event-Queue injizieren
       private readonly WatchdogSender _watchdogSender;
       private readonly AktuelleFahrtRepository _aktuelleFahrtRepository;
+      private readonly BunkerMaterialRepository _bunkerMaterialRepository;
       private readonly FalcomRuntimeStatus _runtimeStatus;
       private ProcessState _currentState;
       private ProcessState? _lastLoggedState;
@@ -31,6 +32,7 @@ namespace Falcom
           FalcomEventQueue eventQueue,
           WatchdogSender watchdogSender,
           AktuelleFahrtRepository aktuelleFahrtRepository,
+          BunkerMaterialRepository bunkerMaterialRepository,
           FalcomRuntimeStatus runtimeStatus) // Im Konstruktor uebergeben
       {
          _logger = logger;
@@ -39,6 +41,7 @@ namespace Falcom
          _eventQueue = eventQueue; // NEU
          _watchdogSender = watchdogSender;
          _aktuelleFahrtRepository = aktuelleFahrtRepository;
+         _bunkerMaterialRepository = bunkerMaterialRepository;
          _runtimeStatus = runtimeStatus;
       }
 
@@ -98,6 +101,38 @@ namespace Falcom
 
                         if (falcomEvent is KranSpsLebensZaehlerEvent)
                         {
+                           continue;
+                        }
+
+                        if (falcomEvent is BunkerMaterialAnforderungEvent bunkerAnforderung)
+                        {
+                           _logger.LogInformation(
+                              "01D4|Event_204 wird verarbeitet. AnforderungsZaehler={AnforderungsZaehler}, Initialwert={IstInitialwert}.",
+                              bunkerAnforderung.AnforderungsZaehler,
+                              bunkerAnforderung.IstInitialwert);
+
+                           BunkerMaterialSnapshot snapshot = _bunkerMaterialRepository.GetSnapshot();
+                           OPC_Client_Crane.OpcSendResult antwort =
+                              await _opcClientCrane.SendBunkerMaterialResponseAsync(
+                                 bunkerAnforderung.AnforderungsZaehler,
+                                 snapshot,
+                                 stoppingToken);
+
+                           if (!antwort.Success)
+                           {
+                              _logger.LogError(
+                                 "01D5|Event_104 konnte nicht beantwortet werden. AnforderungsZaehler={AnforderungsZaehler}, Grund={Reason}.",
+                                 bunkerAnforderung.AnforderungsZaehler,
+                                 antwort.Reason);
+                           }
+                           else
+                           {
+                              _logger.LogInformation(
+                                 "01D6|Event_104 beantwortet. AnforderungsZaehler={AnforderungsZaehler}, AnzahlBunker={AnzahlBunker}.",
+                                 bunkerAnforderung.AnforderungsZaehler,
+                                 snapshot.AnzahlBunker);
+                           }
+
                            continue;
                         }
 
@@ -220,6 +255,52 @@ namespace Falcom
                            else
                            {
                               SetState(ProcessState.Fehler);
+                           }
+                        }
+
+                        if (falcomEvent is LkwPlatzLeer207Event lkwPlatzLeerEvent)
+                        {
+                           _logger.LogInformation(
+                              "01B3|Event_207 wird an die Datenbank uebergeben: Auftrag={AuftragID}, Teilfahrt={TeilfahrtID}, LkwPlatz={LkwPlatz}, AenderungsZaehler={AenderungsZaehler}.",
+                              lkwPlatzLeerEvent.AuftragsNummer,
+                              lkwPlatzLeerEvent.TeilfahrtID,
+                              lkwPlatzLeerEvent.LkwPlatzPositionID,
+                              lkwPlatzLeerEvent.AenderungsZaehler);
+
+                           AktuelleFahrtResult result =
+                              _aktuelleFahrtRepository.CompleteEinlagerAuftragLkwLeer(
+                                 lkwPlatzLeerEvent);
+
+                           if (result.Success)
+                           {
+                              _logger.LogInformation(
+                                 "01B4|Einlagerauftrag durch Event_207 regulaer beendet: Auftrag={AuftragID}, Teilfahrt={TeilfahrtID}, LkwPlatz={LkwPlatz}, Grund={Reason}.",
+                                 lkwPlatzLeerEvent.AuftragsNummer,
+                                 lkwPlatzLeerEvent.TeilfahrtID,
+                                 lkwPlatzLeerEvent.LkwPlatzPositionID,
+                                 result.Reason);
+                              SetState(ProcessState.FahrtAbgeschlossen);
+                              SetState(ProcessState.Idle);
+                           }
+                           else if (string.Equals(
+                              result.AuftragsTyp,
+                              "EINLAGERN_BEREITS_FERTIG",
+                              StringComparison.OrdinalIgnoreCase))
+                           {
+                              _logger.LogInformation(
+                                 "01BE|Event_207 gehoert zu einem bereits abgeschlossenen Einlagerauftrag und wurde ohne Zustandsaenderung ignoriert: Auftrag={AuftragID}, Teilfahrt={TeilfahrtID}, Grund={Reason}.",
+                                 lkwPlatzLeerEvent.AuftragsNummer,
+                                 lkwPlatzLeerEvent.TeilfahrtID,
+                                 result.Reason);
+                           }
+                           else
+                           {
+                              _logger.LogWarning(
+                                 "01B5|Event_207 hat keinen offenen Einlagerauftrag beendet: Auftrag={AuftragID}, Teilfahrt={TeilfahrtID}, LkwPlatz={LkwPlatz}, Grund={Reason}.",
+                                 lkwPlatzLeerEvent.AuftragsNummer,
+                                 lkwPlatzLeerEvent.TeilfahrtID,
+                                 lkwPlatzLeerEvent.LkwPlatzPositionID,
+                                 result.Reason);
                            }
                         }
 

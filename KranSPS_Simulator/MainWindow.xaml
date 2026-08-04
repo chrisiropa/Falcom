@@ -350,6 +350,74 @@
                               </ItemsControl>
                            </DockPanel>
                         </Border>
+                        <Border Width="420"
+                                MinHeight="220"
+                                MaxHeight="620"
+                                Margin="0,0,14,0"
+                                Padding="14"
+                                Background="#0E3A38"
+                                CornerRadius="8"
+                                BorderBrush="#2E6F69"
+                                BorderThickness="1">
+                           <DockPanel>
+                              <StackPanel DockPanel.Dock="Top" Margin="0,0,0,12">
+                                 <TextBlock Text="Event 104" Foreground="#9FD5CF" FontSize="13" />
+                                 <TextBlock Text="Event_104" Foreground="#F4FFFC" FontSize="22" FontWeight="Bold" />
+                                 <TextBlock Text="FALCOM -> KRAN_SPS · Bunkermaterial-Antwort" Foreground="#9FD5CF" FontSize="12" />
+                              </StackPanel>
+                              <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                 <ItemsControl x:Name="Event104EventItems">
+                                    <ItemsControl.ItemTemplate>
+                                       <DataTemplate>
+                                          <Grid Margin="0,2">
+                                             <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                             </Grid.ColumnDefinitions>
+                                             <TextBlock Text="{Binding Name}" Foreground="#DDFCF6" FontSize="13" />
+                                             <TextBlock Grid.Column="1" Text="{Binding Wert}" Foreground="#F4FFFC" FontSize="13" FontWeight="SemiBold" Margin="18,0,0,0" />
+                                          </Grid>
+                                       </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                 </ItemsControl>
+                              </ScrollViewer>
+                           </DockPanel>
+                        </Border>
+
+                        <Border Width="360"
+                                MinHeight="220"
+                                Margin="0,0,14,0"
+                                Padding="14"
+                                Background="#0E3A38"
+                                CornerRadius="8"
+                                BorderBrush="#2E6F69"
+                                BorderThickness="1">
+                           <DockPanel>
+                              <StackPanel DockPanel.Dock="Top" Margin="0,0,0,12">
+                                 <TextBlock Text="Event 204" Foreground="#9FD5CF" FontSize="13" />
+                                 <TextBlock Text="Event_204" Foreground="#F4FFFC" FontSize="22" FontWeight="Bold" />
+                                 <TextBlock Text="KRAN_SPS -> FALCOM · Bunkermaterial anfordern" Foreground="#9FD5CF" FontSize="12" />
+                                 <Button Content="Bunkerdaten anfordern"
+                                         Margin="0,12,0,0"
+                                         Padding="10,6"
+                                         Click="BunkerMaterialAnfordern_Click" />
+                              </StackPanel>
+                              <ItemsControl x:Name="Event204EventItems">
+                                 <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                       <Grid Margin="0,4">
+                                          <Grid.ColumnDefinitions>
+                                             <ColumnDefinition Width="*" />
+                                             <ColumnDefinition Width="Auto" />
+                                          </Grid.ColumnDefinitions>
+                                          <TextBlock Text="{Binding Name}" Foreground="#DDFCF6" FontSize="15" />
+                                          <TextBlock Grid.Column="1" Text="{Binding Wert}" Foreground="#F4FFFC" FontSize="15" FontWeight="SemiBold" Margin="18,0,0,0" />
+                                       </Grid>
+                                    </DataTemplate>
+                                 </ItemsControl.ItemTemplate>
+                              </ItemsControl>
+                           </DockPanel>
+                        </Border>
                      </StackPanel>                  </ScrollViewer>
                </DockPanel>
             </Border>

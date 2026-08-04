@@ -134,7 +134,7 @@ namespace Falcom
          command.Parameters.Add("@Status", SqlDbType.Int).Value =
             kranfahrtBeendetEvent.Status;
          command.Parameters.Add("@AenderungsZaehler", SqlDbType.Int).Value =
-            kranfahrtBeendetEvent.ÄnderungsZähler;
+            kranfahrtBeendetEvent.Ã„nderungsZÃ¤hler;
 
          connection.Open();
          using SqlDataReader reader = command.ExecuteReader();
@@ -143,6 +143,32 @@ namespace Falcom
             ? ReadAktuelleFahrtResult(reader)
             : AktuelleFahrtResult.Empty("FALCOM_CompleteAktuelleFahrt lieferte kein Ergebnis.");
       }
+
+      public AktuelleFahrtResult CompleteEinlagerAuftragLkwLeer(
+         LkwPlatzLeer207Event lkwPlatzLeerEvent)
+      {
+         using SqlConnection connection = new(_configManager.ConnectionString);
+         using SqlCommand command = CreateStoredProcedureCommand(
+            connection,
+            "dbo.FALCOM_CompleteEinlagerAuftragLkwLeer");
+
+         command.Parameters.Add("@AuftragsNummer", SqlDbType.BigInt).Value =
+            lkwPlatzLeerEvent.AuftragsNummer;
+         command.Parameters.Add("@AuftragTeilfahrt", SqlDbType.Int).Value =
+            lkwPlatzLeerEvent.TeilfahrtID;
+         command.Parameters.Add("@LkwPlatzPositionID", SqlDbType.Int).Value =
+            lkwPlatzLeerEvent.LkwPlatzPositionID;
+         command.Parameters.Add("@AenderungsZaehler", SqlDbType.Int).Value =
+            lkwPlatzLeerEvent.AenderungsZaehler;
+
+         connection.Open();
+         using SqlDataReader reader = command.ExecuteReader();
+
+         return reader.Read()
+            ? ReadAktuelleFahrtResult(reader)
+            : AktuelleFahrtResult.Empty("FALCOM_CompleteEinlagerAuftragLkwLeer lieferte kein Ergebnis.");
+      }
+
       public AktuelleFahrtResult FailAktuelleFahrt(
          long? aktuelleFahrtId,
          string bemerkung)
