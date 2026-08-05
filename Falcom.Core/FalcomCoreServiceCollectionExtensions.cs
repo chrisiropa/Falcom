@@ -1,4 +1,4 @@
-using Microsoft.Extensions.Configuration;
+﻿using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Falcom;
@@ -22,9 +22,12 @@ public static class FalcomCoreServiceCollectionExtensions
       services.AddHostedService<FalcomKranLiveSignalRServer>();
       services.AddSingleton<AktuelleFahrtRepository>();
       services.AddSingleton<BunkerMaterialRepository>();
+      services.AddSingleton<KranPositionenRepository>();
+      services.AddSingleton<FalcomEventLogRepository>();
       services.AddHostedService<DatabaseOrderPoller>();
       services.AddHostedService<Worker>();
 
       return services;
    }
 }
+

@@ -418,6 +418,41 @@
                               </ItemsControl>
                            </DockPanel>
                         </Border>
+
+                        <Border Width="360"
+                                MinHeight="220"
+                                Margin="0,0,14,0"
+                                Padding="14"
+                                Background="#0E3A38"
+                                CornerRadius="8"
+                                BorderBrush="#2E6F69"
+                                BorderThickness="1">
+                           <DockPanel>
+                              <StackPanel DockPanel.Dock="Top" Margin="0,0,0,12">
+                                 <TextBlock Text="Event 206" Foreground="#9FD5CF" FontSize="13" />
+                                 <TextBlock Text="Event_206" Foreground="#F4FFFC" FontSize="22" FontWeight="Bold" />
+                                 <TextBlock Text="KRAN_SPS -> FALCOM · Kranpositionen anfordern" Foreground="#9FD5CF" FontSize="12" />
+                                 <Button Content="Kranpositionen anfordern"
+                                         Margin="0,12,0,0"
+                                         Padding="10,6"
+                                         Click="KranPositionenAnfordern_Click" />
+                              </StackPanel>
+                              <ItemsControl x:Name="Event206EventItems">
+                                 <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                       <Grid Margin="0,4">
+                                          <Grid.ColumnDefinitions>
+                                             <ColumnDefinition Width="*" />
+                                             <ColumnDefinition Width="Auto" />
+                                          </Grid.ColumnDefinitions>
+                                          <TextBlock Text="{Binding Name}" Foreground="#DDFCF6" FontSize="15" />
+                                          <TextBlock Grid.Column="1" Text="{Binding Wert}" Foreground="#F4FFFC" FontSize="15" FontWeight="SemiBold" Margin="18,0,0,0" />
+                                       </Grid>
+                                    </DataTemplate>
+                                 </ItemsControl.ItemTemplate>
+                              </ItemsControl>
+                           </DockPanel>
+                        </Border>
                      </StackPanel>                  </ScrollViewer>
                </DockPanel>
             </Border>
@@ -425,3 +460,4 @@
       </TabControl>
    </Grid>
 </Window>
+

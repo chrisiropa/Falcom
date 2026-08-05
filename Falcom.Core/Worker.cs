@@ -17,6 +17,7 @@ namespace Falcom
       private readonly WatchdogSender _watchdogSender;
       private readonly AktuelleFahrtRepository _aktuelleFahrtRepository;
       private readonly BunkerMaterialRepository _bunkerMaterialRepository;
+      private readonly KranPositionenRepository _kranPositionenRepository;
       private readonly FalcomRuntimeStatus _runtimeStatus;
       private ProcessState _currentState;
       private ProcessState? _lastLoggedState;
@@ -33,6 +34,7 @@ namespace Falcom
           WatchdogSender watchdogSender,
           AktuelleFahrtRepository aktuelleFahrtRepository,
           BunkerMaterialRepository bunkerMaterialRepository,
+          KranPositionenRepository kranPositionenRepository,
           FalcomRuntimeStatus runtimeStatus) // Im Konstruktor uebergeben
       {
          _logger = logger;
@@ -42,6 +44,7 @@ namespace Falcom
          _watchdogSender = watchdogSender;
          _aktuelleFahrtRepository = aktuelleFahrtRepository;
          _bunkerMaterialRepository = bunkerMaterialRepository;
+         _kranPositionenRepository = kranPositionenRepository;
          _runtimeStatus = runtimeStatus;
       }
 
@@ -136,6 +139,38 @@ namespace Falcom
                            continue;
                         }
 
+                        if (falcomEvent is KranPositionenAnforderungEvent positionenAnforderung)
+                        {
+                           _logger.LogInformation(
+                              "01F4|Event_206 wird verarbeitet. AnforderungsZaehler={AnforderungsZaehler}, Initialwert={IstInitialwert}.",
+                              positionenAnforderung.AnforderungsZaehler,
+                              positionenAnforderung.IstInitialwert);
+
+                           KranPositionenSnapshot snapshot = _kranPositionenRepository.GetSnapshot();
+                           OPC_Client_Crane.OpcSendResult antwort =
+                              await _opcClientCrane.SendKranPositionenResponseAsync(
+                                 positionenAnforderung.AnforderungsZaehler,
+                                 snapshot,
+                                 stoppingToken);
+
+                           if (!antwort.Success)
+                           {
+                              _logger.LogError(
+                                 "01F5|Event_106 konnte nicht beantwortet werden. AnforderungsZaehler={AnforderungsZaehler}, Grund={Reason}.",
+                                 positionenAnforderung.AnforderungsZaehler,
+                                 antwort.Reason);
+                           }
+                           else
+                           {
+                              _logger.LogInformation(
+                                 "01F6|Event_106 beantwortet. AnforderungsZaehler={AnforderungsZaehler}, AnzahlPositionen={AnzahlPositionen}.",
+                                 positionenAnforderung.AnforderungsZaehler,
+                                 snapshot.AnzahlPositionen);
+                           }
+
+                           continue;
+                        }
+
                         if (falcomEvent is NextKranfahrtAvailableEvent nextKranfahrtAvailableEvent)
                         {
                            SetState(ProcessState.AuftragBereit);
@@ -150,7 +185,7 @@ namespace Falcom
                               _aktuelleFahrtRepository.TryCreateNextAktuelleFahrt(null);
 
                            _logger.LogInformation(
-                              "0045|Aktuelle Fahrt aus naechster DB-Kranfahrt erzeugt: Erfolg={Success}, Grund={Reason}, AktuelleFahrtID={AktuelleFahrtID}, AuftragID={AuftragID}, Teilfahrt={AuftragTeilfahrt}, Typ={AuftragsTyp}, Quelle={Quelle}, Ziel={Ziel}, SollMengeKg={SollMengeKg}.",
+                              "0045|Aktuelle Fahrt aus naechster DB-Kranfahrt erzeugt: Erfolg={Success}, Grund={Reason}, AktuelleFahrtID={AktuelleFahrtID}, AuftragID={AuftragID}, Teilfahrt={AuftragTeilfahrt}, Typ={AuftragsTyp}, Quelle={Quelle}, QuelleUnterposition={QuelleUnterposition}, Ziel={Ziel}, ZielUnterposition={ZielUnterposition}, SollMengeKg={SollMengeKg}.",
                               result.Success,
                               result.Reason,
                               result.AktuelleFahrtID,
@@ -158,7 +193,9 @@ namespace Falcom
                               result.AuftragTeilfahrt,
                               result.AuftragsTyp,
                               result.Quelle,
+                              result.QuelleUnterposition,
                               result.Ziel,
+                              result.ZielUnterposition,
                               result.SollMengeKg);
 
                            if (result.Success)
@@ -205,12 +242,11 @@ namespace Falcom
                                  _runtimeStatus.SetAktuelleFahrt(sentResult);
 
                                  _logger.LogInformation(
-                                    "0086|SPS-Fahrauftrag als gesendet markiert: AktuelleFahrtID={AktuelleFahrtID}, AuftragID={AuftragID}, Teilfahrt={AuftragTeilfahrt}, TelegrammNummer={TelegrammNummer}, ZaehlerAnfahrt={ZaehlerAnfahrt}.",
+                                    "0086|SPS-Fahrauftrag als gesendet markiert: AktuelleFahrtID={AktuelleFahrtID}, AuftragID={AuftragID}, Teilfahrt={AuftragTeilfahrt}, TelegrammNummer={TelegrammNummer}.",
                                     sentResult.AktuelleFahrtID,
                                     sentResult.AuftragID,
                                     sentResult.AuftragTeilfahrt,
-                                    sendResult.TelegrammNummer,
-                                    sendResult.ZaehlerAnfahrt);
+                                    sendResult.TelegrammNummer);
 
                                  SetState(ProcessState.FahrtAnSpsGesendet);
                                  SetState(ProcessState.WarteAufSpsRueckmeldung);
@@ -400,12 +436,14 @@ namespace Falcom
             _runtimeStatus.SetAktuelleFahrt(aktuelleFahrt);
 
             _logger.LogInformation(
-               "0054|Programmstart: Aktuelle Fahrt aus Datenbank erkannt. Rekonstruiere Zustand aus FALCOM_AKTUELLE_FAHRT. AktuelleFahrtID={AktuelleFahrtID}, AuftragID={AuftragID}, Typ={AuftragsTyp}, QuellePositionID={QuellePositionID}, ZielPositionID={ZielPositionID}, Quelle={Quelle}, Ziel={Ziel}, SollMengeKg={SollMengeKg}, SpsSendestatus={SpsSendestatus}.",
+               "0054|Programmstart: Aktuelle Fahrt aus Datenbank erkannt. Rekonstruiere Zustand aus FALCOM_AKTUELLE_FAHRT. AktuelleFahrtID={AktuelleFahrtID}, AuftragID={AuftragID}, Typ={AuftragsTyp}, QuellePositionID={QuellePositionID}, QuelleUnterposition={QuelleUnterposition}, ZielPositionID={ZielPositionID}, ZielUnterposition={ZielUnterposition}, Quelle={Quelle}, Ziel={Ziel}, SollMengeKg={SollMengeKg}, SpsSendestatus={SpsSendestatus}.",
                aktuelleFahrt.AktuelleFahrtID,
                aktuelleFahrt.AuftragID,
                aktuelleFahrt.AuftragsTyp,
                aktuelleFahrt.QuellePositionID,
+               aktuelleFahrt.QuelleUnterposition,
                aktuelleFahrt.ZielPositionID,
+               aktuelleFahrt.ZielUnterposition,
                aktuelleFahrt.Quelle,
                aktuelleFahrt.Ziel,
                aktuelleFahrt.SollMengeKg,
@@ -533,10 +571,12 @@ namespace Falcom
                _runtimeStatus.SetAktuelleFahrt(aktuelleFahrt);
 
                _logger.LogInformation(
-                  "0087|SPS-Sendeversuch fuer aktuelle Fahrt wird gestartet. AktuelleFahrtID={AktuelleFahrtID}, AuftragID={AuftragID}, Teilfahrt={AuftragTeilfahrt}, Grund={Grund}, AngefordertVon={AngefordertVon}.",
+                  "0087|SPS-Sendeversuch fuer aktuelle Fahrt wird gestartet. AktuelleFahrtID={AktuelleFahrtID}, AuftragID={AuftragID}, Teilfahrt={AuftragTeilfahrt}, QuelleUnterposition={QuelleUnterposition}, ZielUnterposition={ZielUnterposition}, Grund={Grund}, AngefordertVon={AngefordertVon}.",
                   aktuelleFahrt.AktuelleFahrtID,
                   aktuelleFahrt.AuftragID,
                   aktuelleFahrt.AuftragTeilfahrt,
+                  aktuelleFahrt.QuelleUnterposition,
+                  aktuelleFahrt.ZielUnterposition,
                   aktuelleFahrt.SpsSendewunschGrund,
                   aktuelleFahrt.SpsSendewunschVon);
 
@@ -562,12 +602,11 @@ namespace Falcom
                   _runtimeStatus.SetAktuelleFahrt(sentResult);
 
                   _logger.LogInformation(
-                     "0088|Aktuelle Fahrt wurde erneut an die Kran-SPS gesendet: AktuelleFahrtID={AktuelleFahrtID}, AuftragID={AuftragID}, Teilfahrt={AuftragTeilfahrt}, TelegrammNummer={TelegrammNummer}, ZaehlerAnfahrt={ZaehlerAnfahrt}.",
+                     "0088|Aktuelle Fahrt wurde erneut an die Kran-SPS gesendet: AktuelleFahrtID={AktuelleFahrtID}, AuftragID={AuftragID}, Teilfahrt={AuftragTeilfahrt}, TelegrammNummer={TelegrammNummer}.",
                      sentResult.AktuelleFahrtID,
                      sentResult.AuftragID,
                      sentResult.AuftragTeilfahrt,
-                     sendResult.TelegrammNummer,
-                     sendResult.ZaehlerAnfahrt);
+                     sendResult.TelegrammNummer);
 
                   SetState(ProcessState.FahrtAnSpsGesendet);
                   SetState(ProcessState.WarteAufSpsRueckmeldung);

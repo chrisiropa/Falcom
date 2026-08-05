@@ -12,10 +12,11 @@ namespace Falcom
       public const string AuftragTeilfahrtNodeName = "TeilNr";
       public const string QuelleNodeName = "Quelle";
       public const string ZielNodeName = "Ziel";
+      public const string QuelleUnterpositionNodeName = "QuelleUnterPos";
+      public const string ZielUnterpositionNodeName = "ZielUnterPos";
       public const string SollMasseNodeName = "SollMasse";
       public const string ToleranzNodeName = "Toleranz";
       public const string EventTriggerNodeName = EventName;
-      public const string ZaehlerAnfahrtNodeName = "ZielPos";
       public const string MaterialNrNodeName = "MaterialNr";
 
       public KranfahrtAuftragEvent(
@@ -24,9 +25,10 @@ namespace Falcom
          int auftragTeilfahrt,
          long quellePositionID,
          long zielPositionID,
+         int quelleUnterposition,
+         int zielUnterposition,
          decimal sollMasseKg,
          decimal toleranzKg,
-         int zaehlerAnfahrt = 0,
          int materialNr = 0)
       {
          AktuelleFahrtID = aktuelleFahrtID;
@@ -34,9 +36,10 @@ namespace Falcom
          AuftragTeilfahrt = auftragTeilfahrt;
          QuellePositionID = quellePositionID;
          ZielPositionID = zielPositionID;
+         QuelleUnterposition = quelleUnterposition;
+         ZielUnterposition = zielUnterposition;
          SollMasseKg = sollMasseKg;
          ToleranzKg = toleranzKg;
-         ZaehlerAnfahrt = zaehlerAnfahrt;
          MaterialNr = materialNr;
       }
 
@@ -54,18 +57,15 @@ namespace Falcom
 
       public long ZielPositionID { get; }
 
+      public int QuelleUnterposition { get; }
+
+      public int ZielUnterposition { get; }
+
       public decimal SollMasseKg { get; }
 
       public decimal ToleranzKg { get; }
 
-      public int ZaehlerAnfahrt { get; private set; }
-
       public int MaterialNr { get; }
-
-      public void SetZaehlerAnfahrt(int zaehlerAnfahrt)
-      {
-         ZaehlerAnfahrt = zaehlerAnfahrt;
-      }
 
       public static KranfahrtAuftragEvent FromAktuelleFahrt(
          AktuelleFahrtResult aktuelleFahrt,
@@ -78,6 +78,8 @@ namespace Falcom
             aktuelleFahrt.AuftragTeilfahrt ?? auftragTeilfahrt,
             aktuelleFahrt.QuellePositionID ?? 0,
             aktuelleFahrt.ZielPositionID ?? 0,
+            aktuelleFahrt.QuelleUnterposition ?? 0,
+            aktuelleFahrt.ZielUnterposition ?? 0,
             aktuelleFahrt.SollMengeKg ?? 0m,
             toleranzKg);
       }

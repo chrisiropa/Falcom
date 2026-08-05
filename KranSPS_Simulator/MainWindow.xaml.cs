@@ -1,4 +1,4 @@
-using Falcom;
+﻿using Falcom;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Logging;
 using Opc.UaFx;
@@ -40,6 +40,7 @@ public partial class MainWindow : Window
     private const string Event207LkwPlatzNodeName = "LKWPlatz";
     private const string Event104TriggerNodeName = "Event_104";
     private const string Event204TriggerNodeName = "Event_204";
+    private const string Event206TriggerNodeName = "Event_206";
 
     private readonly FalcomUiLogSink uiLogSink = new();
     private readonly FalcomFileSink fileLogSink;
@@ -58,6 +59,7 @@ public partial class MainWindow : Window
     private readonly IReadOnlyList<EventNodeConfiguration> event207Nodes;
     private readonly IReadOnlyList<EventNodeConfiguration> event104Nodes;
     private readonly IReadOnlyList<EventNodeConfiguration> event204Nodes;
+    private readonly IReadOnlyList<EventNodeConfiguration> event206Nodes;
     private readonly Dictionary<string, EventNodeConfiguration> kranfahrtBeendetNodesByName = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, EventNodeConfiguration> kranfahrtAuftragNodesByName = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> kranfahrtBeendetValues = new(StringComparer.OrdinalIgnoreCase);
@@ -68,8 +70,10 @@ public partial class MainWindow : Window
     private readonly Dictionary<string, string> event203Values = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> event104Values = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> event204Values = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> event206Values = new(StringComparer.OrdinalIgnoreCase);
     private readonly KranPositionGroundPosition grundstellung;
     private readonly IReadOnlyDictionary<long, SimKranPosition> positionenById;
+    private readonly IReadOnlyDictionary<long, IReadOnlyDictionary<int, KranPositionGroundPosition>> anfahrpunkteByPositionId;
     private readonly CancellationTokenSource reconnectCancellation = new();
     private readonly CancellationTokenSource lebensZaehlerCancellation = new();
 
@@ -90,6 +94,7 @@ public partial class MainWindow : Window
     private int spsLebensZaehler;
     private int event203Zaehler;
     private int event204AnforderungsZaehler;
+    private int event206AnforderungsZaehler;
     private int? letzterSpsLebensZaehler;
     private DateTime? letzterSpsLebensZaehlerGesendetAm;
     private int? letzterFalcomLebensZaehler;
@@ -147,6 +152,7 @@ public partial class MainWindow : Window
         event207Nodes = configuration.Event207Nodes;
         event104Nodes = configuration.Event104Nodes;
         event204Nodes = configuration.Event204Nodes;
+        event206Nodes = configuration.Event206Nodes;
         foreach (EventNodeConfiguration node in event104Nodes)
         {
             event104Values[node.NodeName] = "-";
@@ -155,8 +161,13 @@ public partial class MainWindow : Window
         {
             event204Values[node.NodeName] = "-";
         }
+        foreach (EventNodeConfiguration node in event206Nodes)
+        {
+            event206Values[node.NodeName] = "-";
+        }
         grundstellung = configuration.Grundstellung;
         positionenById = configuration.Positionen;
+        anfahrpunkteByPositionId = configuration.Anfahrpunkte;
         fileLogSink = new FalcomFileSink(configuration.LogfilePath);
         ProgramStartBanner.WriteToLogfile(
             fileLogSink,
@@ -202,6 +213,7 @@ public partial class MainWindow : Window
         Log($"01B6|Event 207 {Event207Name} Variablen: {string.Join(", ", event207Nodes.Select(node => node.NodeName))}");
         Log($"01DE|Event 104 Variablen: {string.Join(", ", event104Nodes.Select(node => node.NodeName))}");
         Log($"01DF|Event 204 Variablen: {string.Join(", ", event204Nodes.Select(node => node.NodeName))}");
+        Log($"01FA|Event 206 Variablen: {string.Join(", ", event206Nodes.Select(node => node.NodeName))}");
         FahreGrundstellungAn();
         Log("0116|Kran-SPS-Simulator bereit.");
         RefreshLogs();
@@ -590,17 +602,87 @@ public partial class MainWindow : Window
             return true;
         }
 
-        Dictionary<string, object?> beendetPayload = ReadEventValuesNoLock(kranfahrtBeendetNodes);
-        SetEventValues(kranfahrtBeendetValues, beendetPayload);
+        if (!TryGetPayloadInt64(auftragPayload, AuftragNummerNodeName, out long auftragId)
+            || !TryGetPayloadInt32(auftragPayload, AuftragTeilfahrtNodeName, out int auftragTeilfahrt)
+            || !TryGetPayloadInt64(auftragPayload, "Quelle", out long quellePositionId)
+            || !TryGetPayloadInt64(auftragPayload, "Ziel", out long zielPositionId))
+        {
+            begruendung = $"Event_102 Trigger={auftragTelegrammNummer}; Payload ist unvollstaendig. Initialauftrag wird nicht gefahren.";
+            return true;
+        }
 
-        TryGetPayloadInt32(beendetPayload, Event202TriggerNodeName, out int beendetAenderungsZaehler);
+        if (!HatPassendeOffeneAktuelleFahrt(
+                auftragId,
+                auftragTeilfahrt,
+                quellePositionId,
+                zielPositionId,
+                out string aktuelleFahrtBegruendung))
+        {
+            begruendung =
+                $"Event_102 Trigger={auftragTelegrammNummer}; Auftrag={auftragId}, Teilfahrt={auftragTeilfahrt}, " +
+                $"Quelle={quellePositionId}, Ziel={zielPositionId}. {aktuelleFahrtBegruendung} Initialauftrag wird nicht gefahren.";
+            return true;
+        }
+
         begruendung =
-            $"Event_202 und Event_102 verwenden getrennte Telegrammzaehler. " +
-            $"Event_102 Trigger={auftragTelegrammNummer}; Event_202 Trigger={beendetAenderungsZaehler}. " +
-            "Der Initialauftrag wird deshalb als offen verarbeitet.";
+            $"Event_102 Trigger={auftragTelegrammNummer}; Auftrag={auftragId}, Teilfahrt={auftragTeilfahrt}, " +
+            $"Quelle={quellePositionId}, Ziel={zielPositionId}. {aktuelleFahrtBegruendung}";
         return false;
     }
 
+    private bool HatPassendeOffeneAktuelleFahrt(
+        long auftragId,
+        int auftragTeilfahrt,
+        long quellePositionId,
+        long zielPositionId,
+        out string begruendung)
+    {
+        try
+        {
+            using var connection = new SqlConnection(databaseConnectionString);
+            using var command = new SqlCommand(
+                """
+                SELECT TOP (1)
+                   ID,
+                   Status
+                FROM dbo.FALCOM_AKTUELLE_FAHRT
+                WHERE AuftragID = @AuftragID
+                  AND AuftragTeilfahrt = @AuftragTeilfahrt
+                  AND ISNULL(QuellePositionID, -1) = @QuellePositionID
+                  AND ISNULL(ZielPositionID, -1) = @ZielPositionID
+                  AND FertigDatumZeit IS NULL
+                  AND UPPER(LTRIM(RTRIM(COALESCE(Status, N'')))) NOT IN (N'FERTIG', N'ABGESCHLOSSEN')
+                ORDER BY ID DESC;
+                """,
+                connection)
+            {
+                CommandTimeout = 10
+            };
+
+            command.Parameters.Add("@AuftragID", System.Data.SqlDbType.BigInt).Value = auftragId;
+            command.Parameters.Add("@AuftragTeilfahrt", System.Data.SqlDbType.Int).Value = auftragTeilfahrt;
+            command.Parameters.Add("@QuellePositionID", System.Data.SqlDbType.BigInt).Value = quellePositionId;
+            command.Parameters.Add("@ZielPositionID", System.Data.SqlDbType.BigInt).Value = zielPositionId;
+
+            connection.Open();
+            using SqlDataReader reader = command.ExecuteReader();
+            if (!reader.Read())
+            {
+                begruendung = "Keine passende offene Fahrt in FALCOM_AKTUELLE_FAHRT gefunden.";
+                return false;
+            }
+
+            begruendung =
+                $"Passende offene Fahrt in FALCOM_AKTUELLE_FAHRT gefunden: " +
+                $"AktuelleFahrtID={Convert.ToInt64(reader["ID"], CultureInfo.InvariantCulture)}, Status={Convert.ToString(reader["Status"], CultureInfo.InvariantCulture) ?? "-"}.";
+            return true;
+        }
+        catch (Exception ex)
+        {
+            begruendung = $"Aktuelle Fahrt konnte nicht gegen die Datenbank geprueft werden: {ex.GetType().Name}: {ex.Message}.";
+            return false;
+        }
+    }
     private AktuelleFahrtSimulation? ErstelleFahrtAusKranfahrtAuftragPayload(
         int telegrammNummer,
         IReadOnlyDictionary<string, object?> payload)
@@ -626,7 +708,20 @@ public partial class MainWindow : Window
 
         TryGetPayloadInt64(payload, AuftragNummerNodeName, out long auftragNummer);
         TryGetPayloadInt32(payload, AuftragTeilfahrtNodeName, out int auftragTeilfahrt);
+        TryGetPayloadInt32(payload, "QuelleUnterPos", out int quelleUnterposition);
+        TryGetPayloadInt32(payload, "ZielUnterPos", out int zielUnterposition);
         TryGetPayloadDecimal(payload, "SollMasse", out decimal sollMasse);
+
+        KranPositionGroundPosition quelleFahrposition = ResolveFahrposition(
+            quelle,
+            quelleUnterposition,
+            "Quelle",
+            telegrammNummer);
+        KranPositionGroundPosition zielFahrposition = ResolveFahrposition(
+            ziel,
+            zielUnterposition,
+            "Ziel",
+            telegrammNummer);
 
         var fahrt = new AktuelleFahrtSimulation(
             naechsteInterneFahrtId++,
@@ -637,18 +732,49 @@ public partial class MainWindow : Window
             "EMPFANGEN",
             quellePositionId,
             zielPositionId,
+            quelleUnterposition,
+            zielUnterposition,
             sollMasse,
             quelle.Bezeichnung,
             ziel.Bezeichnung,
-            quelle.Position,
-            ziel.Position);
+            quelleFahrposition,
+            zielFahrposition);
 
         Log(
             "0120|KranfahrtAuftrag in Simulatorfahrt umgesetzt: " +
             $"TelegrammNummer={telegrammNummer}, Auftrag={auftragNummer}, Teilfahrt={auftragTeilfahrt}, " +
-            $"Quelle={quelle.Bezeichnung} ({quellePositionId}), Ziel={ziel.Bezeichnung} ({zielPositionId}), SollMasse={sollMasse:0.###}.");
+            $"Quelle={quelle.Bezeichnung} ({quellePositionId}), QuelleUnterPos={quelleUnterposition}, " +
+            $"Ziel={ziel.Bezeichnung} ({zielPositionId}), ZielUnterPos={zielUnterposition}, SollMasse={sollMasse:0.###}.");
 
         return fahrt;
+    }
+
+    private KranPositionGroundPosition ResolveFahrposition(
+        SimKranPosition position,
+        int unterposition,
+        string rolle,
+        int telegrammNummer)
+    {
+        if (unterposition > 0
+            && anfahrpunkteByPositionId.TryGetValue(position.PositionID, out IReadOnlyDictionary<int, KranPositionGroundPosition>? punkte)
+            && punkte.ContainsKey(unterposition))
+        {
+            KranPositionGroundPosition punkt = punkte[unterposition];
+            Log(
+                $"0158|{rolle}-Unterposition auf Anfahrpunkt umgesetzt: " +
+                $"TelegrammNummer={telegrammNummer}, PositionID={position.PositionID}, UnterPos={unterposition}, " +
+                $"PosKran={punkt.PosKranX}, PosKatze={punkt.PosKatzeY}, PosHub={punkt.PosHubZ}.");
+            return punkt;
+        }
+
+        if (unterposition > 0)
+        {
+            LogWarning(
+                $"0159|{rolle}-Unterposition nicht in Anfahrpunkten gefunden. Nutze Objekt-Abwurfposition. " +
+                $"TelegrammNummer={telegrammNummer}, PositionID={position.PositionID}, UnterPos={unterposition}.");
+        }
+
+        return position.Position;
     }
 
     private static bool TryGetPayloadInt64(
@@ -1142,10 +1268,49 @@ public partial class MainWindow : Window
 
     private bool SendeEvent204Anforderung(string grund)
     {
+        return SendeTriggerAnforderung(
+            event204Nodes,
+            event204Values,
+            Event204TriggerNodeName,
+            ref event204AnforderungsZaehler,
+            "Event_204",
+            "01E3",
+            "01E4",
+            grund);
+    }
+
+    private void KranPositionenAnfordern_Click(object sender, RoutedEventArgs e)
+    {
+        SendeEvent206Anforderung("Manuelle Anforderung");
+    }
+
+    private bool SendeEvent206Anforderung(string grund)
+    {
+        return SendeTriggerAnforderung(
+            event206Nodes,
+            event206Values,
+            Event206TriggerNodeName,
+            ref event206AnforderungsZaehler,
+            "Event_206",
+            "01FB",
+            "01FC",
+            grund);
+    }
+
+    private bool SendeTriggerAnforderung(
+        IReadOnlyList<EventNodeConfiguration> nodes,
+        Dictionary<string, string> values,
+        string triggerNodeName,
+        ref int anforderungsZaehler,
+        string eventName,
+        string successLogCode,
+        string errorLogCode,
+        string grund)
+    {
         try
         {
-            EventNodeConfiguration trigger = event204Nodes.First(
-                node => string.Equals(node.NodeName, Event204TriggerNodeName, StringComparison.OrdinalIgnoreCase));
+            EventNodeConfiguration trigger = nodes.First(
+                node => string.Equals(node.NodeName, triggerNodeName, StringComparison.OrdinalIgnoreCase));
 
             lock (opcSyncRoot)
             {
@@ -1154,21 +1319,21 @@ public partial class MainWindow : Window
                     throw new InvalidOperationException("OPC ist nicht verbunden.");
                 }
 
-                if (event204AnforderungsZaehler == 0)
+                if (anforderungsZaehler == 0)
                 {
                     OpcValue current = opcClient.ReadNode(trigger.OpcNode);
                     if (current.Status.IsGood && current.Value is not null)
                     {
-                        event204AnforderungsZaehler = Convert.ToInt32(
+                        anforderungsZaehler = Convert.ToInt32(
                             current.Value,
                             CultureInfo.InvariantCulture);
                     }
                 }
 
-                event204AnforderungsZaehler = event204AnforderungsZaehler == int.MaxValue
+                anforderungsZaehler = anforderungsZaehler == int.MaxValue
                     ? 1
-                    : event204AnforderungsZaehler + 1;
-                OpcStatus status = opcClient.WriteNode(trigger.OpcNode, event204AnforderungsZaehler);
+                    : anforderungsZaehler + 1;
+                OpcStatus status = opcClient.WriteNode(trigger.OpcNode, anforderungsZaehler);
                 if (status.IsBad)
                 {
                     throw new InvalidOperationException(
@@ -1176,13 +1341,13 @@ public partial class MainWindow : Window
                 }
             }
 
-            SetEventValue(event204Values, Event204TriggerNodeName, event204AnforderungsZaehler);
-            Log($"01E3|Event_204 gesendet: AnforderungsZaehler={event204AnforderungsZaehler}, Grund={grund}.");
+            SetEventValue(values, triggerNodeName, anforderungsZaehler);
+            Log($"{successLogCode}|{eventName} gesendet: AnforderungsZaehler={anforderungsZaehler}, Grund={grund}.");
             return true;
         }
         catch (Exception ex)
         {
-            LogError($"01E4|Event_204 konnte nicht gesendet werden. Grund={grund}, Fehler={ex.GetType().Name}: {ex.Message}");
+            LogError($"{errorLogCode}|{eventName} konnte nicht gesendet werden. Grund={grund}, Fehler={ex.GetType().Name}: {ex.Message}");
             return false;
         }
     }
@@ -1377,6 +1542,7 @@ public partial class MainWindow : Window
         StartEvent203Loop();
         StartEvent201Loop();
         StartEvent204AnforderungsLoop();
+        StartEvent206AnforderungsLoop();
     }
 
     private void StartEvent204AnforderungsLoop()
@@ -1407,6 +1573,42 @@ public partial class MainWindow : Window
                         }
 
                         SendeEvent204Anforderung("Minuetliche automatische Anforderung");
+                    }
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                }
+            },
+            lebensZaehlerCancellation.Token);
+    }
+    private void StartEvent206AnforderungsLoop()
+    {
+        if (!event206Nodes.Any(
+                node => string.Equals(node.NodeName, Event206TriggerNodeName, StringComparison.OrdinalIgnoreCase)
+                        && string.Equals(node.NodeRole, "Trigger", StringComparison.OrdinalIgnoreCase)
+                        && !string.IsNullOrWhiteSpace(node.OpcNode)))
+        {
+            LogError("01FD|Event_206.Event_206 ist nicht gueltig konfiguriert. Die minuetliche Kranpositions-Anforderung wird nicht gestartet.");
+            return;
+        }
+
+        _ = Task.Run(
+            async () =>
+            {
+                CancellationToken cancellationToken = lebensZaehlerCancellation.Token;
+
+                try
+                {
+                    using var timer = new PeriodicTimer(TimeSpan.FromMinutes(1));
+                    while (await timer.WaitForNextTickAsync(cancellationToken))
+                    {
+                        if (opcClient?.State != OpcClientState.Connected)
+                        {
+                            LogWarning("01FE|Minuetliche Event_206-Anforderung ausgesetzt, weil OPC nicht verbunden ist.");
+                            continue;
+                        }
+
+                        SendeEvent206Anforderung("Minuetliche automatische Anforderung");
                     }
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -1670,6 +1872,8 @@ public partial class MainWindow : Window
             quelle.PositionID,
             ziel.PositionID,
             0,
+            0,
+            0,
             quelle.Bezeichnung,
             ziel.Bezeichnung,
             quelle.Position,
@@ -1719,8 +1923,8 @@ public partial class MainWindow : Window
             SimulationsFahrzustand.FahreZurQuelle,
             "0068|Aktuelle Fahrt wird abgefahren: " +
             $"SimulatorFahrtID={fahrt.ID}, TelegrammNummer={fahrt.TelegrammNummer}, AuftragID={fahrt.AuftragID}, Teilfahrt={fahrt.AuftragTeilfahrt}, " +
-            $"Quelle={fahrt.QuelleBezeichnung} ({fahrt.QuellePositionID}), " +
-            $"Ziel={fahrt.ZielBezeichnung} ({fahrt.ZielPositionID}).");
+            $"Quelle={fahrt.QuelleBezeichnung} ({fahrt.QuellePositionID}), QuelleUnterPos={fahrt.QuelleUnterposition}, " +
+            $"Ziel={fahrt.ZielBezeichnung} ({fahrt.ZielPositionID}), ZielUnterPos={fahrt.ZielUnterposition}.");
     }
 
     private void AktualisiereAktuelleBewegung(DateTime nowUtc)
@@ -1757,14 +1961,14 @@ public partial class MainWindow : Window
 
             SetMagnetAn(
                 1,
-                $"Quelle erreicht: {aktiveSimulationsFahrt.QuelleBezeichnung} ({aktiveSimulationsFahrt.QuellePositionID}), Ziel={aktiveSimulationsFahrt.ZielBezeichnung} ({aktiveSimulationsFahrt.ZielPositionID})");
+                $"Quelle erreicht: {aktiveSimulationsFahrt.QuelleBezeichnung} ({aktiveSimulationsFahrt.QuellePositionID}), QuelleUnterPos={aktiveSimulationsFahrt.QuelleUnterposition}, Ziel={aktiveSimulationsFahrt.ZielBezeichnung} ({aktiveSimulationsFahrt.ZielPositionID}), ZielUnterPos={aktiveSimulationsFahrt.ZielUnterposition}");
 
             StarteBewegung(
                 aktiveSimulationsFahrt.Ziel,
                 nowUtc,
                 SimulationsFahrzustand.FahreZumZiel,
                 "0069|Quelle erreicht. Ziel wird angefahren: " +
-                $"{aktiveSimulationsFahrt.ZielBezeichnung} ({aktiveSimulationsFahrt.ZielPositionID}).");
+                $"{aktiveSimulationsFahrt.ZielBezeichnung} ({aktiveSimulationsFahrt.ZielPositionID}), ZielUnterPos={aktiveSimulationsFahrt.ZielUnterposition}.");
             return;
         }
 
@@ -1772,14 +1976,14 @@ public partial class MainWindow : Window
         {
             SetMagnetAn(
                 0,
-                $"Ziel erreicht: {aktiveSimulationsFahrt.ZielBezeichnung} ({aktiveSimulationsFahrt.ZielPositionID}), Quelle={aktiveSimulationsFahrt.QuelleBezeichnung} ({aktiveSimulationsFahrt.QuellePositionID})");
+                $"Ziel erreicht: {aktiveSimulationsFahrt.ZielBezeichnung} ({aktiveSimulationsFahrt.ZielPositionID}), ZielUnterPos={aktiveSimulationsFahrt.ZielUnterposition}, Quelle={aktiveSimulationsFahrt.QuelleBezeichnung} ({aktiveSimulationsFahrt.QuellePositionID}), QuelleUnterPos={aktiveSimulationsFahrt.QuelleUnterposition}");
 
             if (demoModeAktiv)
             {
                 Log(
                     "0132|Demo-Ziel erreicht. Es wurde kein KranfahrtBeendet-Event gesendet. " +
-                    $"Quelle={aktiveSimulationsFahrt.QuelleBezeichnung} ({aktiveSimulationsFahrt.QuellePositionID}), " +
-                    $"Ziel={aktiveSimulationsFahrt.ZielBezeichnung} ({aktiveSimulationsFahrt.ZielPositionID}).");
+                    $"Quelle={aktiveSimulationsFahrt.QuelleBezeichnung} ({aktiveSimulationsFahrt.QuellePositionID}), QuelleUnterPos={aktiveSimulationsFahrt.QuelleUnterposition}, " +
+                    $"Ziel={aktiveSimulationsFahrt.ZielBezeichnung} ({aktiveSimulationsFahrt.ZielPositionID}), ZielUnterPos={aktiveSimulationsFahrt.ZielUnterposition}.");
                 aktiveSimulationsFahrt = null;
                 StarteNaechsteDemoFahrt(nowUtc);
                 return;
@@ -1797,7 +2001,8 @@ public partial class MainWindow : Window
                 Log(
                     "0075|KranfahrtBeendet wird vorbereitet: " +
                     $"FahrtID={aktiveSimulationsFahrt.ID}, AuftragID={aktiveSimulationsFahrt.AuftragID}, " +
-                    $"Quelle={aktiveSimulationsFahrt.QuellePositionID}, Ziel={aktiveSimulationsFahrt.ZielPositionID}.");
+                    $"Quelle={aktiveSimulationsFahrt.QuellePositionID}, QuelleUnterPos={aktiveSimulationsFahrt.QuelleUnterposition}, " +
+                    $"Ziel={aktiveSimulationsFahrt.ZielPositionID}, ZielUnterPos={aktiveSimulationsFahrt.ZielUnterposition}.");
                 SendeKranfahrtBeendetTelegramm();
                 try
                 {
@@ -2292,6 +2497,9 @@ public partial class MainWindow : Window
         Event204EventItems.ItemsSource = CreateEventItems(
             event204Nodes,
             event204Values);
+        Event206EventItems.ItemsSource = CreateEventItems(
+            event206Nodes,
+            event206Values);
     }
 
     private static List<EventVisualItem> CreateEventItems(
@@ -2393,6 +2601,9 @@ public partial class MainWindow : Window
         FahreZurGrundstellung
     }
 }
+
+
+
 
 
 

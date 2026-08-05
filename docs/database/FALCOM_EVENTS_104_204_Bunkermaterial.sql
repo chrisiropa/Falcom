@@ -73,15 +73,15 @@ BEGIN
    SET NOCOUNT ON;
 
    SELECT
-      CONVERT(int, ROW_NUMBER() OVER (ORDER BY lager.Lagerplatz) - 1) AS ArrayIndex,
+      CONVERT(int, lager.Lagerplatz - 1) AS ArrayIndex,
       CONVERT(int, lager.Lagerplatz) AS BuNr,
       CONVERT(int, COALESCE(material.ID, 0)) AS MaterialNr
    FROM
    (
-      SELECT TOP (21) Lagerplatz, MaterialID
+      SELECT Lagerplatz, MaterialID
       FROM dbo.FALCOM_LAGER
       WHERE PlatzTyp = N'LAGERBOX'
-      ORDER BY Lagerplatz
+        AND Lagerplatz BETWEEN 1 AND 21
    ) AS lager
    LEFT JOIN dbo.FALCOM_MATERIAL AS material
       ON material.ID = lager.MaterialID

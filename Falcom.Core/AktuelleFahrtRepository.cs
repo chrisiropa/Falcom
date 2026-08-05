@@ -28,6 +28,7 @@ namespace Falcom
             });
 
          connection.Open();
+         SetRequiredSqlOptions(connection);
          using SqlDataReader reader = command.ExecuteReader();
 
          return reader.Read()
@@ -43,6 +44,7 @@ namespace Falcom
             "dbo.FALCOM_GetAktuelleFahrt");
 
          connection.Open();
+         SetRequiredSqlOptions(connection);
          using SqlDataReader reader = command.ExecuteReader();
 
          return reader.Read()
@@ -58,6 +60,7 @@ namespace Falcom
             "dbo.FALCOM_TryClaimAktuelleFahrtSpsResend");
 
          connection.Open();
+         SetRequiredSqlOptions(connection);
          using SqlDataReader reader = command.ExecuteReader();
 
          return reader.Read()
@@ -83,6 +86,7 @@ namespace Falcom
             zaehlerAnfahrt.HasValue ? zaehlerAnfahrt.Value : DBNull.Value;
 
          connection.Open();
+         SetRequiredSqlOptions(connection);
          using SqlDataReader reader = command.ExecuteReader();
 
          return reader.Read()
@@ -105,6 +109,7 @@ namespace Falcom
             ToDbValue(fehler);
 
          connection.Open();
+         SetRequiredSqlOptions(connection);
          using SqlDataReader reader = command.ExecuteReader();
 
          return reader.Read()
@@ -137,6 +142,7 @@ namespace Falcom
             kranfahrtBeendetEvent.ÄnderungsZähler;
 
          connection.Open();
+         SetRequiredSqlOptions(connection);
          using SqlDataReader reader = command.ExecuteReader();
 
          return reader.Read()
@@ -162,6 +168,7 @@ namespace Falcom
             lkwPlatzLeerEvent.AenderungsZaehler;
 
          connection.Open();
+         SetRequiredSqlOptions(connection);
          using SqlDataReader reader = command.ExecuteReader();
 
          return reader.Read()
@@ -190,6 +197,7 @@ namespace Falcom
             ToDbValue(bemerkung);
 
          connection.Open();
+         SetRequiredSqlOptions(connection);
          using SqlDataReader reader = command.ExecuteReader();
 
          return reader.Read()
@@ -208,6 +216,25 @@ namespace Falcom
          };
       }
 
+      private static void SetRequiredSqlOptions(SqlConnection connection)
+      {
+         using SqlCommand command = new(
+            """
+            SET ANSI_NULLS ON;
+            SET ANSI_WARNINGS ON;
+            SET ANSI_PADDING ON;
+            SET ARITHABORT ON;
+            SET CONCAT_NULL_YIELDS_NULL ON;
+            SET QUOTED_IDENTIFIER ON;
+            SET NUMERIC_ROUNDABORT OFF;
+            """,
+            connection);
+
+         command.CommandType = CommandType.Text;
+         command.CommandTimeout = 10;
+         command.ExecuteNonQuery();
+      }
+
       private static AktuelleFahrtResult ReadAktuelleFahrtResult(SqlDataReader reader)
       {
          return new AktuelleFahrtResult(
@@ -221,6 +248,8 @@ namespace Falcom
             GetString(reader, "Ziel"),
             GetNullableInt64(reader, "QuellePositionID"),
             GetNullableInt64(reader, "ZielPositionID"),
+            GetNullableInt32(reader, "QuelleUnterposition"),
+            GetNullableInt32(reader, "ZielUnterposition"),
             GetNullableDecimal(reader, "SollMengeKg"),
             GetNullableDecimal(reader, "IstMengeKg"),
             GetString(reader, "SpsSendestatus"),
@@ -360,6 +389,8 @@ namespace Falcom
       string Ziel,
       long? QuellePositionID,
       long? ZielPositionID,
+      int? QuelleUnterposition,
+      int? ZielUnterposition,
       decimal? SollMengeKg,
       decimal? IstMengeKg,
       string SpsSendestatus,
@@ -382,6 +413,8 @@ namespace Falcom
             string.Empty,
             string.Empty,
             string.Empty,
+            null,
+            null,
             null,
             null,
             null,

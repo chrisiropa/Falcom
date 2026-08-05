@@ -19,6 +19,8 @@ BEGIN
       Ziel nvarchar(128) NULL,
       QuellePositionID bigint NULL,
       ZielPositionID bigint NULL,
+      QuelleUnterposition int NULL,
+      ZielUnterposition int NULL,
       SollMengeKg decimal(18,3) NULL
    );
 
@@ -26,7 +28,7 @@ BEGIN
 
    IF EXISTS (SELECT 1 FROM dbo.FALCOM_AKTUELLE_FAHRT WITH (UPDLOCK, HOLDLOCK))
    BEGIN
-      INSERT INTO @Result(Created, Reason, AktuelleFahrtID, AuftragID, AuftragsTyp, Quelle, Ziel, QuellePositionID, ZielPositionID, SollMengeKg)
+      INSERT INTO @Result(Created, Reason, AktuelleFahrtID, AuftragID, AuftragsTyp, Quelle, Ziel, QuellePositionID, ZielPositionID, QuelleUnterposition, ZielUnterposition, SollMengeKg)
       SELECT TOP (1)
          CAST(0 AS bit),
          N'FALCOM_AKTUELLE_FAHRT ist bereits belegt.',
@@ -37,6 +39,8 @@ BEGIN
          z.Bezeichnung,
          f.QuellePositionID,
          f.ZielPositionID,
+         f.QuelleUnterposition,
+         f.ZielUnterposition,
          f.SollMengeKg
       FROM dbo.FALCOM_AKTUELLE_FAHRT AS f
       LEFT JOIN dbo.FALCOM_KRAN_POSITION AS q ON q.ID = f.QuellePositionID
@@ -54,6 +58,8 @@ BEGIN
    DECLARE @EinlagerSoll decimal(18,3);
    DECLARE @QuellePositionID bigint;
    DECLARE @ZielPositionID bigint;
+   DECLARE @QuelleUnterposition int = 0;
+   DECLARE @ZielUnterposition int = 0;
    DECLARE @NeueFahrtID table (ID bigint NOT NULL);
 
    IF @AuftragID IS NULL
@@ -79,6 +85,16 @@ BEGIN
       FROM dbo.FALCOM_KRAN_POSITION AS p
       WHERE p.ID = @ZielBoxID;
 
+      EXEC dbo.FALCOM_GetNextKranPositionUnterposition
+         @PositionID = @QuellePositionID,
+         @Rolle = N'QUELLE',
+         @Unterposition = @QuelleUnterposition OUTPUT;
+
+      EXEC dbo.FALCOM_GetNextKranPositionUnterposition
+         @PositionID = @ZielPositionID,
+         @Rolle = N'ZIEL',
+         @Unterposition = @ZielUnterposition OUTPUT;
+
       INSERT INTO dbo.FALCOM_AKTUELLE_FAHRT
       (
          AuftragsTyp,
@@ -87,6 +103,8 @@ BEGIN
          Status,
          QuellePositionID,
          ZielPositionID,
+         QuelleUnterposition,
+         ZielUnterposition,
          SollMengeKg
       )
       OUTPUT inserted.ID INTO @NeueFahrtID(ID)
@@ -98,10 +116,12 @@ BEGIN
          N'OFFEN',
          @QuellePositionID,
          @ZielPositionID,
+         @QuelleUnterposition,
+         @ZielUnterposition,
          @EinlagerSoll
       );
 
-      INSERT INTO @Result(Created, Reason, AktuelleFahrtID, AuftragID, AuftragsTyp, Quelle, Ziel, QuellePositionID, ZielPositionID, SollMengeKg)
+      INSERT INTO @Result(Created, Reason, AktuelleFahrtID, AuftragID, AuftragsTyp, Quelle, Ziel, QuellePositionID, ZielPositionID, QuelleUnterposition, ZielUnterposition, SollMengeKg)
       SELECT
          CAST(1 AS bit),
          N'Aktuelle Einlagerfahrt erzeugt.',
@@ -112,6 +132,8 @@ BEGIN
          z.Bezeichnung,
          @QuellePositionID,
          @ZielPositionID,
+         @QuelleUnterposition,
+         @ZielUnterposition,
          @EinlagerSoll
       FROM @NeueFahrtID AS nf
       LEFT JOIN dbo.FALCOM_KRAN_POSITION AS q ON q.ID = @QuellePositionID
@@ -187,6 +209,19 @@ BEGIN
       RETURN;
    END;
 
+   SET @QuelleUnterposition = 0;
+   SET @ZielUnterposition = 0;
+
+   EXEC dbo.FALCOM_GetNextKranPositionUnterposition
+      @PositionID = @QuellePositionID,
+      @Rolle = N'QUELLE',
+      @Unterposition = @QuelleUnterposition OUTPUT;
+
+   EXEC dbo.FALCOM_GetNextKranPositionUnterposition
+      @PositionID = @ZielPositionID,
+      @Rolle = N'ZIEL',
+      @Unterposition = @ZielUnterposition OUTPUT;
+
    UPDATE dbo.FALCOM_AUFTRAG
       SET Status = N'IN_ARBEIT',
           BearbeitungGestartet = 1,
@@ -202,6 +237,8 @@ BEGIN
       Status,
       QuellePositionID,
       ZielPositionID,
+      QuelleUnterposition,
+      ZielUnterposition,
       SollMengeKg
    )
    OUTPUT inserted.ID INTO @NeueFahrtID(ID)
@@ -213,10 +250,12 @@ BEGIN
       N'OFFEN',
       @QuellePositionID,
       @ZielPositionID,
+      @QuelleUnterposition,
+      @ZielUnterposition,
       @QuellSollMengeKg
    );
 
-   INSERT INTO @Result(Created, Reason, AktuelleFahrtID, AuftragID, AuftragsTyp, Quelle, Ziel, QuellePositionID, ZielPositionID, SollMengeKg)
+   INSERT INTO @Result(Created, Reason, AktuelleFahrtID, AuftragID, AuftragsTyp, Quelle, Ziel, QuellePositionID, ZielPositionID, QuelleUnterposition, ZielUnterposition, SollMengeKg)
    SELECT
       CAST(1 AS bit),
       N'Aktuelle Chargierfahrt erzeugt.',
@@ -227,6 +266,8 @@ BEGIN
       z.Bezeichnung,
       @QuellePositionID,
       @ZielPositionID,
+      @QuelleUnterposition,
+      @ZielUnterposition,
       @QuellSollMengeKg
    FROM @NeueFahrtID AS nf
    LEFT JOIN dbo.FALCOM_KRAN_POSITION AS q ON q.ID = @QuellePositionID

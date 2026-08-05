@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Text.Json;
 using Microsoft.Data.SqlClient;
 
@@ -18,8 +18,10 @@ internal sealed record SimulatorConfiguration(
     IReadOnlyList<EventNodeConfiguration> Event207Nodes,
     IReadOnlyList<EventNodeConfiguration> Event104Nodes,
     IReadOnlyList<EventNodeConfiguration> Event204Nodes,
+    IReadOnlyList<EventNodeConfiguration> Event206Nodes,
     KranPositionGroundPosition Grundstellung,
-    IReadOnlyDictionary<long, SimKranPosition> Positionen);
+    IReadOnlyDictionary<long, SimKranPosition> Positionen,
+    IReadOnlyDictionary<long, IReadOnlyDictionary<int, KranPositionGroundPosition>> Anfahrpunkte);
 
 internal sealed record OpcNodeSubstitution(
     string Suchtext,
@@ -74,6 +76,8 @@ internal static class DatabaseConfig
 
         IReadOnlyDictionary<long, SimKranPosition> simPositionen =
             LoadSimPositionen(builder.ConnectionString);
+        IReadOnlyDictionary<long, IReadOnlyDictionary<int, KranPositionGroundPosition>> anfahrpunkte =
+            LoadAnfahrpunkte(builder.ConnectionString);
         IReadOnlyList<OpcNodeSubstitution> simulatorSubstitutionen =
             LoadSimulatorSubstitutionen(builder.ConnectionString);
 
@@ -120,13 +124,24 @@ internal static class DatabaseConfig
                     "Trigger",
                     StringComparison.OrdinalIgnoreCase))
                 .ToList(),
+            LoadEventOpcNodes(
+                builder.ConnectionString,
+                "Event_206",
+                "KRAN_SPS->FALCOM",
+                simulatorSubstitutionen)
+                .Where(node => string.Equals(
+                    node.NodeRole,
+                    "Trigger",
+                    StringComparison.OrdinalIgnoreCase))
+                .ToList(),
             LoadGrundstellung(
                 simPositionen,
                 new KranPositionGroundPosition(
                     9000,
                     12000,
                     8500)),
-            simPositionen);
+            simPositionen,
+            anfahrpunkte);
     }
 
     private static string LoadLogfilePath(JsonElement settings)
@@ -453,6 +468,49 @@ internal static class DatabaseConfig
         return positionen;
     }
 
+    private static IReadOnlyDictionary<long, IReadOnlyDictionary<int, KranPositionGroundPosition>> LoadAnfahrpunkte(string connectionString)
+    {
+        using var connection = new SqlConnection(connectionString);
+        using var command = new SqlCommand(
+            """
+            SELECT
+                PositionID,
+                PunktNr,
+                CONVERT(int, KranY) AS PosKranX,
+                CONVERT(int, KatzeX) AS PosKatzeY,
+                8500 AS PosHubZ
+            FROM dbo.FALCOM_GetKranPositionAnfahrpunkte()
+            ORDER BY PositionID, PunktNr;
+            """,
+            connection)
+        {
+            CommandTimeout = 30
+        };
+
+        connection.Open();
+        using SqlDataReader reader = command.ExecuteReader();
+        var result = new Dictionary<long, Dictionary<int, KranPositionGroundPosition>>();
+        while (reader.Read())
+        {
+            long positionId = Convert.ToInt64(reader["PositionID"]);
+            int punktNr = Convert.ToInt32(reader["PunktNr"]);
+            if (!result.TryGetValue(positionId, out Dictionary<int, KranPositionGroundPosition>? punkte))
+            {
+                punkte = new Dictionary<int, KranPositionGroundPosition>();
+                result[positionId] = punkte;
+            }
+
+            punkte[punktNr] = new KranPositionGroundPosition(
+                Convert.ToInt32(reader["PosKranX"]),
+                Convert.ToInt32(reader["PosKatzeY"]),
+                Convert.ToInt32(reader["PosHubZ"]));
+        }
+
+        return result.ToDictionary(
+            item => item.Key,
+            item => (IReadOnlyDictionary<int, KranPositionGroundPosition>)item.Value);
+    }
+
     private static KranPositionGroundPosition LoadGrundstellung(
         IReadOnlyDictionary<long, SimKranPosition> positionen,
         KranPositionGroundPosition fallback)
@@ -480,6 +538,8 @@ internal sealed record AktuelleFahrtSimulation(
     string Status,
     long QuellePositionID,
     long ZielPositionID,
+    int QuelleUnterposition,
+    int ZielUnterposition,
     decimal SollMengeKg,
     string QuelleBezeichnung,
     string ZielBezeichnung,
@@ -488,4 +548,5 @@ internal sealed record AktuelleFahrtSimulation(
 {
     public decimal? IstGewichtKg { get; set; }
 }
+
 

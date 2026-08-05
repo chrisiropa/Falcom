@@ -18,6 +18,8 @@ BEGIN
          CAST(NULL AS nvarchar(128)) AS Ziel,
          CAST(NULL AS bigint) AS QuellePositionID,
          CAST(NULL AS bigint) AS ZielPositionID,
+         CAST(NULL AS int) AS QuelleUnterposition,
+         CAST(NULL AS int) AS ZielUnterposition,
          CAST(NULL AS decimal(18,3)) AS SollMengeKg,
          CAST(NULL AS decimal(18,3)) AS IstMengeKg;
 
@@ -34,6 +36,8 @@ BEGIN
       z.Bezeichnung AS Ziel,
       f.QuellePositionID,
       f.ZielPositionID,
+      f.QuelleUnterposition,
+      f.ZielUnterposition,
       CONVERT(decimal(18,3), f.SollMengeKg) AS SollMengeKg,
       CONVERT(decimal(18,3), f.IstMengeKg) AS IstMengeKg
    FROM dbo.FALCOM_AKTUELLE_FAHRT AS f
