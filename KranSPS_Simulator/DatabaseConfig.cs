@@ -1,4 +1,4 @@
-﻿using System.IO;
+using System.IO;
 using System.Text.Json;
 using Microsoft.Data.SqlClient;
 
@@ -17,7 +17,9 @@ internal sealed record SimulatorConfiguration(
     IReadOnlyList<EventNodeConfiguration> Event203Nodes,
     IReadOnlyList<EventNodeConfiguration> Event207Nodes,
     IReadOnlyList<EventNodeConfiguration> Event104Nodes,
+    IReadOnlyList<EventNodeConfiguration> Event105Nodes,
     IReadOnlyList<EventNodeConfiguration> Event204Nodes,
+    IReadOnlyList<EventNodeConfiguration> Event205Nodes,
     IReadOnlyList<EventNodeConfiguration> Event206Nodes,
     KranPositionGroundPosition Grundstellung,
     IReadOnlyDictionary<long, SimKranPosition> Positionen,
@@ -116,7 +118,22 @@ internal static class DatabaseConfig
                 simulatorSubstitutionen),
             LoadEventOpcNodes(
                 builder.ConnectionString,
+                "Event_105",
+                "FALCOM->KRAN_SPS",
+                simulatorSubstitutionen),
+            LoadEventOpcNodes(
+                builder.ConnectionString,
                 "Event_204",
+                "KRAN_SPS->FALCOM",
+                simulatorSubstitutionen)
+                .Where(node => string.Equals(
+                    node.NodeRole,
+                    "Trigger",
+                    StringComparison.OrdinalIgnoreCase))
+                .ToList(),
+            LoadEventOpcNodes(
+                builder.ConnectionString,
+                "Event_205",
                 "KRAN_SPS->FALCOM",
                 simulatorSubstitutionen)
                 .Where(node => string.Equals(

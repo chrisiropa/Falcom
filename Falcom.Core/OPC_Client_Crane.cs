@@ -1,4 +1,4 @@
-﻿using Microsoft.Data.SqlClient;
+using Microsoft.Data.SqlClient;
 using Opc.UaFx;
 using Opc.UaFx.Client;
 using System.Data;
@@ -23,9 +23,17 @@ namespace Falcom
       private const string Event104Name = "Event_104";
       private const string Event104Direction = "FALCOM->KRAN_SPS";
       private const string Event104TriggerNodeName = "Event_104";
+      private const string Event105Name = "Event_105";
+      private const string Event105Direction = "FALCOM->KRAN_SPS";
+      private const string Event105TriggerNodeName = "Event_105";
+      private const int Event105MaxMaterialIndex = 20;
+      private static readonly DateTime EmptyEvent105DatumZeit = new(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc);
       private const string Event204Name = "Event_204";
       private const string Event204Direction = "KRAN_SPS->FALCOM";
       private const string Event204TriggerNodeName = "Event_204";
+      private const string Event205Name = "Event_205";
+      private const string Event205Direction = "KRAN_SPS->FALCOM";
+      private const string Event205TriggerNodeName = "Event_205";
       private const string Event106Name = "Event_106";
       private const string Event106Direction = "FALCOM->KRAN_SPS";
       private const string Event106TriggerNodeName = "Event_106";
@@ -45,7 +53,6 @@ namespace Falcom
       private readonly FalcomRuntimeStatus _runtimeStatus;
       private readonly FalcomKranLiveSignalRClient _kranLiveSignalRClient;
       private readonly AktuelleFahrtRepository _aktuelleFahrtRepository;
-      private readonly FalcomEventLogRepository _eventLogRepository;
       private readonly FalcomEventQueue _eventQueue; // Privates Feld fuer die Queue
       private readonly object _syncRoot = new();
       private readonly List<OpcMonitoredItem> monitoredItems = new();
@@ -54,7 +61,9 @@ namespace Falcom
       private readonly string event201NodeId;
       private readonly Dictionary<string, string> event203OpcNodesByName;
       private readonly Dictionary<string, string> event104OpcNodesByName;
+      private readonly Dictionary<string, string> event105OpcNodesByName;
       private readonly Dictionary<string, string> event204OpcNodesByName;
+      private readonly Dictionary<string, string> event205OpcNodesByName;
       private readonly Dictionary<string, string> event106OpcNodesByName;
       private readonly Dictionary<string, string> event206OpcNodesByName;
       private readonly Dictionary<string, string> kranfahrtAuftragLiveOpcNodesByName;
@@ -79,6 +88,8 @@ namespace Falcom
       private bool lkwPlatzLeerInitialwertGesehen;
       private int? lastEvent204AnforderungsZaehler;
       private bool event204InitialwertGesehen;
+      private int? lastEvent205AnforderungsZaehler;
+      private bool event205InitialwertGesehen;
       private int? lastEvent206AnforderungsZaehler;
       private bool event206InitialwertGesehen;
       private int? aktuellePosKranX;
@@ -98,7 +109,6 @@ namespace Falcom
          FalcomRuntimeStatus runtimeStatus,
          FalcomKranLiveSignalRClient kranLiveSignalRClient,
          AktuelleFahrtRepository aktuelleFahrtRepository,
-         FalcomEventLogRepository eventLogRepository,
          FalcomEventQueue eventQueue)
       {
          _logger = logger;
@@ -106,7 +116,6 @@ namespace Falcom
          _runtimeStatus = runtimeStatus;
          _kranLiveSignalRClient = kranLiveSignalRClient;
          _aktuelleFahrtRepository = aktuelleFahrtRepository;
-         _eventLogRepository = eventLogRepository;
          _eventQueue = eventQueue; // Zuweisung fuer den spaeteren Zugriff
          TraegerLicense();
          KranfahrtBeendetEvent.LoadOpcNodes(configManager);
@@ -125,9 +134,15 @@ namespace Falcom
          event104OpcNodesByName = LoadOptionalEventOpcNodes(
             Event104Name,
             Event104Direction);
+         event105OpcNodesByName = LoadOptionalEventOpcNodes(
+            Event105Name,
+            Event105Direction);
          event204OpcNodesByName = LoadOptionalEventOpcNodes(
             Event204Name,
             Event204Direction);
+         event205OpcNodesByName = LoadOptionalEventOpcNodes(
+            Event205Name,
+            Event205Direction);
          event106OpcNodesByName = LoadOptionalEventOpcNodes(
             Event106Name,
             Event106Direction);
@@ -428,24 +443,6 @@ namespace Falcom
 
             kranfahrtAuftragTelegrammNummer = telegrammNummer;
 
-            _eventLogRepository.LogEvent(
-               KranfahrtAuftragEventName,
-               KranfahrtAuftragDirection,
-               telegrammNummer,
-               new Dictionary<string, object?>
-               {
-                  [KranfahrtAuftragEvent.AuftragNummerNodeName] = Convert.ToInt32(kranfahrtAuftragEvent.AuftragNummer),
-                  [KranfahrtAuftragEvent.AuftragTeilfahrtNodeName] = kranfahrtAuftragEvent.AuftragTeilfahrt,
-                  [KranfahrtAuftragEvent.QuelleNodeName] = Convert.ToInt32(kranfahrtAuftragEvent.QuellePositionID),
-                  [KranfahrtAuftragEvent.QuelleUnterpositionNodeName] = kranfahrtAuftragEvent.QuelleUnterposition,
-                  [KranfahrtAuftragEvent.ZielNodeName] = Convert.ToInt32(kranfahrtAuftragEvent.ZielPositionID),
-                  [KranfahrtAuftragEvent.ZielUnterpositionNodeName] = kranfahrtAuftragEvent.ZielUnterposition,
-                  [KranfahrtAuftragEvent.SollMasseNodeName] = decimal.ToInt32(decimal.Round(kranfahrtAuftragEvent.SollMasseKg, 0, MidpointRounding.AwayFromZero)),
-                  [KranfahrtAuftragEvent.ToleranzNodeName] = decimal.ToInt32(decimal.Round(kranfahrtAuftragEvent.ToleranzKg, 0, MidpointRounding.AwayFromZero)),
-                  [KranfahrtAuftragEvent.MaterialNrNodeName] = kranfahrtAuftragEvent.MaterialNr,
-                  [KranfahrtAuftragEvent.EventTriggerNodeName] = telegrammNummer
-               });
-
             _logger.LogInformation(               "0047|Event_102 an SPS gesendet: Nr={AuftragID}, TeilNr={AuftragTeilfahrt}, Quelle={QuellePositionID}, QuelleUnterposition={QuelleUnterposition}, Ziel={ZielPositionID}, ZielUnterposition={ZielUnterposition}, SollMasse={SollMasseKg}, Toleranz={ToleranzKg}, MaterialNr={MaterialNr}, Event_102={TelegrammNummer}.",
                kranfahrtAuftragEvent.AuftragNummer,
                kranfahrtAuftragEvent.AuftragTeilfahrt,
@@ -547,18 +544,6 @@ namespace Falcom
                   GetRequiredConfiguredEventNode(event104OpcNodesByName, Event104Name, Event104TriggerNodeName),
                   anforderungsZaehler);
             }
-
-            _eventLogRepository.LogEvent(
-               Event104Name,
-               Event104Direction,
-               anforderungsZaehler,
-               new Dictionary<string, object?>
-               {
-                  [Event104TriggerNodeName] = anforderungsZaehler,
-                  ["AnzahlBunker"] = snapshot.AnzahlBunker,
-                  ["BelegteArrayPlaetze"] = string.Join(",", snapshot.Eintraege.Select(item => item.ArrayIndex))
-               },
-               filterPayloadByLogValue: false);
             _logger.LogInformation(
                "01D7|Event_104 an Kran-SPS gesendet: AnforderungsZaehler={AnforderungsZaehler}, AnzahlBunker={AnzahlBunker}, belegteArrayPlaetze={BelegteArrayPlaetze}.",
                anforderungsZaehler,
@@ -575,6 +560,156 @@ namespace Falcom
                ex.GetType().Name,
                ex.Message);
             return Task.FromResult(OpcSendResult.Failed(ex.Message));
+         }
+      }
+
+      public Task<OpcSendResult> SendMaterialEigenschaftenResponseAsync(
+         int anforderungsZaehler,
+         MaterialEigenschaftenSnapshot snapshot,
+         CancellationToken cancellationToken)
+      {
+         cancellationToken.ThrowIfCancellationRequested();
+
+         try
+         {
+            EnsureConnected();
+
+            IReadOnlyDictionary<int, MaterialEigenschaftenEintrag> eintraegeByArrayIndex = snapshot.Eintraege
+               .Where(item => item.ArrayIndex >= 0 && item.ArrayIndex <= Event105MaxMaterialIndex)
+               .ToDictionary(item => item.ArrayIndex);
+
+            lock (_syncRoot)
+            {
+               for (int index = 0; index <= Event105MaxMaterialIndex; index++)
+               {
+                  eintraegeByArrayIndex.TryGetValue(index, out MaterialEigenschaftenEintrag? eintrag);
+
+                  WriteRequiredNode(
+                     GetRequiredConfiguredEventNode(event105OpcNodesByName, Event105Name, GetMaterialEigenschaftenNodeName(index, "iID")),
+                     eintrag?.ID ?? 0);
+                  WriteRequiredNode(
+                     GetRequiredConfiguredEventNode(event105OpcNodesByName, Event105Name, GetMaterialEigenschaftenNodeName(index, "Mat_Name")),
+                     eintrag?.MatName ?? string.Empty);
+                  WriteRequiredDateTimeNodeWithStringFallback(
+                     GetRequiredConfiguredEventNode(event105OpcNodesByName, Event105Name, GetMaterialEigenschaftenNodeName(index, "Datum_Zeit")),
+                     eintrag?.DatumZeit,
+                     GetMaterialEigenschaftenNodeName(index, "Datum_Zeit"));
+                  WriteRequiredNode(
+                     GetRequiredConfiguredEventNode(event105OpcNodesByName, Event105Name, GetMaterialEigenschaftenParaNodeName(index, "diMasseGattMin")),
+                     eintrag?.DiMasseGattMin ?? 0);
+                  WriteRequiredNode(
+                     GetRequiredConfiguredEventNode(event105OpcNodesByName, Event105Name, GetMaterialEigenschaftenParaNodeName(index, "diZeitAbtippen")),
+                     eintrag?.DiZeitAbtippen ?? 0);
+                  WriteRequiredNode(
+                     GetRequiredConfiguredEventNode(event105OpcNodesByName, Event105Name, GetMaterialEigenschaftenParaNodeName(index, "diMasseVorAbtippen")),
+                     eintrag?.DiMasseVorAbtippen ?? 0);
+                  WriteRequiredNode(
+                     GetRequiredConfiguredEventNode(event105OpcNodesByName, Event105Name, GetMaterialEigenschaftenParaNodeName(index, "diMasseTol_pos")),
+                     eintrag?.DiMasseTolPos ?? 0);
+                  WriteRequiredNode(
+                     GetRequiredConfiguredEventNode(event105OpcNodesByName, Event105Name, GetMaterialEigenschaftenParaNodeName(index, "diMasseTol_neg")),
+                     eintrag?.DiMasseTolNeg ?? 0);
+                  WriteRequiredNode(
+                     GetRequiredConfiguredEventNode(event105OpcNodesByName, Event105Name, GetMaterialEigenschaftenParaNodeName(index, "rKraftStufenPro100Kg")),
+                     eintrag?.RKraftStufenPro100Kg ?? 0f);
+                  WriteRequiredNode(
+                     GetRequiredConfiguredEventNode(event105OpcNodesByName, Event105Name, GetMaterialEigenschaftenParaNodeName(index, "xAbwurfFlach")),
+                     eintrag?.XAbwurfFlach ?? false);
+                  WriteRequiredNode(
+                     GetRequiredConfiguredEventNode(event105OpcNodesByName, Event105Name, GetMaterialEigenschaftenParaNodeName(index, "xAbwurfAbzett")),
+                     eintrag?.XAbwurfAbzett ?? false);
+                  WriteRequiredNode(
+                     GetRequiredConfiguredEventNode(event105OpcNodesByName, Event105Name, GetMaterialEigenschaftenParaNodeName(index, "xAbwurfTippen")),
+                     eintrag?.XAbwurfTippen ?? false);
+                  WriteRequiredNode(
+                     GetRequiredConfiguredEventNode(event105OpcNodesByName, Event105Name, GetMaterialEigenschaftenParaNodeName(index, "xNachfassenMag_Aus")),
+                     eintrag?.XNachfassenMagAus ?? false);
+                  WriteRequiredNode(
+                     GetRequiredConfiguredEventNode(event105OpcNodesByName, Event105Name, GetMaterialEigenschaftenParaNodeName(index, "xNachfassenMag_Dauernd")),
+                     eintrag?.XNachfassenMagDauernd ?? false);
+                  WriteRequiredNode(
+                     GetRequiredConfiguredEventNode(event105OpcNodesByName, Event105Name, GetMaterialEigenschaftenParaNodeName(index, "xKreislauf")),
+                     eintrag?.XKreislauf ?? false);
+               }
+
+               // Der korrelierte Trigger wird bewusst zuletzt geschrieben.
+               WriteRequiredNode(
+                  GetRequiredConfiguredEventNode(event105OpcNodesByName, Event105Name, Event105TriggerNodeName),
+                  anforderungsZaehler);
+            }
+            _logger.LogInformation(
+               "0209|Event_105 an Kran-SPS gesendet: AnforderungsZaehler={AnforderungsZaehler}, AnzahlMaterialien={AnzahlMaterialien}.",
+               anforderungsZaehler,
+               snapshot.AnzahlMaterialien);
+
+            return Task.FromResult(OpcSendResult.Ok(anforderungsZaehler));
+         }
+         catch (Exception ex)
+         {
+            _logger.LogError(
+               "020A|Event_105 konnte nicht an die Kran-SPS gesendet werden. AnforderungsZaehler={AnforderungsZaehler}, Fehler={ExceptionType}: {Message}.",
+               anforderungsZaehler,
+               ex.GetType().Name,
+               ex.Message);
+            return Task.FromResult(OpcSendResult.Failed(ex.Message));
+         }
+      }
+
+      public Task<OpcReadResult<MaterialEigenschaftenSnapshot>> ReadMaterialEigenschaftenFromSpsAsync(
+         CancellationToken cancellationToken)
+      {
+         cancellationToken.ThrowIfCancellationRequested();
+
+         try
+         {
+            EnsureConnected();
+
+            var eintraege = new List<MaterialEigenschaftenEintrag>();
+
+            lock (_syncRoot)
+            {
+               for (int index = 1; index <= Event105MaxMaterialIndex; index++)
+               {
+                  int id = ReadRequiredInt32Node(
+                     GetRequiredConfiguredEventNode(event105OpcNodesByName, Event105Name, GetMaterialEigenschaftenNodeName(index, "iID")));
+                  if (id <= 0)
+                  {
+                     continue;
+                  }
+
+                  eintraege.Add(new MaterialEigenschaftenEintrag(
+                     index,
+                     id,
+                     ReadRequiredStringNode(GetRequiredConfiguredEventNode(event105OpcNodesByName, Event105Name, GetMaterialEigenschaftenNodeName(index, "Mat_Name"))),
+                     ReadRequiredNullableDateTimeNode(GetRequiredConfiguredEventNode(event105OpcNodesByName, Event105Name, GetMaterialEigenschaftenNodeName(index, "Datum_Zeit"))),
+                     ReadRequiredInt32Node(GetRequiredConfiguredEventNode(event105OpcNodesByName, Event105Name, GetMaterialEigenschaftenParaNodeName(index, "diMasseGattMin"))),
+                     ReadRequiredInt32Node(GetRequiredConfiguredEventNode(event105OpcNodesByName, Event105Name, GetMaterialEigenschaftenParaNodeName(index, "diZeitAbtippen"))),
+                     ReadRequiredInt32Node(GetRequiredConfiguredEventNode(event105OpcNodesByName, Event105Name, GetMaterialEigenschaftenParaNodeName(index, "diMasseVorAbtippen"))),
+                     ReadRequiredInt32Node(GetRequiredConfiguredEventNode(event105OpcNodesByName, Event105Name, GetMaterialEigenschaftenParaNodeName(index, "diMasseTol_pos"))),
+                     ReadRequiredInt32Node(GetRequiredConfiguredEventNode(event105OpcNodesByName, Event105Name, GetMaterialEigenschaftenParaNodeName(index, "diMasseTol_neg"))),
+                     ReadRequiredSingleNode(GetRequiredConfiguredEventNode(event105OpcNodesByName, Event105Name, GetMaterialEigenschaftenParaNodeName(index, "rKraftStufenPro100Kg"))),
+                     ReadRequiredBooleanNode(GetRequiredConfiguredEventNode(event105OpcNodesByName, Event105Name, GetMaterialEigenschaftenParaNodeName(index, "xAbwurfFlach"))),
+                     ReadRequiredBooleanNode(GetRequiredConfiguredEventNode(event105OpcNodesByName, Event105Name, GetMaterialEigenschaftenParaNodeName(index, "xAbwurfAbzett"))),
+                     ReadRequiredBooleanNode(GetRequiredConfiguredEventNode(event105OpcNodesByName, Event105Name, GetMaterialEigenschaftenParaNodeName(index, "xAbwurfTippen"))),
+                     ReadRequiredBooleanNode(GetRequiredConfiguredEventNode(event105OpcNodesByName, Event105Name, GetMaterialEigenschaftenParaNodeName(index, "xNachfassenMag_Aus"))),
+                     ReadRequiredBooleanNode(GetRequiredConfiguredEventNode(event105OpcNodesByName, Event105Name, GetMaterialEigenschaftenParaNodeName(index, "xNachfassenMag_Dauernd"))),
+                     ReadRequiredBooleanNode(GetRequiredConfiguredEventNode(event105OpcNodesByName, Event105Name, GetMaterialEigenschaftenParaNodeName(index, "xKreislauf")))));
+               }
+            }
+
+            _logger.LogInformation(
+               "0210|Event_105 Materialeigenschaften aus Kran-SPS gelesen. AnzahlMaterialien={AnzahlMaterialien}.",
+               eintraege.Count);
+
+            return Task.FromResult(OpcReadResult<MaterialEigenschaftenSnapshot>.Ok(new MaterialEigenschaftenSnapshot(eintraege)));
+         }
+         catch (Exception ex)
+         {
+            _logger.LogError(
+               "0211|Event_105 Materialeigenschaften konnten nicht aus der Kran-SPS gelesen werden. Fehler={ExceptionType}: {Message}.",
+               ex.GetType().Name,
+               ex.Message);
+            return Task.FromResult(OpcReadResult<MaterialEigenschaftenSnapshot>.Failed(ex.Message));
          }
       }
 
@@ -657,18 +792,6 @@ namespace Falcom
                   GetRequiredConfiguredEventNode(event106OpcNodesByName, Event106Name, Event106TriggerNodeName),
                   anforderungsZaehler);
             }
-
-            _eventLogRepository.LogEvent(
-               Event106Name,
-               Event106Direction,
-               anforderungsZaehler,
-               new Dictionary<string, object?>
-               {
-                  [Event106TriggerNodeName] = anforderungsZaehler,
-                  ["AnzahlPositionen"] = snapshot.AnzahlPositionen,
-                  ["MaxIndex"] = maxIndex
-               },
-               filterPayloadByLogValue: false);
             _logger.LogInformation(
                "01F7|Event_106 an Kran-SPS gesendet: AnforderungsZaehler={AnforderungsZaehler}, AnzahlPositionen={AnzahlPositionen}, MaxIndex={MaxIndex}.",
                anforderungsZaehler,
@@ -703,6 +826,15 @@ namespace Falcom
          return nodeId.Trim();
       }
 
+      private static string GetMaterialEigenschaftenNodeName(int index, string itemName)
+      {
+         return $"Material{index:000}_{itemName}";
+      }
+
+      private static string GetMaterialEigenschaftenParaNodeName(int index, string itemName)
+      {
+         return $"Material{index:000}_PARA_{itemName}";
+      }
       private static string GetKranPositionenNodeName(int index, string itemName)
       {
          return $"Objekt{index:000}_{itemName}";
@@ -970,6 +1102,48 @@ namespace Falcom
          }
       }
 
+      private void WriteRequiredDateTimeNodeWithStringFallback(
+         string nodeId,
+         DateTime? value,
+         string nodeName)
+      {
+         DateTime normalizedValue = NormalizeEvent105DatumZeit(value);
+
+         try
+         {
+            WriteRequiredNode(nodeId, normalizedValue);
+         }
+         catch (Exception ex)
+         {
+            string fallbackValue = normalizedValue.ToString("yyyy-MM-ddTHH:mm:ss", CultureInfo.InvariantCulture);
+
+            _logger.LogWarning(
+               "020B|OPC Senden: Node {NodeName} akzeptiert DateTime aktuell nicht. Sende denselben Wert tolerant als ISO-Text. Node={Node}, Wert={Value}, Grund={Reason}",
+               nodeName,
+               nodeId,
+               fallbackValue,
+               ex.Message);
+
+            WriteRequiredNode(nodeId, fallbackValue);
+         }
+      }
+
+      private static DateTime NormalizeEvent105DatumZeit(DateTime? value)
+      {
+         if (value is null || value.Value <= EmptyEvent105DatumZeit)
+         {
+            return EmptyEvent105DatumZeit;
+         }
+
+         DateTime dateTime = value.Value;
+         if (dateTime.Kind == DateTimeKind.Unspecified)
+         {
+            return DateTime.SpecifyKind(dateTime, DateTimeKind.Local);
+         }
+
+         return dateTime;
+      }
+
       private void WriteRequiredNode(string nodeId, object value)
       {
          _logger.LogInformation(
@@ -989,6 +1163,66 @@ namespace Falcom
             nodeId,
             value,
             status.Code);
+      }
+
+      private object? ReadRequiredNodeValue(string nodeId)
+      {
+         OpcValue value = client!.ReadNode(nodeId);
+         if (!value.Status.IsGood)
+         {
+            throw new InvalidOperationException(
+               $"OPC-Lesen fehlgeschlagen. Node={nodeId}, Status={value.Status.Code}, Beschreibung={value.Status.Description}");
+         }
+
+         return value.Value;
+      }
+
+      private int ReadRequiredInt32Node(string nodeId)
+      {
+         object? value = ReadRequiredNodeValue(nodeId);
+         return value is null ? 0 : Convert.ToInt32(value, CultureInfo.InvariantCulture);
+      }
+
+      private float ReadRequiredSingleNode(string nodeId)
+      {
+         object? value = ReadRequiredNodeValue(nodeId);
+         return value is null ? 0f : Convert.ToSingle(value, CultureInfo.InvariantCulture);
+      }
+
+      private bool ReadRequiredBooleanNode(string nodeId)
+      {
+         object? value = ReadRequiredNodeValue(nodeId);
+         return value is not null && Convert.ToBoolean(value, CultureInfo.InvariantCulture);
+      }
+
+      private string ReadRequiredStringNode(string nodeId)
+      {
+         object? value = ReadRequiredNodeValue(nodeId);
+         return Convert.ToString(value, CultureInfo.InvariantCulture)?.Trim() ?? string.Empty;
+      }
+
+      private DateTime? ReadRequiredNullableDateTimeNode(string nodeId)
+      {
+         object? value = ReadRequiredNodeValue(nodeId);
+         if (value is null)
+         {
+            return null;
+         }
+
+         if (value is DateTime dateTime)
+         {
+            return dateTime <= EmptyEvent105DatumZeit ? null : dateTime;
+         }
+
+         string? text = Convert.ToString(value, CultureInfo.InvariantCulture);
+         if (string.IsNullOrWhiteSpace(text))
+         {
+            return null;
+         }
+
+         return DateTime.TryParse(text, CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out DateTime parsed)
+            ? parsed
+            : null;
       }
 
       private void ConnectOnce()
@@ -1059,6 +1293,19 @@ namespace Falcom
          public static OpcSendResult Failed(string reason)
          {
             return new OpcSendResult(false, reason);
+         }
+      }
+
+      public sealed record OpcReadResult<T>(bool Success, T? Value, string Reason)
+      {
+         public static OpcReadResult<T> Ok(T value)
+         {
+            return new OpcReadResult<T>(true, value, string.Empty);
+         }
+
+         public static OpcReadResult<T> Failed(string reason)
+         {
+            return new OpcReadResult<T>(false, default, reason);
          }
       }
 
@@ -1190,6 +1437,24 @@ namespace Falcom
                "01D9|Event_204 ist nicht aktiv: Trigger-Node Event_204 ist nicht gueltig konfiguriert.");
          }
 
+         event205InitialwertGesehen = false;
+         lastEvent205AnforderungsZaehler = null;
+         if (event205OpcNodesByName.TryGetValue(Event205TriggerNodeName, out string? event205TriggerNode)
+             && IsConfiguredOpcNode(event205TriggerNode))
+         {
+            var event205Item = new OpcMonitoredItem(event205TriggerNode, OpcAttribute.Value)
+            {
+               Tag = "Event_205.Event_205"
+            };
+            event205Item.DataChangeReceived += HandleDataChange;
+            subscription.AddMonitoredItem(event205Item);
+            monitoredItems.Add(event205Item);
+         }
+         else
+         {
+            _logger.LogWarning(
+               "0200|Event_205 ist nicht aktiv: Trigger-Node Event_205 ist nicht gueltig konfiguriert.");
+         }
          event206InitialwertGesehen = false;
          lastEvent206AnforderungsZaehler = null;
          if (event206OpcNodesByName.TryGetValue(Event206TriggerNodeName, out string? event206TriggerNode)
@@ -1538,6 +1803,12 @@ namespace Falcom
                 && string.Equals(nodeId, triggerNode, StringComparison.Ordinal);
       }
 
+      private bool IsEvent205TriggerNode(string nodeId)
+      {
+         return event205OpcNodesByName.TryGetValue(Event205TriggerNodeName, out string? triggerNode)
+                && IsConfiguredOpcNode(triggerNode)
+                && string.Equals(nodeId, triggerNode, StringComparison.Ordinal);
+      }
       private bool IsEvent206TriggerNode(string nodeId)
       {
          return event206OpcNodesByName.TryGetValue(Event206TriggerNodeName, out string? triggerNode)
@@ -1564,16 +1835,6 @@ namespace Falcom
          }
 
          lastEvent204AnforderungsZaehler = anforderungsZaehler;
-
-         _eventLogRepository.LogEvent(
-            Event204Name,
-            Event204Direction,
-            anforderungsZaehler,
-            new Dictionary<string, object?>
-            {
-               [Event204TriggerNodeName] = anforderungsZaehler,
-               ["Initialwert"] = istInitialwert
-            });
          if (istInitialwert
              && TryReadEvent104ResponseTrigger(out int responseTrigger)
              && responseTrigger == anforderungsZaehler)
@@ -1624,6 +1885,74 @@ namespace Falcom
          }
       }
 
+      private void HandleEvent205Trigger(int anforderungsZaehler)
+      {
+         bool istInitialwert = !event205InitialwertGesehen;
+         event205InitialwertGesehen = true;
+
+         if (anforderungsZaehler <= 0)
+         {
+            lastEvent205AnforderungsZaehler = anforderungsZaehler;
+            _logger.LogInformation(
+               "0201|Event_205 Trigger ist 0 und wird als leere Anforderung ignoriert.");
+            return;
+         }
+
+         if (lastEvent205AnforderungsZaehler == anforderungsZaehler)
+         {
+            return;
+         }
+
+         lastEvent205AnforderungsZaehler = anforderungsZaehler;
+         if (istInitialwert
+             && TryReadEvent105ResponseTrigger(out int responseTrigger)
+             && responseTrigger == anforderungsZaehler)
+         {
+            _logger.LogInformation(
+               "0202|Event_205 Initialwert wurde bereits durch Event_105 beantwortet und wird ignoriert. AnforderungsZaehler={AnforderungsZaehler}.",
+               anforderungsZaehler);
+            return;
+         }
+
+         if (!_eventQueue.Writer.TryWrite(
+                new MaterialEigenschaftenAnforderungEvent(anforderungsZaehler, istInitialwert)))
+         {
+            _logger.LogError(
+               "0203|Event_205 konnte nicht in die Event-Queue geschrieben werden. AnforderungsZaehler={AnforderungsZaehler}.",
+               anforderungsZaehler);
+            return;
+         }
+
+         _logger.LogInformation(
+            "0204|Event_205 eingereiht. AnforderungsZaehler={AnforderungsZaehler}, Initialwert={IstInitialwert}.",
+            anforderungsZaehler,
+            istInitialwert);
+      }
+
+      private bool TryReadEvent105ResponseTrigger(out int triggerValue)
+      {
+         triggerValue = 0;
+         try
+         {
+            string nodeId = GetRequiredConfiguredEventNode(
+               event105OpcNodesByName,
+               Event105Name,
+               Event105TriggerNodeName);
+            OpcValue value = client!.ReadNode(nodeId);
+            if (!value.Status.IsGood || value.Value is null)
+            {
+               return false;
+            }
+
+            triggerValue = Convert.ToInt32(value.Value);
+            return true;
+         }
+         catch
+         {
+            // Ohne lesbaren Antwortzaehler wird die Anfrage idempotent neu beantwortet.
+            return false;
+         }
+      }
       private void HandleEvent206Trigger(int anforderungsZaehler)
       {
          bool istInitialwert = !event206InitialwertGesehen;
@@ -1643,16 +1972,6 @@ namespace Falcom
          }
 
          lastEvent206AnforderungsZaehler = anforderungsZaehler;
-
-         _eventLogRepository.LogEvent(
-            Event206Name,
-            Event206Direction,
-            anforderungsZaehler,
-            new Dictionary<string, object?>
-            {
-               [Event206TriggerNodeName] = anforderungsZaehler,
-               ["Initialwert"] = istInitialwert
-            });
          if (istInitialwert
              && TryReadEvent106ResponseTrigger(out int responseTrigger)
              && responseTrigger == anforderungsZaehler)
@@ -1853,6 +2172,11 @@ if (string.Equals(
                HandleEvent204Trigger(Convert.ToInt32(neuerZaehlerWert));
                return;
             }
+            if (IsEvent205TriggerNode(changedNodeId))
+            {
+               HandleEvent205Trigger(Convert.ToInt32(neuerZaehlerWert));
+               return;
+            }
             if (IsEvent206TriggerNode(changedNodeId))
             {
                HandleEvent206Trigger(Convert.ToInt32(neuerZaehlerWert));
@@ -2021,19 +2345,6 @@ if (string.Equals(
                payload.LkwPlatzPositionID);
             return;
          }
-
-         _eventLogRepository.LogEvent(
-            LkwPlatzLeer207Event.EventName,
-            "KRAN_SPS->FALCOM",
-            payload.AenderungsZaehler,
-            new Dictionary<string, object?>
-            {
-               [LkwPlatzLeer207Event.AuftragNummerNodeName] = payload.AuftragID,
-               [LkwPlatzLeer207Event.AuftragTeilfahrtNodeName] = payload.TeilfahrtID,
-               [LkwPlatzLeer207Event.LkwPlatzNodeName] = payload.LkwPlatzPositionID,
-               [LkwPlatzLeer207Event.TriggerNodeName] = payload.AenderungsZaehler,
-               ["Initialwert"] = istInitialwert
-            });
          _logger.LogInformation(
             "01B2|Event_207 eingereiht: Auftrag={AuftragID}, Teilfahrt={TeilfahrtID}, LkwPlatz={LkwPlatz}, AenderungsZaehler={AenderungsZaehler}, Initialwert={IstInitialwert}.",
             payload.AuftragID,
@@ -2124,21 +2435,6 @@ if (string.Equals(
             _logger.LogError("0027|KranfahrtBeendetEvent konnte nicht in die Event-Queue geschrieben werden.");
             return;
          }
-
-         _eventLogRepository.LogEvent(
-            KranfahrtBeendetEvent.EventName,
-            "KRAN_SPS->FALCOM",
-            payload.AenderungsZaehler,
-            new Dictionary<string, object?>
-            {
-               [KranfahrtBeendetEvent.AuftragNummerNodeName] = payload.AuftragId,
-               [KranfahrtBeendetEvent.AuftragTeilfahrtNodeName] = payload.TeilfahrtID,
-               [KranfahrtBeendetEvent.QuelleNodeName] = payload.KranQuelle,
-               [KranfahrtBeendetEvent.ZielNodeName] = payload.KranZiel,
-               [KranfahrtBeendetEvent.StatusNodeName] = payload.Status,
-               [KranfahrtBeendetEvent.IstGewichtNodeName] = payload.IstGewicht,
-               [KranfahrtBeendetEvent.TriggerNodeName] = payload.AenderungsZaehler
-            });
          _logger.LogInformation(
             "0028|KranfahrtBeendetEvent eingereiht: Auftrag={AuftragId}, Teilfahrt={TeilfahrtID}, Quelle={Quelle}, Ziel={Ziel}, Status={Status}, IstGewicht={IstGewicht}, AenderungsZaehler={AenderungsZaehler}",
             payload.AuftragId,
@@ -2208,6 +2504,7 @@ if (string.Equals(
       }
    }
 }
+
 
 
 

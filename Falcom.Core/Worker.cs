@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Opc.UaFx.Client;
 using System;
@@ -18,6 +18,8 @@ namespace Falcom
       private readonly AktuelleFahrtRepository _aktuelleFahrtRepository;
       private readonly BunkerMaterialRepository _bunkerMaterialRepository;
       private readonly KranPositionenRepository _kranPositionenRepository;
+      private readonly MaterialEigenschaftenRepository _materialEigenschaftenRepository;
+      private readonly MaterialEigenschaftenAnforderungRepository _materialEigenschaftenAnforderungRepository;
       private readonly FalcomRuntimeStatus _runtimeStatus;
       private ProcessState _currentState;
       private ProcessState? _lastLoggedState;
@@ -35,6 +37,8 @@ namespace Falcom
           AktuelleFahrtRepository aktuelleFahrtRepository,
           BunkerMaterialRepository bunkerMaterialRepository,
           KranPositionenRepository kranPositionenRepository,
+          MaterialEigenschaftenRepository materialEigenschaftenRepository,
+          MaterialEigenschaftenAnforderungRepository materialEigenschaftenAnforderungRepository,
           FalcomRuntimeStatus runtimeStatus) // Im Konstruktor uebergeben
       {
          _logger = logger;
@@ -45,6 +49,8 @@ namespace Falcom
          _aktuelleFahrtRepository = aktuelleFahrtRepository;
          _bunkerMaterialRepository = bunkerMaterialRepository;
          _kranPositionenRepository = kranPositionenRepository;
+         _materialEigenschaftenRepository = materialEigenschaftenRepository;
+         _materialEigenschaftenAnforderungRepository = materialEigenschaftenAnforderungRepository;
          _runtimeStatus = runtimeStatus;
       }
 
@@ -64,6 +70,8 @@ namespace Falcom
             Task opcDataFlowMonitor = ScheduleOpcDataFlowChecksAsync(
                watchdogTimerCancellation.Token);
             Task spsResendMonitor = ScheduleSpsResendChecksAsync(
+               watchdogTimerCancellation.Token);
+            Task materialEvent105RequestMonitor = ScheduleMaterialEigenschaftenDbRequestsAsync(
                watchdogTimerCancellation.Token);
 
             // NEU: Die Schleife wartet jetzt reaktiv, bis ein Event in der Queue landet.
@@ -139,8 +147,76 @@ namespace Falcom
                            continue;
                         }
 
+                        if (falcomEvent is MaterialEigenschaftenAnforderungEvent materialAnforderung)
+                        {
+                           AktuelleFahrtResult aktiveFahrtFuerMaterial =
+                              _aktuelleFahrtRepository.GetAktuelleFahrt();
+
+                           if (aktiveFahrtFuerMaterial.Success && aktiveFahrtFuerMaterial.AktuelleFahrtID is not null)
+                           {
+                              _runtimeStatus.SetAktuelleFahrt(aktiveFahrtFuerMaterial);
+
+                              _logger.LogInformation(
+                                 "0205|Event_205 wird waehrend aktiver Kranfahrt nicht beantwortet, damit Event_105 die Fahrtsteuerung nicht blockiert: AnforderungsZaehler={AnforderungsZaehler}, AktuelleFahrtID={AktuelleFahrtID}, AuftragID={AuftragID}, Teilfahrt={AuftragTeilfahrt}.",
+                                 materialAnforderung.AnforderungsZaehler,
+                                 aktiveFahrtFuerMaterial.AktuelleFahrtID,
+                                 aktiveFahrtFuerMaterial.AuftragID,
+                                 aktiveFahrtFuerMaterial.AuftragTeilfahrt);
+
+                              SetState(ProcessState.WarteAufSpsRueckmeldung);
+                              continue;
+                           }
+
+                           _logger.LogInformation(
+                              "0206|Event_205 wird verarbeitet. AnforderungsZaehler={AnforderungsZaehler}, Initialwert={IstInitialwert}.",
+                              materialAnforderung.AnforderungsZaehler,
+                              materialAnforderung.IstInitialwert);
+
+                           MaterialEigenschaftenSnapshot snapshot = _materialEigenschaftenRepository.GetSnapshot();
+                           OPC_Client_Crane.OpcSendResult antwort =
+                              await _opcClientCrane.SendMaterialEigenschaftenResponseAsync(
+                                 materialAnforderung.AnforderungsZaehler,
+                                 snapshot,
+                                 stoppingToken);
+
+                           if (!antwort.Success)
+                           {
+                              _logger.LogError(
+                                 "0207|Event_105 konnte nicht beantwortet werden. AnforderungsZaehler={AnforderungsZaehler}, Grund={Reason}.",
+                                 materialAnforderung.AnforderungsZaehler,
+                                 antwort.Reason);
+                           }
+                           else
+                           {
+                              _logger.LogInformation(
+                                 "0208|Event_105 beantwortet. AnforderungsZaehler={AnforderungsZaehler}, AnzahlMaterialien={AnzahlMaterialien}.",
+                                 materialAnforderung.AnforderungsZaehler,
+                                 snapshot.AnzahlMaterialien);
+                           }
+
+                           continue;
+                        }
+
                         if (falcomEvent is KranPositionenAnforderungEvent positionenAnforderung)
                         {
+                           AktuelleFahrtResult aktiveFahrtFuerPositionen =
+                              _aktuelleFahrtRepository.GetAktuelleFahrt();
+
+                           if (aktiveFahrtFuerPositionen.Success && aktiveFahrtFuerPositionen.AktuelleFahrtID is not null)
+                           {
+                              _runtimeStatus.SetAktuelleFahrt(aktiveFahrtFuerPositionen);
+
+                              _logger.LogInformation(
+                                 "01F9|Event_206 wird waehrend aktiver Kranfahrt nicht beantwortet, damit Event_106 die Fahrtsteuerung nicht blockiert: AnforderungsZaehler={AnforderungsZaehler}, AktuelleFahrtID={AktuelleFahrtID}, AuftragID={AuftragID}, Teilfahrt={AuftragTeilfahrt}.",
+                                 positionenAnforderung.AnforderungsZaehler,
+                                 aktiveFahrtFuerPositionen.AktuelleFahrtID,
+                                 aktiveFahrtFuerPositionen.AuftragID,
+                                 aktiveFahrtFuerPositionen.AuftragTeilfahrt);
+
+                              SetState(ProcessState.WarteAufSpsRueckmeldung);
+                              continue;
+                           }
+
                            _logger.LogInformation(
                               "01F4|Event_206 wird verarbeitet. AnforderungsZaehler={AnforderungsZaehler}, Initialwert={IstInitialwert}.",
                               positionenAnforderung.AnforderungsZaehler,
@@ -173,6 +249,24 @@ namespace Falcom
 
                         if (falcomEvent is NextKranfahrtAvailableEvent nextKranfahrtAvailableEvent)
                         {
+                           AktuelleFahrtResult aktiveFahrt =
+                              _aktuelleFahrtRepository.GetAktuelleFahrt();
+
+                           if (aktiveFahrt.Success && aktiveFahrt.AktuelleFahrtID is not null)
+                           {
+                              _runtimeStatus.SetAktuelleFahrt(aktiveFahrt);
+
+                              _logger.LogInformation(
+                                 "01F8|Veraltetes NextKranfahrtAvailableEvent verworfen, weil FALCOM_AKTUELLE_FAHRT bereits belegt ist: AktuelleFahrtID={AktuelleFahrtID}, AuftragID={AktiveAuftragID}, Teilfahrt={AktiveTeilfahrt}, QueueAuftragID={QueueAuftragID}.",
+                                 aktiveFahrt.AktuelleFahrtID,
+                                 aktiveFahrt.AuftragID,
+                                 aktiveFahrt.AuftragTeilfahrt,
+                                 nextKranfahrtAvailableEvent.AuftragID);
+
+                              SetState(ProcessState.WarteAufSpsRueckmeldung);
+                              continue;
+                           }
+
                            SetState(ProcessState.AuftragBereit);
 
                            _logger.LogInformation(
@@ -636,6 +730,108 @@ namespace Falcom
             {
                _logger.LogWarning(
                   "008B|Pruefung auf SPS-Neusendeanforderung fehlgeschlagen. Fehler={ExceptionType}: {Message}",
+                  ex.GetType().Name,
+                  ex.Message);
+            }
+         }
+      }
+
+      private async Task ScheduleMaterialEigenschaftenDbRequestsAsync(CancellationToken stoppingToken)
+      {
+         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(2));
+
+         while (await timer.WaitForNextTickAsync(stoppingToken))
+         {
+            try
+            {
+               AktuelleFahrtResult aktiveFahrt = _aktuelleFahrtRepository.GetAktuelleFahrt();
+               if (aktiveFahrt.Success && aktiveFahrt.AktuelleFahrtID is not null)
+               {
+                  continue;
+               }
+
+               MaterialEigenschaftenDbAnforderung? anforderung =
+                  _materialEigenschaftenAnforderungRepository.TryClaim();
+               if (anforderung is null)
+               {
+                  continue;
+               }
+
+               _logger.LogInformation(
+                  "020C|DB-Anforderung fuer Event_105 wird verarbeitet. AnforderungID={AnforderungID}, Vorgang={Vorgang}, AngefordertVon={AngefordertVon}, Grund={Grund}, Versuch={RetryCount}.",
+                  anforderung.ID,
+                  anforderung.Vorgang,
+                  anforderung.AngefordertVon,
+                  anforderung.Grund,
+                  anforderung.RetryCount);
+
+               if (string.Equals(anforderung.Vorgang, "IMPORT_AUS_SPS", StringComparison.OrdinalIgnoreCase))
+               {
+                  OPC_Client_Crane.OpcReadResult<MaterialEigenschaftenSnapshot> readResult =
+                     await _opcClientCrane.ReadMaterialEigenschaftenFromSpsAsync(stoppingToken);
+
+                  if (!readResult.Success || readResult.Value is null)
+                  {
+                     _materialEigenschaftenAnforderungRepository.Complete(
+                        anforderung.ID,
+                        false,
+                        readResult.Reason);
+
+                     _logger.LogWarning(
+                        "020D|DB-Anforderung fuer Event_105 Import aus SPS ist fehlgeschlagen. AnforderungID={AnforderungID}, Grund={Reason}.",
+                        anforderung.ID,
+                        readResult.Reason);
+                     continue;
+                  }
+
+                  int gespeichert = _materialEigenschaftenRepository.SaveSnapshotFromSps(readResult.Value);
+                  _materialEigenschaftenAnforderungRepository.Complete(
+                     anforderung.ID,
+                     true,
+                     null);
+
+                  _logger.LogInformation(
+                     "020E|DB-Anforderung fuer Event_105 Import aus SPS wurde erledigt. AnforderungID={AnforderungID}, GeleseneMaterialien={GeleseneMaterialien}, GespeicherteMaterialien={GespeicherteMaterialien}.",
+                     anforderung.ID,
+                     readResult.Value.AnzahlMaterialien,
+                     gespeichert);
+                  continue;
+               }
+
+               MaterialEigenschaftenSnapshot snapshot = _materialEigenschaftenRepository.GetSnapshot();
+               OPC_Client_Crane.OpcSendResult antwort =
+                  await _opcClientCrane.SendMaterialEigenschaftenResponseAsync(
+                     anforderung.ID,
+                     snapshot,
+                     stoppingToken);
+
+               _materialEigenschaftenAnforderungRepository.Complete(
+                  anforderung.ID,
+                  antwort.Success,
+                  antwort.Reason);
+
+               if (!antwort.Success)
+               {
+                  _logger.LogWarning(
+                     "020D|DB-Anforderung fuer Event_105 Export an SPS ist fehlgeschlagen. AnforderungID={AnforderungID}, Grund={Reason}.",
+                     anforderung.ID,
+                     antwort.Reason);
+                  continue;
+               }
+
+               _logger.LogInformation(
+                  "020E|DB-Anforderung fuer Event_105 Export an SPS wurde erledigt. AnforderungID={AnforderungID}, AnzahlMaterialien={AnzahlMaterialien}.",
+                  anforderung.ID,
+                  snapshot.AnzahlMaterialien);
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+               throw;
+            }
+            catch (Exception ex)
+            {
+               _logger.LogWarning(
+                  "020F|Pruefung auf DB-Anforderung fuer Event_105 fehlgeschlagen. Fehler={ExceptionType}: {Message}",
                   ex.GetType().Name,
                   ex.Message);
             }

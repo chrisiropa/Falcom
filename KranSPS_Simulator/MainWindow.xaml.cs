@@ -1,4 +1,4 @@
-﻿using Falcom;
+using Falcom;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Logging;
 using Opc.UaFx;
@@ -39,7 +39,9 @@ public partial class MainWindow : Window
     private const string Event207TriggerNodeName = "Event_207";
     private const string Event207LkwPlatzNodeName = "LKWPlatz";
     private const string Event104TriggerNodeName = "Event_104";
+    private const string Event105TriggerNodeName = "Event_105";
     private const string Event204TriggerNodeName = "Event_204";
+    private const string Event205TriggerNodeName = "Event_205";
     private const string Event206TriggerNodeName = "Event_206";
 
     private readonly FalcomUiLogSink uiLogSink = new();
@@ -58,7 +60,9 @@ public partial class MainWindow : Window
     private readonly IReadOnlyList<EventNodeConfiguration> event203Nodes;
     private readonly IReadOnlyList<EventNodeConfiguration> event207Nodes;
     private readonly IReadOnlyList<EventNodeConfiguration> event104Nodes;
+    private readonly IReadOnlyList<EventNodeConfiguration> event105Nodes;
     private readonly IReadOnlyList<EventNodeConfiguration> event204Nodes;
+    private readonly IReadOnlyList<EventNodeConfiguration> event205Nodes;
     private readonly IReadOnlyList<EventNodeConfiguration> event206Nodes;
     private readonly Dictionary<string, EventNodeConfiguration> kranfahrtBeendetNodesByName = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, EventNodeConfiguration> kranfahrtAuftragNodesByName = new(StringComparer.OrdinalIgnoreCase);
@@ -69,7 +73,9 @@ public partial class MainWindow : Window
     private int? letzteVerarbeiteteAuftragTelegrammNummer;
     private readonly Dictionary<string, string> event203Values = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> event104Values = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> event105Values = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> event204Values = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> event205Values = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> event206Values = new(StringComparer.OrdinalIgnoreCase);
     private readonly KranPositionGroundPosition grundstellung;
     private readonly IReadOnlyDictionary<long, SimKranPosition> positionenById;
@@ -94,6 +100,7 @@ public partial class MainWindow : Window
     private int spsLebensZaehler;
     private int event203Zaehler;
     private int event204AnforderungsZaehler;
+    private int event205AnforderungsZaehler;
     private int event206AnforderungsZaehler;
     private int? letzterSpsLebensZaehler;
     private DateTime? letzterSpsLebensZaehlerGesendetAm;
@@ -151,15 +158,25 @@ public partial class MainWindow : Window
         }
         event207Nodes = configuration.Event207Nodes;
         event104Nodes = configuration.Event104Nodes;
+        event105Nodes = configuration.Event105Nodes;
         event204Nodes = configuration.Event204Nodes;
+        event205Nodes = configuration.Event205Nodes;
         event206Nodes = configuration.Event206Nodes;
         foreach (EventNodeConfiguration node in event104Nodes)
         {
             event104Values[node.NodeName] = "-";
         }
+        foreach (EventNodeConfiguration node in event105Nodes)
+        {
+            event105Values[node.NodeName] = "-";
+        }
         foreach (EventNodeConfiguration node in event204Nodes)
         {
             event204Values[node.NodeName] = "-";
+        }
+        foreach (EventNodeConfiguration node in event205Nodes)
+        {
+            event205Values[node.NodeName] = "-";
         }
         foreach (EventNodeConfiguration node in event206Nodes)
         {
@@ -212,7 +229,9 @@ public partial class MainWindow : Window
         Log($"0115|Event 203 {Event203Name} Variablen: {string.Join(", ", event203Nodes.Select(node => node.NodeName))}");
         Log($"01B6|Event 207 {Event207Name} Variablen: {string.Join(", ", event207Nodes.Select(node => node.NodeName))}");
         Log($"01DE|Event 104 Variablen: {string.Join(", ", event104Nodes.Select(node => node.NodeName))}");
+        Log($"020B|Event 105 Variablen: {string.Join(", ", event105Nodes.Select(node => node.NodeName))}");
         Log($"01DF|Event 204 Variablen: {string.Join(", ", event204Nodes.Select(node => node.NodeName))}");
+        Log($"020C|Event 205 Variablen: {string.Join(", ", event205Nodes.Select(node => node.NodeName))}");
         Log($"01FA|Event 206 Variablen: {string.Join(", ", event206Nodes.Select(node => node.NodeName))}");
         FahreGrundstellungAn();
         Log("0116|Kran-SPS-Simulator bereit.");
@@ -369,7 +388,7 @@ public partial class MainWindow : Window
             try
             {
                 subscription.RemoveMonitoredItem(monitoredItems);
-                subscription.ApplyChanges();
+        subscription.ApplyChanges();
             }
             catch
             {
@@ -435,6 +454,23 @@ public partial class MainWindow : Window
         else
         {
             LogWarning("01E1|Event_104.Event_104 ist nicht konfiguriert. Bunkermaterial-Antworten koennen nicht empfangen werden.");
+        }
+        EventNodeConfiguration? event105Trigger = event105Nodes.FirstOrDefault(
+            node => string.Equals(node.NodeName, Event105TriggerNodeName, StringComparison.OrdinalIgnoreCase));
+        if (event105Trigger is not null && !string.IsNullOrWhiteSpace(event105Trigger.OpcNode))
+        {
+            var event105Item = new OpcMonitoredItem(event105Trigger.OpcNode, OpcAttribute.Value)
+            {
+                Tag = "Event_105.Event_105"
+            };
+            event105Item.DataChangeReceived += HandleOpcDataChange;
+            subscription.AddMonitoredItem(event105Item);
+            monitoredItems.Add(event105Item);
+            Log($"0212|OPC Empfangskanal registriert. Event=Event_105, Node={event105Trigger.OpcNode}");
+        }
+        else
+        {
+            LogWarning("0213|Event_105.Event_105 ist nicht konfiguriert. Materialeigenschaften-Antworten koennen nicht empfangen werden.");
         }
 
         subscription.ApplyChanges();
@@ -513,6 +549,22 @@ public partial class MainWindow : Window
                 return;
             }
 
+            EventNodeConfiguration? event105Trigger = event105Nodes.FirstOrDefault(
+                node => string.Equals(node.NodeName, Event105TriggerNodeName, StringComparison.OrdinalIgnoreCase));
+            if (event105Trigger is not null
+                && string.Equals(changedNodeId, event105Trigger.OpcNode, StringComparison.Ordinal))
+            {
+                int responseZaehler = Convert.ToInt32(rawValue, CultureInfo.InvariantCulture);
+                Dictionary<string, object?> payload;
+                lock (opcSyncRoot)
+                {
+                    payload = ReadEventValuesNoLock(event105Nodes);
+                }
+
+                SetEventValues(event105Values, payload);
+                Log($"0214|Event_105 empfangen: AntwortZaehler={responseZaehler}, Materialwerte={payload.Count - 1}.");
+                return;
+            }
             if (TryGetKranfahrtAuftragNode(Event102TriggerNodeName, out EventNodeConfiguration telegrammNode)
                 && string.Equals(changedNodeId, telegrammNode.OpcNode, StringComparison.Ordinal))
             {
@@ -1279,6 +1331,36 @@ public partial class MainWindow : Window
             grund);
     }
 
+    private void MaterialEigenschaftenAnfordern_Click(object sender, RoutedEventArgs e)
+    {
+        SendeEvent205Anforderung("Manuelle Anforderung");
+    }
+
+    private bool SendeEvent205Anforderung(string grund)
+    {
+        if (IstKranGeradeAktiv())
+        {
+            LogWarning($"020D|Event_205 wird nicht gesendet, weil der Kran gerade aktiv ist. Grund={grund}, Fahrzustand={fahrzustand}, AuftragID={aktiveSimulationsFahrt?.AuftragID}, Teilfahrt={aktiveSimulationsFahrt?.AuftragTeilfahrt}.");
+            return false;
+        }
+
+        return SendeTriggerAnforderung(
+            event205Nodes,
+            event205Values,
+            Event205TriggerNodeName,
+            ref event205AnforderungsZaehler,
+            "Event_205",
+            "020E",
+            "020F",
+            grund);
+    }
+
+    private bool IstKranGeradeAktiv()
+    {
+        return aktiveSimulationsFahrt is not null
+               || aktuelleBewegung is not null
+               || fahrzustand is SimulationsFahrzustand.FahreZurQuelle or SimulationsFahrzustand.FahreZumZiel;
+    }
     private void KranPositionenAnfordern_Click(object sender, RoutedEventArgs e)
     {
         SendeEvent206Anforderung("Manuelle Anforderung");
@@ -1542,6 +1624,7 @@ public partial class MainWindow : Window
         StartEvent203Loop();
         StartEvent201Loop();
         StartEvent204AnforderungsLoop();
+        StartEvent205AnforderungsLoop();
         StartEvent206AnforderungsLoop();
     }
 
@@ -1581,7 +1664,42 @@ public partial class MainWindow : Window
             },
             lebensZaehlerCancellation.Token);
     }
-    private void StartEvent206AnforderungsLoop()
+    private void StartEvent205AnforderungsLoop()
+    {
+        if (!event205Nodes.Any(
+                node => string.Equals(node.NodeName, Event205TriggerNodeName, StringComparison.OrdinalIgnoreCase)
+                        && string.Equals(node.NodeRole, "Trigger", StringComparison.OrdinalIgnoreCase)
+                        && !string.IsNullOrWhiteSpace(node.OpcNode)))
+        {
+            LogError("0210|Event_205.Event_205 ist nicht gueltig konfiguriert. Die minuetliche Materialeigenschaften-Anforderung wird nicht gestartet.");
+            return;
+        }
+
+        _ = Task.Run(
+            async () =>
+            {
+                CancellationToken cancellationToken = lebensZaehlerCancellation.Token;
+
+                try
+                {
+                    using var timer = new PeriodicTimer(TimeSpan.FromMinutes(1));
+                    while (await timer.WaitForNextTickAsync(cancellationToken))
+                    {
+                        if (opcClient?.State != OpcClientState.Connected)
+                        {
+                            LogWarning("0211|Minuetliche Event_205-Anforderung ausgesetzt, weil OPC nicht verbunden ist.");
+                            continue;
+                        }
+
+                        SendeEvent205Anforderung("Minuetliche automatische Anforderung");
+                    }
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                }
+            },
+            lebensZaehlerCancellation.Token);
+    }    private void StartEvent206AnforderungsLoop()
     {
         if (!event206Nodes.Any(
                 node => string.Equals(node.NodeName, Event206TriggerNodeName, StringComparison.OrdinalIgnoreCase)
@@ -2494,9 +2612,15 @@ public partial class MainWindow : Window
         Event104EventItems.ItemsSource = CreateEventItems(
             event104Nodes,
             event104Values);
+        Event105EventItems.ItemsSource = CreateEventItems(
+            event105Nodes,
+            event105Values);
         Event204EventItems.ItemsSource = CreateEventItems(
             event204Nodes,
             event204Values);
+        Event205EventItems.ItemsSource = CreateEventItems(
+            event205Nodes,
+            event205Values);
         Event206EventItems.ItemsSource = CreateEventItems(
             event206Nodes,
             event206Values);
