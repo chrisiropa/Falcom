@@ -31,9 +31,11 @@ namespace Falcom
          SetRequiredSqlOptions(connection);
          using SqlDataReader reader = command.ExecuteReader();
 
-         return reader.Read()
+         AktuelleFahrtResult result = reader.Read()
             ? ReadAktuelleFahrtResult(reader)
             : AktuelleFahrtResult.Empty("FALCOM_TryCreateNextAktuelleFahrt lieferte kein Ergebnis.");
+
+         return EnrichEvent102Material(result);
       }
 
       public AktuelleFahrtResult GetAktuelleFahrt()
@@ -63,9 +65,11 @@ namespace Falcom
          SetRequiredSqlOptions(connection);
          using SqlDataReader reader = command.ExecuteReader();
 
-         return reader.Read()
+         AktuelleFahrtResult result = reader.Read()
             ? ReadAktuelleFahrtResult(reader)
             : AktuelleFahrtResult.Empty("FALCOM_TryClaimAktuelleFahrtSpsResend lieferte kein Ergebnis.");
+
+         return EnrichEvent102Material(result);
       }
 
       public AktuelleFahrtResult MarkSpsSendSuccess(
@@ -216,6 +220,67 @@ namespace Falcom
          };
       }
 
+      private AktuelleFahrtResult EnrichEvent102Material(AktuelleFahrtResult result)
+      {
+         if (!result.Success
+             || (result.QuellePositionID is null && result.ZielPositionID is null))
+         {
+            return result;
+         }
+
+         long? materialPositionId = string.Equals(
+            result.AuftragsTyp,
+            "EINLAGERN",
+            StringComparison.OrdinalIgnoreCase)
+            ? result.ZielPositionID
+            : result.QuellePositionID;
+
+         if (materialPositionId is null)
+         {
+            return result;
+         }
+
+         using SqlConnection connection = new(_configManager.ConnectionString);
+         using SqlCommand command = new(
+            """
+            SELECT TOP (1)
+               CONVERT(int, m.ID) AS MaterialNr,
+               CONVERT(int, COALESCE(m.diMasseTol_pos, 0)) AS MasseTol_pos,
+               CONVERT(int, COALESCE(m.diMasseTol_neg, 0)) AS MasseTol_neg
+            FROM dbo.FALCOM_KRAN_POSITION AS p
+            LEFT JOIN dbo.FALCOM_LAGER AS l
+               ON l.Lagerplatz = CASE
+                  WHEN p.PositionsTyp = N'LKW_PLATZ' THEN CONVERT(bigint, p.PositionsNr + 100)
+                  ELSE CONVERT(bigint, p.PositionsNr)
+               END
+            LEFT JOIN dbo.FALCOM_MATERIAL AS m
+               ON m.ID = l.MaterialID
+            WHERE p.ID = @PositionID;
+            """,
+            connection);
+
+         command.CommandType = CommandType.Text;
+         command.CommandTimeout = 10;
+         command.Parameters.Add("@PositionID", SqlDbType.BigInt).Value = materialPositionId.Value;
+
+         connection.Open();
+         SetRequiredSqlOptions(connection);
+
+         using SqlDataReader reader = command.ExecuteReader();
+
+         if (!reader.Read())
+         {
+            return result;
+         }
+
+         return result with
+         {
+            MaterialNr = GetNullableInt32(reader, "MaterialNr"),
+            MasseTolPosKg = GetNullableInt32(reader, "MasseTol_pos") ?? 0,
+            MasseTolNegKg = GetNullableInt32(reader, "MasseTol_neg") ?? 0
+         };
+      }
+
       private static void SetRequiredSqlOptions(SqlConnection connection)
       {
          using SqlCommand command = new(
@@ -259,7 +324,10 @@ namespace Falcom
             GetNullableDateTime(reader, "SpsGesendetAm"),
             GetString(reader, "SpsSendefehler"),
             GetNullableInt32(reader, "SpsLetzteTelegrammNummer"),
-            GetNullableInt32(reader, "SpsLetzterZaehlerAnfahrt"));
+            GetNullableInt32(reader, "SpsLetzterZaehlerAnfahrt"),
+            GetNullableInt32(reader, "MaterialNr"),
+            GetNullableInt32(reader, "MasseTol_pos"),
+            GetNullableInt32(reader, "MasseTol_neg"));
       }
 
       private static object ToDbValue(string? value)
@@ -400,7 +468,10 @@ namespace Falcom
       DateTime? SpsGesendetAm,
       string SpsSendefehler,
       int? SpsLetzteTelegrammNummer,
-      int? SpsLetzterZaehlerAnfahrt)
+      int? SpsLetzterZaehlerAnfahrt,
+      int? MaterialNr,
+      int? MasseTolPosKg,
+      int? MasseTolNegKg)
    {
       public static AktuelleFahrtResult Empty(string reason)
       {
@@ -425,6 +496,9 @@ namespace Falcom
             string.Empty,
             null,
             string.Empty,
+            null,
+            null,
+            null,
             null,
             null);
       }

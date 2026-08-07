@@ -299,8 +299,7 @@ namespace Falcom
                               KranfahrtAuftragEvent kranfahrtAuftragEvent =
                                  KranfahrtAuftragEvent.FromAktuelleFahrt(
                                     result,
-                                    auftragTeilfahrt: result.AuftragTeilfahrt ?? 1,
-                                    toleranzKg: 150m);
+                                    auftragTeilfahrt: result.AuftragTeilfahrt ?? 1);
 
                               OPC_Client_Crane.OpcSendResult sendResult =
                                  await _opcClientCrane.SendKranfahrtAuftragAsync(
@@ -677,8 +676,7 @@ namespace Falcom
                KranfahrtAuftragEvent kranfahrtAuftragEvent =
                   KranfahrtAuftragEvent.FromAktuelleFahrt(
                      aktuelleFahrt,
-                     auftragTeilfahrt: aktuelleFahrt.AuftragTeilfahrt ?? 1,
-                     toleranzKg: 150m);
+                     auftragTeilfahrt: aktuelleFahrt.AuftragTeilfahrt ?? 1);
 
                OPC_Client_Crane.OpcSendResult sendResult =
                   await _opcClientCrane.SendKranfahrtAuftragAsync(

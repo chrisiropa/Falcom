@@ -15,7 +15,8 @@ namespace Falcom
       public const string QuelleUnterpositionNodeName = "QuelleUnterPos";
       public const string ZielUnterpositionNodeName = "ZielUnterPos";
       public const string SollMasseNodeName = "SollMasse";
-      public const string ToleranzNodeName = "Toleranz";
+      public const string MasseTolPosNodeName = "MasseTol_pos";
+      public const string MasseTolNegNodeName = "MasseTol_neg";
       public const string EventTriggerNodeName = EventName;
       public const string MaterialNrNodeName = "MaterialNr";
 
@@ -28,7 +29,8 @@ namespace Falcom
          int quelleUnterposition,
          int zielUnterposition,
          decimal sollMasseKg,
-         decimal toleranzKg,
+         int masseTolPosKg,
+         int masseTolNegKg,
          int materialNr = 0)
       {
          AktuelleFahrtID = aktuelleFahrtID;
@@ -39,7 +41,8 @@ namespace Falcom
          QuelleUnterposition = quelleUnterposition;
          ZielUnterposition = zielUnterposition;
          SollMasseKg = sollMasseKg;
-         ToleranzKg = toleranzKg;
+         MasseTolPosKg = masseTolPosKg;
+         MasseTolNegKg = masseTolNegKg;
          MaterialNr = materialNr;
       }
 
@@ -63,14 +66,15 @@ namespace Falcom
 
       public decimal SollMasseKg { get; }
 
-      public decimal ToleranzKg { get; }
+      public int MasseTolPosKg { get; }
+
+      public int MasseTolNegKg { get; }
 
       public int MaterialNr { get; }
 
       public static KranfahrtAuftragEvent FromAktuelleFahrt(
          AktuelleFahrtResult aktuelleFahrt,
-         int auftragTeilfahrt,
-         decimal toleranzKg)
+         int auftragTeilfahrt)
       {
          return new KranfahrtAuftragEvent(
             aktuelleFahrt.AktuelleFahrtID,
@@ -81,7 +85,9 @@ namespace Falcom
             aktuelleFahrt.QuelleUnterposition ?? 0,
             aktuelleFahrt.ZielUnterposition ?? 0,
             aktuelleFahrt.SollMengeKg ?? 0m,
-            toleranzKg);
+            aktuelleFahrt.MasseTolPosKg ?? 0,
+            aktuelleFahrt.MasseTolNegKg ?? 0,
+            aktuelleFahrt.MaterialNr ?? 0);
       }
    }
 }

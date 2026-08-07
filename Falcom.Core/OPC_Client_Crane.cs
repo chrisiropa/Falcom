@@ -9,6 +9,8 @@ namespace Falcom
    public sealed class OPC_Client_Crane : IDisposable
    {
       private static readonly TimeSpan ConnectRetryDelay = TimeSpan.FromSeconds(5);
+      private static readonly TimeSpan Event201StartupGracePeriod = TimeSpan.FromSeconds(15);
+      private static readonly TimeSpan Event201ReconnectTimeout = TimeSpan.FromSeconds(25);
       private const int Event101Id = 101;
       private const string Event101Direction = "FALCOM->KRAN_SPS";
       private const int Event203Id = 203;
@@ -72,6 +74,10 @@ namespace Falcom
       private bool spsDataUnavailable;
       private volatile bool spsLebensZaehlerFreigegeben;
       private DateTime nextDataFlowErrorLogUtc = DateTime.MinValue;
+      private DateTime subscriptionCreatedUtc = DateTime.MinValue;
+      private DateTime lastEvent201ReceivedUtc = DateTime.MinValue;
+      private DateTime event201WatchdogFaultStartedUtc = DateTime.MinValue;
+      private DateTime nextEvent201WatchdogLogUtc = DateTime.MinValue;
       private DateTime nextKranSpsLebensZaehlerLogUtc = DateTime.UtcNow.AddMinutes(1);
       private DateTime nextEvent203LogUtc = DateTime.UtcNow.AddMinutes(1);
       private DateTime nextEvent203ConfigurationLogUtc = DateTime.MinValue;
@@ -79,6 +85,7 @@ namespace Falcom
       private int kranfahrtAuftragTelegrammNummer;
       private bool kranfahrtAuftragZaehlerInitialisiert;
       private int kranSpsLebensZaehlerEventsInCurrentMinute;
+      private int? lastEvent201Value;
       private int event203EventsInCurrentMinute;
       private int backgroundReconnectLoopRunning;
       private int? lastKranfahrtAuftragTelegrammNummer;
@@ -232,6 +239,11 @@ namespace Falcom
             try
             {
                EnsureConnected();
+               if (!EnsureEvent201SubscriptionDataFlow())
+               {
+                  return;
+               }
+
                bool warDatenflussGestoert = spsDataUnavailable;
                MarkOpcDataFlowAvailable("Verbunden");
 
@@ -432,9 +444,8 @@ namespace Falcom
             WriteRequiredNode(
                nodes.SollMasse,
                decimal.ToInt32(decimal.Round(kranfahrtAuftragEvent.SollMasseKg, 0, MidpointRounding.AwayFromZero)));
-            WriteRequiredNode(
-               nodes.Toleranz,
-               decimal.ToInt32(decimal.Round(kranfahrtAuftragEvent.ToleranzKg, 0, MidpointRounding.AwayFromZero)));
+            WriteRequiredNode(nodes.MasseTolPos, kranfahrtAuftragEvent.MasseTolPosKg);
+            WriteRequiredNode(nodes.MasseTolNeg, kranfahrtAuftragEvent.MasseTolNegKg);
             WriteRequiredNode(nodes.MaterialNr, kranfahrtAuftragEvent.MaterialNr);
 
             // Event_102 ist der eigentliche Trigger fuer die Kran-SPS/Simulation.
@@ -443,7 +454,7 @@ namespace Falcom
 
             kranfahrtAuftragTelegrammNummer = telegrammNummer;
 
-            _logger.LogInformation(               "0047|Event_102 an SPS gesendet: Nr={AuftragID}, TeilNr={AuftragTeilfahrt}, Quelle={QuellePositionID}, QuelleUnterposition={QuelleUnterposition}, Ziel={ZielPositionID}, ZielUnterposition={ZielUnterposition}, SollMasse={SollMasseKg}, Toleranz={ToleranzKg}, MaterialNr={MaterialNr}, Event_102={TelegrammNummer}.",
+            _logger.LogInformation(               "0047|Event_102 an SPS gesendet: Nr={AuftragID}, TeilNr={AuftragTeilfahrt}, Quelle={QuellePositionID}, QuelleUnterposition={QuelleUnterposition}, Ziel={ZielPositionID}, ZielUnterposition={ZielUnterposition}, SollMasse={SollMasseKg}, MasseTol_pos={MasseTolPosKg}, MasseTol_neg={MasseTolNegKg}, MaterialNr={MaterialNr}, Event_102={TelegrammNummer}.",
                kranfahrtAuftragEvent.AuftragNummer,
                kranfahrtAuftragEvent.AuftragTeilfahrt,
                kranfahrtAuftragEvent.QuellePositionID,
@@ -451,7 +462,8 @@ namespace Falcom
                kranfahrtAuftragEvent.ZielPositionID,
                kranfahrtAuftragEvent.ZielUnterposition,
                kranfahrtAuftragEvent.SollMasseKg,
-               kranfahrtAuftragEvent.ToleranzKg,
+               kranfahrtAuftragEvent.MasseTolPosKg,
+               kranfahrtAuftragEvent.MasseTolNegKg,
                kranfahrtAuftragEvent.MaterialNr,
                telegrammNummer);
 
@@ -935,7 +947,8 @@ namespace Falcom
             KranfahrtAuftragEvent.QuelleUnterpositionNodeName,
             KranfahrtAuftragEvent.ZielUnterpositionNodeName,
             KranfahrtAuftragEvent.SollMasseNodeName,
-            KranfahrtAuftragEvent.ToleranzNodeName,
+            KranfahrtAuftragEvent.MasseTolPosNodeName,
+            KranfahrtAuftragEvent.MasseTolNegNodeName,
             KranfahrtAuftragEvent.EventTriggerNodeName,
             KranfahrtAuftragEvent.MaterialNrNodeName
          ];
@@ -961,7 +974,8 @@ namespace Falcom
             opcNodes[KranfahrtAuftragEvent.QuelleUnterpositionNodeName].Trim(),
             opcNodes[KranfahrtAuftragEvent.ZielUnterpositionNodeName].Trim(),
             opcNodes[KranfahrtAuftragEvent.SollMasseNodeName].Trim(),
-            opcNodes[KranfahrtAuftragEvent.ToleranzNodeName].Trim(),
+            opcNodes[KranfahrtAuftragEvent.MasseTolPosNodeName].Trim(),
+            opcNodes[KranfahrtAuftragEvent.MasseTolNegNodeName].Trim(),
             opcNodes[KranfahrtAuftragEvent.EventTriggerNodeName].Trim(),
             opcNodes[KranfahrtAuftragEvent.MaterialNrNodeName].Trim());
       }
@@ -1250,11 +1264,64 @@ namespace Falcom
       {
          ResetSubscription();
          subscription = client?.SubscribeNodes();
+         subscriptionCreatedUtc = DateTime.UtcNow;
 
          if (!ConnectChannels())
          {
             throw new InvalidOperationException("OPC-Kanal 'Zaehler' konnte nicht registriert werden.");
          }
+      }
+
+      private bool EnsureEvent201SubscriptionDataFlow()
+      {
+         DateTime nowUtc = DateTime.UtcNow;
+         DateTime referenceUtc = lastEvent201ReceivedUtc == DateTime.MinValue
+            ? subscriptionCreatedUtc
+            : lastEvent201ReceivedUtc;
+
+         if (referenceUtc == DateTime.MinValue)
+         {
+            return true;
+         }
+
+         TimeSpan age = nowUtc - referenceUtc;
+         bool initialWait = lastEvent201ReceivedUtc == DateTime.MinValue;
+         TimeSpan warningTimeout = initialWait
+            ? Event201StartupGracePeriod
+            : Event201ReconnectTimeout;
+
+         if (age < warningTimeout && event201WatchdogFaultStartedUtc == DateTime.MinValue)
+         {
+            return true;
+         }
+
+         if (event201WatchdogFaultStartedUtc == DateTime.MinValue)
+         {
+            event201WatchdogFaultStartedUtc = nowUtc;
+         }
+
+         TimeSpan faultAge = nowUtc - event201WatchdogFaultStartedUtc;
+
+         if (faultAge >= Event201ReconnectTimeout)
+         {
+            MarkOpcDataFlowUnavailable("Reconnect laeuft", "Event_201 bleibt aus");
+            throw new InvalidOperationException(
+               $"Event_201 wurde seit {age.TotalSeconds:F0} Sekunden nicht empfangen. Radikaler Reconnect wird gestartet.");
+         }
+
+         if (nowUtc >= nextEvent201WatchdogLogUtc)
+         {
+            _logger.LogWarning(
+               "0061|Event_201 Subscription-Watchdog: Seit {AgeSeconds:F0} Sekunden kein SPS-Lebenszaehler empfangen. Warte auf DataChange bis zum radikalen Reconnect. Node={Node}, LetzterWert={LastValue}, Initialphase={InitialWait}.",
+               age.TotalSeconds,
+               event201NodeId,
+               lastEvent201Value,
+               initialWait);
+            nextEvent201WatchdogLogUtc = nowUtc.AddSeconds(30);
+         }
+
+         MarkOpcDataFlowUnavailable("OPC-Datenfluss wird geprueft", "Event_201 bleibt aus");
+         return false;
       }
 
       private void MarkOpcDataFlowAvailable(string statusText)
@@ -1279,7 +1346,8 @@ namespace Falcom
          string QuelleUnterposition,
          string ZielUnterposition,
          string SollMasse,
-         string Toleranz,
+         string MasseTolPos,
+         string MasseTolNeg,
          string EventTrigger,
          string MaterialNr);
 
@@ -1504,7 +1572,10 @@ namespace Falcom
 
          subscription.ApplyChanges();
 
-         _logger.LogInformation("0021|Kanal 'Zaehler' erfolgreich registriert.");
+         _logger.LogInformation(
+            "0021|Kanal 'Zaehler' erfolgreich registriert. Event_201 Node={Node}, MonitoredItems={Count}.",
+            event201NodeId,
+            monitoredItems.Count);
          return true;
       }
 
@@ -2135,6 +2206,9 @@ if (string.Equals(
                StringComparison.Ordinal))
             {
                int lebensZaehler = Convert.ToInt32(neuerZaehlerWert);
+               lastEvent201ReceivedUtc = DateTime.UtcNow;
+               lastEvent201Value = lebensZaehler;
+               event201WatchdogFaultStartedUtc = DateTime.MinValue;
 
                if (!spsLebensZaehlerFreigegeben)
                {

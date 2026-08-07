@@ -1320,15 +1320,22 @@ public partial class MainWindow : Window
 
     private bool SendeEvent204Anforderung(string grund)
     {
-        return SendeTriggerAnforderung(
-            event204Nodes,
-            event204Values,
-            Event204TriggerNodeName,
-            ref event204AnforderungsZaehler,
-            "Event_204",
-            "01E3",
-            "01E4",
-            grund);
+        int theoretischerTrigger = event204AnforderungsZaehler == int.MaxValue
+            ? 0
+            : event204AnforderungsZaehler + 1;
+        event204AnforderungsZaehler = theoretischerTrigger;
+        Log($"0212|Event_204-Anforderung ist im Simulator derzeit deaktiviert. Telegramm waere jetzt gekommen: Grund={grund}, Zeitpunkt={DateTime.Now:dd.MM.yyyy HH:mm:ss}, TheoretischerTrigger={theoretischerTrigger}.");
+        return false;
+
+        // return SendeTriggerAnforderung(
+        //     event204Nodes,
+        //     event204Values,
+        //     Event204TriggerNodeName,
+        //     ref event204AnforderungsZaehler,
+        //     "Event_204",
+        //     "01E3",
+        //     "01E4",
+        //     grund);
     }
 
     private void MaterialEigenschaftenAnfordern_Click(object sender, RoutedEventArgs e)
@@ -1338,21 +1345,28 @@ public partial class MainWindow : Window
 
     private bool SendeEvent205Anforderung(string grund)
     {
-        if (IstKranGeradeAktiv())
-        {
-            LogWarning($"020D|Event_205 wird nicht gesendet, weil der Kran gerade aktiv ist. Grund={grund}, Fahrzustand={fahrzustand}, AuftragID={aktiveSimulationsFahrt?.AuftragID}, Teilfahrt={aktiveSimulationsFahrt?.AuftragTeilfahrt}.");
-            return false;
-        }
+        int theoretischerTrigger = event205AnforderungsZaehler == int.MaxValue
+            ? 0
+            : event205AnforderungsZaehler + 1;
+        event205AnforderungsZaehler = theoretischerTrigger;
+        Log($"0213|Event_205-Anforderung ist im Simulator derzeit deaktiviert. Telegramm waere jetzt gekommen: Grund={grund}, Zeitpunkt={DateTime.Now:dd.MM.yyyy HH:mm:ss}, Fahrzustand={fahrzustand}, AuftragID={aktiveSimulationsFahrt?.AuftragID}, Teilfahrt={aktiveSimulationsFahrt?.AuftragTeilfahrt}, TheoretischerTrigger={theoretischerTrigger}.");
+        return false;
 
-        return SendeTriggerAnforderung(
-            event205Nodes,
-            event205Values,
-            Event205TriggerNodeName,
-            ref event205AnforderungsZaehler,
-            "Event_205",
-            "020E",
-            "020F",
-            grund);
+        // if (IstKranGeradeAktiv())
+        // {
+        //     LogWarning($"020D|Event_205 wird nicht gesendet, weil der Kran gerade aktiv ist. Grund={grund}, Fahrzustand={fahrzustand}, AuftragID={aktiveSimulationsFahrt?.AuftragID}, Teilfahrt={aktiveSimulationsFahrt?.AuftragTeilfahrt}.");
+        //     return false;
+        // }
+
+        // return SendeTriggerAnforderung(
+        //     event205Nodes,
+        //     event205Values,
+        //     Event205TriggerNodeName,
+        //     ref event205AnforderungsZaehler,
+        //     "Event_205",
+        //     "020E",
+        //     "020F",
+        //     grund);
     }
 
     private bool IstKranGeradeAktiv()
@@ -1368,15 +1382,22 @@ public partial class MainWindow : Window
 
     private bool SendeEvent206Anforderung(string grund)
     {
-        return SendeTriggerAnforderung(
-            event206Nodes,
-            event206Values,
-            Event206TriggerNodeName,
-            ref event206AnforderungsZaehler,
-            "Event_206",
-            "01FB",
-            "01FC",
-            grund);
+        int theoretischerTrigger = event206AnforderungsZaehler == int.MaxValue
+            ? 0
+            : event206AnforderungsZaehler + 1;
+        event206AnforderungsZaehler = theoretischerTrigger;
+        Log($"0214|Event_206-Anforderung ist im Simulator derzeit deaktiviert. Telegramm waere jetzt gekommen: Grund={grund}, Zeitpunkt={DateTime.Now:dd.MM.yyyy HH:mm:ss}, TheoretischerTrigger={theoretischerTrigger}.");
+        return false;
+
+        // return SendeTriggerAnforderung(
+        //     event206Nodes,
+        //     event206Values,
+        //     Event206TriggerNodeName,
+        //     ref event206AnforderungsZaehler,
+        //     "Event_206",
+        //     "01FB",
+        //     "01FC",
+        //     grund);
     }
 
     private bool SendeTriggerAnforderung(
