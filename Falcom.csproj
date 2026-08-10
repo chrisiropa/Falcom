@@ -27,15 +27,21 @@
 
   <ItemGroup>
     <Compile Remove="FalcomSimulator\**\*.cs" />
+    <Compile Remove="ChargierwagenSimulator\**\*.cs" />
+    <Compile Remove="EOfenSimulator\**\*.cs" />
     <Compile Remove="Falcom.Core\**\*.cs" />
     <Compile Remove="FalcomWpf\**\*.cs" />
     <Compile Remove="KranSimulator\**\*.cs" />
     <Compile Remove="KranSPS_Simulator\**\*.cs" />
+    <Content Remove="ChargierwagenSimulator\**\*" />
+    <Content Remove="EOfenSimulator\**\*" />
     <Content Remove="Falcom.Core\**\*" />
     <Content Remove="FalcomWpf\**\*" />
     <Content Remove="KranSimulator\**\*" />
     <Content Remove="KranSPS_Simulator\**\*" />
     <None Remove="FalcomSimulator\**\*" />
+    <None Remove="ChargierwagenSimulator\**\*" />
+    <None Remove="EOfenSimulator\**\*" />
     <None Remove="Falcom.Core\**\*" />
     <None Remove="FalcomWpf\**\*" />
     <None Remove="KranSimulator\**\*" />

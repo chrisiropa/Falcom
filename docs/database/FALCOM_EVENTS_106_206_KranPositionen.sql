@@ -1,4 +1,4 @@
-﻿SET ANSI_NULLS ON;
+SET ANSI_NULLS ON;
 SET QUOTED_IDENTIFIER ON;
 GO
 
@@ -20,17 +20,16 @@ WHEN NOT MATCHED THEN
 
 MERGE dbo.FALCOM_EVENT_OPC_NODES AS target
 USING (VALUES
-   (CAST(106001 AS bigint), CAST(106 AS bigint), N'Event_106', N'Event_106', N'ns=1;s=Kran.DataBlocks.General_Falcom->Kran.Event_106', N'Trigger', N'Int32', CAST(1 AS bit)),
-   (CAST(206001 AS bigint), CAST(206 AS bigint), N'Event_206', N'Event_206', N'ns=1;s=Kran.DataBlocks.General_Kran->Falcom.Event_206', N'Trigger', N'Int32', CAST(1 AS bit))
-) AS source (ID, EventID, NodeName, MeissnerNodeName, OPC_Node, NodeRole, DataType, IsRequired)
+   (CAST(106001 AS bigint), CAST(106 AS bigint), N'Event_106', N'ns=1;s=Kran.DataBlocks.General_Falcom->Kran.Event_106', N'Trigger', N'Int32', CAST(1 AS bit)),
+   (CAST(206001 AS bigint), CAST(206 AS bigint), N'Event_206', N'ns=1;s=Kran.DataBlocks.General_Kran->Falcom.Event_206', N'Trigger', N'Int32', CAST(1 AS bit))
+) AS source (ID, EventID, NodeName, OPC_Node, NodeRole, DataType, IsRequired)
 ON target.ID = source.ID
 WHEN MATCHED THEN
-   UPDATE SET EventID = source.EventID, NodeName = source.NodeName,
-              MeissnerNodeName = source.MeissnerNodeName, OPC_Node = source.OPC_Node,
+   UPDATE SET EventID = source.EventID, NodeName = source.NodeName, OPC_Node = source.OPC_Node,
               NodeRole = source.NodeRole, DataType = source.DataType, IsRequired = source.IsRequired
 WHEN NOT MATCHED THEN
-   INSERT (ID, EventID, NodeName, MeissnerNodeName, OPC_Node, NodeRole, DataType, IsRequired)
-   VALUES (source.ID, source.EventID, source.NodeName, source.MeissnerNodeName,
+   INSERT (ID, EventID, NodeName, OPC_Node, NodeRole, DataType, IsRequired)
+   VALUES (source.ID, source.EventID, source.NodeName,
            source.OPC_Node, source.NodeRole, source.DataType, source.IsRequired);
 
 DELETE FROM dbo.FALCOM_EVENT_OPC_NODES
@@ -45,19 +44,19 @@ BEGIN
    DECLARE @ObjectBaseID bigint = CAST(106100 AS bigint) + (@ObjectIndex * 100);
 
    INSERT INTO dbo.FALCOM_EVENT_OPC_NODES
-      (ID, EventID, NodeName, MeissnerNodeName, OPC_Node, NodeRole, DataType, IsRequired)
+      (ID, EventID, NodeName, OPC_Node, NodeRole, DataType, IsRequired)
    VALUES
-      (@ObjectBaseID + 0, CAST(106 AS bigint), N'Objekt' + @ObjectIndexText + N'_stArt', N'Objekt' + @ObjectIndexText + N'_stArt', @ObjectNodePrefix + N'stArt', N'Payload', N'String', CAST(1 AS bit)),
-      (@ObjectBaseID + 1, CAST(106 AS bigint), N'Objekt' + @ObjectIndexText + N'_stBezeichnung', N'Objekt' + @ObjectIndexText + N'_stBezeichnung', @ObjectNodePrefix + N'stBezeichnung', N'Payload', N'String', CAST(1 AS bit)),
-      (@ObjectBaseID + 2, CAST(106 AS bigint), N'Objekt' + @ObjectIndexText + N'_stPositionsTyp', N'Objekt' + @ObjectIndexText + N'_stPositionsTyp', @ObjectNodePrefix + N'stPositionsTyp', N'Payload', N'String', CAST(1 AS bit)),
-      (@ObjectBaseID + 3, CAST(106 AS bigint), N'Objekt' + @ObjectIndexText + N'_iID', N'Objekt' + @ObjectIndexText + N'_iID', @ObjectNodePrefix + N'iID', N'Payload', N'Int32', CAST(1 AS bit)),
-      (@ObjectBaseID + 4, CAST(106 AS bigint), N'Objekt' + @ObjectIndexText + N'_diKatze_Start_X', N'Objekt' + @ObjectIndexText + N'_diKatze_Start_X', @ObjectNodePrefix + N'diKatze_Start_X', N'Payload', N'Int32', CAST(1 AS bit)),
-      (@ObjectBaseID + 5, CAST(106 AS bigint), N'Objekt' + @ObjectIndexText + N'_diKatze_Breite_X', N'Objekt' + @ObjectIndexText + N'_diKatze_Breite_X', @ObjectNodePrefix + N'diKatze_Breite_X', N'Payload', N'Int32', CAST(1 AS bit)),
-      (@ObjectBaseID + 6, CAST(106 AS bigint), N'Objekt' + @ObjectIndexText + N'_diKran_Start_Y', N'Objekt' + @ObjectIndexText + N'_diKran_Start_Y', @ObjectNodePrefix + N'diKran_Start_Y', N'Payload', N'Int32', CAST(1 AS bit)),
-      (@ObjectBaseID + 7, CAST(106 AS bigint), N'Objekt' + @ObjectIndexText + N'_diKran_Laenge_Y', N'Objekt' + @ObjectIndexText + N'_diKran_Laenge_Y', @ObjectNodePrefix + N'diKran_Laenge_Y', N'Payload', N'Int32', CAST(1 AS bit)),
-      (@ObjectBaseID + 8, CAST(106 AS bigint), N'Objekt' + @ObjectIndexText + N'_diHub_Start_Z', N'Objekt' + @ObjectIndexText + N'_diHub_Start_Z', @ObjectNodePrefix + N'diHub_Start_Z', N'Payload', N'Int32', CAST(1 AS bit)),
-      (@ObjectBaseID + 9, CAST(106 AS bigint), N'Objekt' + @ObjectIndexText + N'_diHub_Hoehe_Z', N'Objekt' + @ObjectIndexText + N'_diHub_Hoehe_Z', @ObjectNodePrefix + N'diHub_Hoehe_Z', N'Payload', N'Int32', CAST(1 AS bit)),
-      (@ObjectBaseID + 10, CAST(106 AS bigint), N'Objekt' + @ObjectIndexText + N'_iPositionsAnz', N'Objekt' + @ObjectIndexText + N'_iPositionsAnz', @ObjectNodePrefix + N'iPositionsAnz', N'Payload', N'Int32', CAST(1 AS bit));
+      (@ObjectBaseID + 0, CAST(106 AS bigint), N'Objekt' + @ObjectIndexText + N'_stArt', @ObjectNodePrefix + N'stArt', N'Payload', N'String', CAST(1 AS bit)),
+      (@ObjectBaseID + 1, CAST(106 AS bigint), N'Objekt' + @ObjectIndexText + N'_stBezeichnung', @ObjectNodePrefix + N'stBezeichnung', N'Payload', N'String', CAST(1 AS bit)),
+      (@ObjectBaseID + 2, CAST(106 AS bigint), N'Objekt' + @ObjectIndexText + N'_stPositionsTyp', @ObjectNodePrefix + N'stPositionsTyp', N'Payload', N'String', CAST(1 AS bit)),
+      (@ObjectBaseID + 3, CAST(106 AS bigint), N'Objekt' + @ObjectIndexText + N'_iID', @ObjectNodePrefix + N'iID', N'Payload', N'Int32', CAST(1 AS bit)),
+      (@ObjectBaseID + 4, CAST(106 AS bigint), N'Objekt' + @ObjectIndexText + N'_diKatze_Start_X', @ObjectNodePrefix + N'diKatze_Start_X', N'Payload', N'Int32', CAST(1 AS bit)),
+      (@ObjectBaseID + 5, CAST(106 AS bigint), N'Objekt' + @ObjectIndexText + N'_diKatze_Breite_X', @ObjectNodePrefix + N'diKatze_Breite_X', N'Payload', N'Int32', CAST(1 AS bit)),
+      (@ObjectBaseID + 6, CAST(106 AS bigint), N'Objekt' + @ObjectIndexText + N'_diKran_Start_Y', @ObjectNodePrefix + N'diKran_Start_Y', N'Payload', N'Int32', CAST(1 AS bit)),
+      (@ObjectBaseID + 7, CAST(106 AS bigint), N'Objekt' + @ObjectIndexText + N'_diKran_Laenge_Y', @ObjectNodePrefix + N'diKran_Laenge_Y', N'Payload', N'Int32', CAST(1 AS bit)),
+      (@ObjectBaseID + 8, CAST(106 AS bigint), N'Objekt' + @ObjectIndexText + N'_diHub_Start_Z', @ObjectNodePrefix + N'diHub_Start_Z', N'Payload', N'Int32', CAST(1 AS bit)),
+      (@ObjectBaseID + 9, CAST(106 AS bigint), N'Objekt' + @ObjectIndexText + N'_diHub_Hoehe_Z', @ObjectNodePrefix + N'diHub_Hoehe_Z', N'Payload', N'Int32', CAST(1 AS bit)),
+      (@ObjectBaseID + 10, CAST(106 AS bigint), N'Objekt' + @ObjectIndexText + N'_iPositionsAnz', @ObjectNodePrefix + N'iPositionsAnz', N'Payload', N'Int32', CAST(1 AS bit));
 
    DECLARE @PositionIndex int = 0;
    WHILE @PositionIndex <= 9
@@ -67,10 +66,10 @@ BEGIN
       DECLARE @PositionBaseID bigint = @ObjectBaseID + 20 + (@PositionIndex * 2);
 
       INSERT INTO dbo.FALCOM_EVENT_OPC_NODES
-         (ID, EventID, NodeName, MeissnerNodeName, OPC_Node, NodeRole, DataType, IsRequired)
+         (ID, EventID, NodeName, OPC_Node, NodeRole, DataType, IsRequired)
       VALUES
-         (@PositionBaseID, CAST(106 AS bigint), N'Objekt' + @ObjectIndexText + N'_Positions' + @PositionIndexText + N'_diKatze_X', N'Objekt' + @ObjectIndexText + N'_Positions' + @PositionIndexText + N'_diKatze_X', @PositionNodePrefix + N'diKatze_X', N'Payload', N'Int32', CAST(1 AS bit)),
-         (@PositionBaseID + 1, CAST(106 AS bigint), N'Objekt' + @ObjectIndexText + N'_Positions' + @PositionIndexText + N'_diKran_Y', N'Objekt' + @ObjectIndexText + N'_Positions' + @PositionIndexText + N'_diKran_Y', @PositionNodePrefix + N'diKran_Y', N'Payload', N'Int32', CAST(1 AS bit));
+         (@PositionBaseID, CAST(106 AS bigint), N'Objekt' + @ObjectIndexText + N'_Positions' + @PositionIndexText + N'_diKatze_X', @PositionNodePrefix + N'diKatze_X', N'Payload', N'Int32', CAST(1 AS bit)),
+         (@PositionBaseID + 1, CAST(106 AS bigint), N'Objekt' + @ObjectIndexText + N'_Positions' + @PositionIndexText + N'_diKran_Y', @PositionNodePrefix + N'diKran_Y', N'Payload', N'Int32', CAST(1 AS bit));
 
       SET @PositionIndex += 1;
    END;
@@ -155,4 +154,3 @@ BEGIN
    ORDER BY o.ArrayIndex, a.PositionArrayIndex;
 END;
 GO
-

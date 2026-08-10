@@ -71,25 +71,18 @@ BEGIN TRY
 
    UPDATE dbo.FALCOM_EVENT_OPC_NODES
       SET NodeName = N'Event_102',
-          MeissnerNodeName = N'Event_102',
           NodeRole = N'Trigger',
           DataType = N'Int32'
     WHERE EventID = 102
       AND (ID = 16 OR NodeName = N'TelegrammNummer');
-
    UPDATE dbo.FALCOM_EVENT_OPC_NODES
-      SET MeissnerNodeName = N'Event_202'
+      SET NodeName = N'Event_202'
     WHERE EventID = 202
       AND NodeRole = N'Trigger';
-
    UPDATE dbo.FALCOM_EVENT_OPC_NODES
-      SET MeissnerNodeName = N'ZielPos'
+      SET NodeName = N'ZielPos'
     WHERE EventID = 102
       AND ID = 23;
-
-   UPDATE dbo.FALCOM_EVENT_OPC_NODES
-      SET NodeName = MeissnerNodeName
-    WHERE ISNULL(NodeName, N'') <> ISNULL(MeissnerNodeName, N'');
 
    IF EXISTS
    (
@@ -98,7 +91,7 @@ BEGIN TRY
       GROUP BY EventID, NodeName
       HAVING COUNT(*) > 1
    )
-      THROW 51002, 'Durch die Meissner-Umbenennung sind doppelte NodeNames entstanden.', 1;
+      THROW 51002, 'Durch die NodeName-Umbenennung sind doppelte NodeNames entstanden.', 1;
 
    UPDATE dbo.FALCOM_Kran_SPS_SIM_EventZuordnung
       SET SourceEventID = 102

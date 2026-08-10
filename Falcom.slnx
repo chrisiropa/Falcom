@@ -1,4 +1,6 @@
 <Solution>
+  <Project Path="ChargierwagenSimulator/ChargierwagenSimulator.csproj" />
+  <Project Path="EOfenSimulator/EOfenSimulator.csproj" />
   <Project Path="Falcom.Core/Falcom.Core.csproj" />
   <Project Path="Falcom.csproj" />
   <Project Path="FalcomWpf/FalcomWpf.csproj" />

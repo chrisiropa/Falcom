@@ -20,17 +20,16 @@ WHEN NOT MATCHED THEN
 
 MERGE dbo.FALCOM_EVENT_OPC_NODES AS target
 USING (VALUES
-   (CAST(104001 AS bigint), CAST(104 AS bigint), N'Event_104', N'Event_104', N'ns=1;s=Kran.DataBlocks.General_Falcom->Kran.Event_104', N'Trigger', N'Int32', CAST(1 AS bit)),
-   (CAST(204001 AS bigint), CAST(204 AS bigint), N'Event_204', N'Event_204', N'ns=1;s=Kran.DataBlocks.General_Kran->Falcom.Event_204', N'Trigger', N'Int32', CAST(1 AS bit))
-) AS source (ID, EventID, NodeName, MeissnerNodeName, OPC_Node, NodeRole, DataType, IsRequired)
+   (CAST(104001 AS bigint), CAST(104 AS bigint), N'Event_104', N'ns=1;s=Kran.DataBlocks.General_Falcom->Kran.Event_104', N'Trigger', N'Int32', CAST(1 AS bit)),
+   (CAST(204001 AS bigint), CAST(204 AS bigint), N'Event_204', N'ns=1;s=Kran.DataBlocks.General_Kran->Falcom.Event_204', N'Trigger', N'Int32', CAST(1 AS bit))
+) AS source (ID, EventID, NodeName, OPC_Node, NodeRole, DataType, IsRequired)
 ON target.ID = source.ID
 WHEN MATCHED THEN
-   UPDATE SET EventID = source.EventID, NodeName = source.NodeName,
-              MeissnerNodeName = source.MeissnerNodeName, OPC_Node = source.OPC_Node,
+   UPDATE SET EventID = source.EventID, NodeName = source.NodeName, OPC_Node = source.OPC_Node,
               NodeRole = source.NodeRole, DataType = source.DataType, IsRequired = source.IsRequired
 WHEN NOT MATCHED THEN
-   INSERT (ID, EventID, NodeName, MeissnerNodeName, OPC_Node, NodeRole, DataType, IsRequired)
-   VALUES (source.ID, source.EventID, source.NodeName, source.MeissnerNodeName,
+   INSERT (ID, EventID, NodeName, OPC_Node, NodeRole, DataType, IsRequired)
+   VALUES (source.ID, source.EventID, source.NodeName,
            source.OPC_Node, source.NodeRole, source.DataType, source.IsRequired);
 
 -- Fuer die Anzahl existiert bewusst kein SPS-Item.
@@ -46,19 +45,18 @@ BEGIN
 
    MERGE dbo.FALCOM_EVENT_OPC_NODES AS target
    USING (VALUES
-      (@BaseID, CAST(104 AS bigint), N'Bunker' + @IndexText + N'_BuNr', N'Bunker' + @IndexText + N'_BuNr',
+      (@BaseID, CAST(104 AS bigint), N'Bunker' + @IndexText + N'_BuNr',
        N'ns=1;s=Kran.DataBlocks.104_LNr_MatNr.Bunker.[' + CONVERT(nvarchar(2), @Index) + N'].BuNr', N'Payload', N'Int32', CAST(1 AS bit)),
-      (@BaseID + 1, CAST(104 AS bigint), N'Bunker' + @IndexText + N'_MaterialNr', N'Bunker' + @IndexText + N'_MaterialNr',
+      (@BaseID + 1, CAST(104 AS bigint), N'Bunker' + @IndexText + N'_MaterialNr',
        N'ns=1;s=Kran.DataBlocks.104_LNr_MatNr.Bunker.[' + CONVERT(nvarchar(2), @Index) + N'].MaterialNr', N'Payload', N'Int32', CAST(1 AS bit))
-   ) AS source (ID, EventID, NodeName, MeissnerNodeName, OPC_Node, NodeRole, DataType, IsRequired)
+   ) AS source (ID, EventID, NodeName, OPC_Node, NodeRole, DataType, IsRequired)
    ON target.ID = source.ID
    WHEN MATCHED THEN
-      UPDATE SET EventID = source.EventID, NodeName = source.NodeName,
-                 MeissnerNodeName = source.MeissnerNodeName, OPC_Node = source.OPC_Node,
+      UPDATE SET EventID = source.EventID, NodeName = source.NodeName, OPC_Node = source.OPC_Node,
                  NodeRole = source.NodeRole, DataType = source.DataType, IsRequired = source.IsRequired
    WHEN NOT MATCHED THEN
-      INSERT (ID, EventID, NodeName, MeissnerNodeName, OPC_Node, NodeRole, DataType, IsRequired)
-      VALUES (source.ID, source.EventID, source.NodeName, source.MeissnerNodeName,
+      INSERT (ID, EventID, NodeName, OPC_Node, NodeRole, DataType, IsRequired)
+      VALUES (source.ID, source.EventID, source.NodeName,
               source.OPC_Node, source.NodeRole, source.DataType, source.IsRequired);
 
    SET @Index += 1;

@@ -61,21 +61,20 @@ WHEN NOT MATCHED THEN
 
 MERGE dbo.FALCOM_EVENT_OPC_NODES AS target
 USING (VALUES
-   (CAST(105001 AS bigint), CAST(105 AS bigint), N'Event_105', N'Event_105', N'ns=1;s=Kran.DataBlocks.General_Falcom->Kran.Event_105', N'Trigger', N'Int32', CAST(1 AS bit)),
-   (CAST(205001 AS bigint), CAST(205 AS bigint), N'Event_205', N'Event_205', N'ns=1;s=Kran.DataBlocks.General_Kran->Falcom.Event_205', N'Trigger', N'Int32', CAST(1 AS bit))
-) AS source (ID, EventID, NodeName, MeissnerNodeName, OPC_Node, NodeRole, DataType, IsRequired)
+   (CAST(105001 AS bigint), CAST(105 AS bigint), N'Event_105', N'ns=1;s=Kran.DataBlocks.General_Falcom->Kran.Event_105', N'Trigger', N'Int32', CAST(1 AS bit)),
+   (CAST(205001 AS bigint), CAST(205 AS bigint), N'Event_205', N'ns=1;s=Kran.DataBlocks.General_Kran->Falcom.Event_205', N'Trigger', N'Int32', CAST(1 AS bit))
+) AS source (ID, EventID, NodeName, OPC_Node, NodeRole, DataType, IsRequired)
 ON target.ID = source.ID
 WHEN MATCHED THEN
    UPDATE SET EventID = source.EventID,
               NodeName = source.NodeName,
-              MeissnerNodeName = source.MeissnerNodeName,
               OPC_Node = source.OPC_Node,
               NodeRole = source.NodeRole,
               DataType = source.DataType,
               IsRequired = source.IsRequired
 WHEN NOT MATCHED THEN
-   INSERT (ID, EventID, NodeName, MeissnerNodeName, OPC_Node, NodeRole, DataType, IsRequired)
-   VALUES (source.ID, source.EventID, source.NodeName, source.MeissnerNodeName,
+   INSERT (ID, EventID, NodeName, OPC_Node, NodeRole, DataType, IsRequired)
+   VALUES (source.ID, source.EventID, source.NodeName,
            source.OPC_Node, source.NodeRole, source.DataType, source.IsRequired);
 
 DELETE FROM dbo.FALCOM_EVENT_OPC_NODES
@@ -90,23 +89,23 @@ BEGIN
    DECLARE @MaterialBaseID bigint = CAST(1050000 AS bigint) + (@MaterialIndex * 100);
 
    INSERT INTO dbo.FALCOM_EVENT_OPC_NODES
-      (ID, EventID, NodeName, MeissnerNodeName, OPC_Node, NodeRole, DataType, IsRequired)
+      (ID, EventID, NodeName, OPC_Node, NodeRole, DataType, IsRequired)
    VALUES
-      (@MaterialBaseID + 0, CAST(105 AS bigint), N'Material' + @MaterialIndexText + N'_iID', N'Material' + @MaterialIndexText + N'_iID', @MaterialNodePrefix + N'iID', N'Payload', N'Int32', CAST(1 AS bit)),
-      (@MaterialBaseID + 1, CAST(105 AS bigint), N'Material' + @MaterialIndexText + N'_Mat_Name', N'Material' + @MaterialIndexText + N'_Mat_Name', @MaterialNodePrefix + N'Mat_Name', N'Payload', N'String', CAST(1 AS bit)),
-      (@MaterialBaseID + 2, CAST(105 AS bigint), N'Material' + @MaterialIndexText + N'_Datum_Zeit', N'Material' + @MaterialIndexText + N'_Datum_Zeit', @MaterialNodePrefix + N'Datum_Zeit', N'Payload', N'DateTime', CAST(1 AS bit)),
-      (@MaterialBaseID + 10, CAST(105 AS bigint), N'Material' + @MaterialIndexText + N'_PARA_diMasseGattMin', N'Material' + @MaterialIndexText + N'_PARA_diMasseGattMin', @MaterialNodePrefix + N'PARA.diMasseGattMin', N'Payload', N'Int32', CAST(1 AS bit)),
-      (@MaterialBaseID + 11, CAST(105 AS bigint), N'Material' + @MaterialIndexText + N'_PARA_diZeitAbtippen', N'Material' + @MaterialIndexText + N'_PARA_diZeitAbtippen', @MaterialNodePrefix + N'PARA.diZeitAbtippen', N'Payload', N'Int32', CAST(1 AS bit)),
-      (@MaterialBaseID + 12, CAST(105 AS bigint), N'Material' + @MaterialIndexText + N'_PARA_diMasseVorAbtippen', N'Material' + @MaterialIndexText + N'_PARA_diMasseVorAbtippen', @MaterialNodePrefix + N'PARA.diMasseVorAbtippen', N'Payload', N'Int32', CAST(1 AS bit)),
-      (@MaterialBaseID + 13, CAST(105 AS bigint), N'Material' + @MaterialIndexText + N'_PARA_diMasseTol_pos', N'Material' + @MaterialIndexText + N'_PARA_diMasseTol_pos', @MaterialNodePrefix + N'PARA.diMasseTol_pos', N'Payload', N'Int32', CAST(1 AS bit)),
-      (@MaterialBaseID + 14, CAST(105 AS bigint), N'Material' + @MaterialIndexText + N'_PARA_diMasseTol_neg', N'Material' + @MaterialIndexText + N'_PARA_diMasseTol_neg', @MaterialNodePrefix + N'PARA.diMasseTol_neg', N'Payload', N'Int32', CAST(1 AS bit)),
-      (@MaterialBaseID + 15, CAST(105 AS bigint), N'Material' + @MaterialIndexText + N'_PARA_rKraftStufenPro100Kg', N'Material' + @MaterialIndexText + N'_PARA_rKraftStufenPro100Kg', @MaterialNodePrefix + N'PARA.rKraftStufenPro100Kg', N'Payload', N'Float', CAST(1 AS bit)),
-      (@MaterialBaseID + 16, CAST(105 AS bigint), N'Material' + @MaterialIndexText + N'_PARA_xAbwurfFlach', N'Material' + @MaterialIndexText + N'_PARA_xAbwurfFlach', @MaterialNodePrefix + N'PARA.xAbwurfFlach', N'Payload', N'Bit', CAST(1 AS bit)),
-      (@MaterialBaseID + 17, CAST(105 AS bigint), N'Material' + @MaterialIndexText + N'_PARA_xAbwurfAbzett', N'Material' + @MaterialIndexText + N'_PARA_xAbwurfAbzett', @MaterialNodePrefix + N'PARA.xAbwurfAbzett', N'Payload', N'Bit', CAST(1 AS bit)),
-      (@MaterialBaseID + 18, CAST(105 AS bigint), N'Material' + @MaterialIndexText + N'_PARA_xAbwurfTippen', N'Material' + @MaterialIndexText + N'_PARA_xAbwurfTippen', @MaterialNodePrefix + N'PARA.xAbwurfTippen', N'Payload', N'Bit', CAST(1 AS bit)),
-      (@MaterialBaseID + 19, CAST(105 AS bigint), N'Material' + @MaterialIndexText + N'_PARA_xNachfassenMag_Aus', N'Material' + @MaterialIndexText + N'_PARA_xNachfassenMag_Aus', @MaterialNodePrefix + N'PARA.xNachfassenMag_Aus', N'Payload', N'Bit', CAST(1 AS bit)),
-      (@MaterialBaseID + 20, CAST(105 AS bigint), N'Material' + @MaterialIndexText + N'_PARA_xNachfassenMag_Dauernd', N'Material' + @MaterialIndexText + N'_PARA_xNachfassenMag_Dauernd', @MaterialNodePrefix + N'PARA.xNachfassenMag_Dauernd', N'Payload', N'Bit', CAST(1 AS bit)),
-      (@MaterialBaseID + 21, CAST(105 AS bigint), N'Material' + @MaterialIndexText + N'_PARA_xKreislauf', N'Material' + @MaterialIndexText + N'_PARA_xKreislauf', @MaterialNodePrefix + N'PARA.xKreislauf', N'Payload', N'Bit', CAST(1 AS bit));
+      (@MaterialBaseID + 0, CAST(105 AS bigint), N'Material' + @MaterialIndexText + N'_iID', @MaterialNodePrefix + N'iID', N'Payload', N'Int32', CAST(1 AS bit)),
+      (@MaterialBaseID + 1, CAST(105 AS bigint), N'Material' + @MaterialIndexText + N'_Mat_Name', @MaterialNodePrefix + N'Mat_Name', N'Payload', N'String', CAST(1 AS bit)),
+      (@MaterialBaseID + 2, CAST(105 AS bigint), N'Material' + @MaterialIndexText + N'_Datum_Zeit', @MaterialNodePrefix + N'Datum_Zeit', N'Payload', N'DateTime', CAST(1 AS bit)),
+      (@MaterialBaseID + 10, CAST(105 AS bigint), N'Material' + @MaterialIndexText + N'_PARA_diMasseGattMin', @MaterialNodePrefix + N'PARA.diMasseGattMin', N'Payload', N'Int32', CAST(1 AS bit)),
+      (@MaterialBaseID + 11, CAST(105 AS bigint), N'Material' + @MaterialIndexText + N'_PARA_diZeitAbtippen', @MaterialNodePrefix + N'PARA.diZeitAbtippen', N'Payload', N'Int32', CAST(1 AS bit)),
+      (@MaterialBaseID + 12, CAST(105 AS bigint), N'Material' + @MaterialIndexText + N'_PARA_diMasseVorAbtippen', @MaterialNodePrefix + N'PARA.diMasseVorAbtippen', N'Payload', N'Int32', CAST(1 AS bit)),
+      (@MaterialBaseID + 13, CAST(105 AS bigint), N'Material' + @MaterialIndexText + N'_PARA_diMasseTol_pos', @MaterialNodePrefix + N'PARA.diMasseTol_pos', N'Payload', N'Int32', CAST(1 AS bit)),
+      (@MaterialBaseID + 14, CAST(105 AS bigint), N'Material' + @MaterialIndexText + N'_PARA_diMasseTol_neg', @MaterialNodePrefix + N'PARA.diMasseTol_neg', N'Payload', N'Int32', CAST(1 AS bit)),
+      (@MaterialBaseID + 15, CAST(105 AS bigint), N'Material' + @MaterialIndexText + N'_PARA_rKraftStufenPro100Kg', @MaterialNodePrefix + N'PARA.rKraftStufenPro100Kg', N'Payload', N'Float', CAST(1 AS bit)),
+      (@MaterialBaseID + 16, CAST(105 AS bigint), N'Material' + @MaterialIndexText + N'_PARA_xAbwurfFlach', @MaterialNodePrefix + N'PARA.xAbwurfFlach', N'Payload', N'Bit', CAST(1 AS bit)),
+      (@MaterialBaseID + 17, CAST(105 AS bigint), N'Material' + @MaterialIndexText + N'_PARA_xAbwurfAbzett', @MaterialNodePrefix + N'PARA.xAbwurfAbzett', N'Payload', N'Bit', CAST(1 AS bit)),
+      (@MaterialBaseID + 18, CAST(105 AS bigint), N'Material' + @MaterialIndexText + N'_PARA_xAbwurfTippen', @MaterialNodePrefix + N'PARA.xAbwurfTippen', N'Payload', N'Bit', CAST(1 AS bit)),
+      (@MaterialBaseID + 19, CAST(105 AS bigint), N'Material' + @MaterialIndexText + N'_PARA_xNachfassenMag_Aus', @MaterialNodePrefix + N'PARA.xNachfassenMag_Aus', N'Payload', N'Bit', CAST(1 AS bit)),
+      (@MaterialBaseID + 20, CAST(105 AS bigint), N'Material' + @MaterialIndexText + N'_PARA_xNachfassenMag_Dauernd', @MaterialNodePrefix + N'PARA.xNachfassenMag_Dauernd', N'Payload', N'Bit', CAST(1 AS bit)),
+      (@MaterialBaseID + 21, CAST(105 AS bigint), N'Material' + @MaterialIndexText + N'_PARA_xKreislauf', @MaterialNodePrefix + N'PARA.xKreislauf', N'Payload', N'Bit', CAST(1 AS bit));
 
    SET @MaterialIndex += 1;
 END;

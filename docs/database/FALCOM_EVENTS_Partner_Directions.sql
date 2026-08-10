@@ -1,0 +1,55 @@
+USE [FG]
+GO
+
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+
+IF COL_LENGTH(N'dbo.FALCOM_EVENTS', N'Partner') IS NULL
+BEGIN
+   ALTER TABLE dbo.FALCOM_EVENTS
+      ADD Partner nvarchar(30) NOT NULL
+         CONSTRAINT DF_FALCOM_EVENTS_Partner DEFAULT (N'KRAN');
+END
+GO
+
+UPDATE dbo.FALCOM_EVENTS
+   SET Partner = N'KRAN'
+ WHERE Partner IS NULL
+    OR LTRIM(RTRIM(Partner)) = N'';
+GO
+
+IF EXISTS
+(
+   SELECT 1
+   FROM sys.check_constraints
+   WHERE parent_object_id = OBJECT_ID(N'dbo.FALCOM_EVENTS')
+     AND name = N'CK_FALCOM_EVENTS_Direction'
+)
+BEGIN
+   ALTER TABLE dbo.FALCOM_EVENTS
+      DROP CONSTRAINT CK_FALCOM_EVENTS_Direction;
+END
+GO
+
+ALTER TABLE dbo.FALCOM_EVENTS WITH CHECK
+   ADD CONSTRAINT CK_FALCOM_EVENTS_Direction
+   CHECK
+   (
+      Direction IN
+      (
+         N'FALCOM->KRAN_SPS',
+         N'KRAN_SPS->FALCOM',
+         N'FALCOM->CW',
+         N'CW->FALCOM',
+         N'FALCOM->EOFEN',
+         N'EOFEN->FALCOM'
+      )
+   );
+GO
+
+ALTER TABLE dbo.FALCOM_EVENTS
+   CHECK CONSTRAINT CK_FALCOM_EVENTS_Direction;
+GO
+
