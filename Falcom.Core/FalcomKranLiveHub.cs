@@ -17,6 +17,10 @@ public sealed class FalcomKranLiveHub : Hub
          liveStatusService.GetSpsLebensZaehler();
       KranPositionSnapshot? kranPosition =
          liveStatusService.GetKranPosition();
+      CwIstgewichteSnapshot? cwIstgewichte =
+         liveStatusService.GetCwIstgewichte();
+      CwStoerungenSnapshot? cwStoerungen =
+         liveStatusService.GetCwStoerungen();
 
       if (spsLebensZaehler is not null)
       {
@@ -31,6 +35,22 @@ public sealed class FalcomKranLiveHub : Hub
          await Clients.Caller.SendAsync(
             "KranPosition",
             kranPosition,
+            Context.ConnectionAborted);
+      }
+
+      if (cwIstgewichte is not null)
+      {
+         await Clients.Caller.SendAsync(
+            "CwIstgewichte",
+            cwIstgewichte,
+            Context.ConnectionAborted);
+      }
+
+      if (cwStoerungen is not null)
+      {
+         await Clients.Caller.SendAsync(
+            "CwStoerungen",
+            cwStoerungen,
             Context.ConnectionAborted);
       }
 

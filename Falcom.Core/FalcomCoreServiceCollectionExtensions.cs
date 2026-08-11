@@ -17,6 +17,7 @@ public static class FalcomCoreServiceCollectionExtensions
       services.AddSingleton<OPC_Client_Crane>();
       services.AddSingleton<FalcomEventQueue>();
       services.AddSingleton<WatchdogSender>();
+      services.AddSingleton<CwWatchdogSender>();
       services.AddSingleton<FalcomKranLiveStatusService>();
       services.AddSingleton<FalcomKranLiveSignalRClient>();
       services.AddHostedService<FalcomKranLiveSignalRServer>();

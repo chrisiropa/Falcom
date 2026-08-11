@@ -7,9 +7,13 @@ public sealed class FalcomKranLiveStatusService
 
    private SpsLebensZaehlerSnapshot? spsLebensZaehler;
    private KranPositionSnapshot? kranPosition;
+   private CwIstgewichteSnapshot? cwIstgewichte;
+   private CwStoerungenSnapshot? cwStoerungen;
 
    public event Action<SpsLebensZaehlerSnapshot>? SpsLebensZaehlerChanged;
    public event Action<KranPositionSnapshot>? KranPositionChanged;
+   public event Action<CwIstgewichteSnapshot>? CwIstgewichteChanged;
+   public event Action<CwStoerungenSnapshot>? CwStoerungenChanged;
    public event Action<KranOpcEventSnapshot>? KranOpcEventChanged;
 
    public SpsLebensZaehlerSnapshot? GetSpsLebensZaehler()
@@ -25,6 +29,22 @@ public sealed class FalcomKranLiveStatusService
       lock (syncRoot)
       {
          return kranPosition;
+      }
+   }
+
+   public CwIstgewichteSnapshot? GetCwIstgewichte()
+   {
+      lock (syncRoot)
+      {
+         return cwIstgewichte;
+      }
+   }
+
+   public CwStoerungenSnapshot? GetCwStoerungen()
+   {
+      lock (syncRoot)
+      {
+         return cwStoerungen;
       }
    }
 
@@ -95,6 +115,52 @@ public sealed class FalcomKranLiveStatusService
       return snapshot;
    }
 
+   public CwIstgewichteSnapshot SetCwIstgewichte(
+      int? istgewChW1,
+      int? istgewChW2,
+      int? istgewChW3,
+      DateTime timestampUtc,
+      string source)
+   {
+      CwIstgewichteSnapshot snapshot = new(
+         istgewChW1,
+         istgewChW2,
+         istgewChW3,
+         timestampUtc,
+         source);
+
+      lock (syncRoot)
+      {
+         cwIstgewichte = snapshot;
+      }
+
+      CwIstgewichteChanged?.Invoke(snapshot);
+      return snapshot;
+   }
+
+   public CwStoerungenSnapshot SetCwStoerungen(
+      bool? stoerungChW1,
+      bool? stoerungChW2,
+      bool? stoerungChW3,
+      DateTime timestampUtc,
+      string source)
+   {
+      CwStoerungenSnapshot snapshot = new(
+         stoerungChW1,
+         stoerungChW2,
+         stoerungChW3,
+         timestampUtc,
+         source);
+
+      lock (syncRoot)
+      {
+         cwStoerungen = snapshot;
+      }
+
+      CwStoerungenChanged?.Invoke(snapshot);
+      return snapshot;
+   }
+
    public KranOpcEventSnapshot SetKranOpcEvent(
       int eventId,
       string eventName,
@@ -140,6 +206,20 @@ public sealed record KranPositionSnapshot(
    int? PosHub,
    int? MagnetAn,
    int? MasseNetto,
+   DateTime TimestampUtc,
+   string Source);
+
+public sealed record CwIstgewichteSnapshot(
+   int? IstgewChW1,
+   int? IstgewChW2,
+   int? IstgewChW3,
+   DateTime TimestampUtc,
+   string Source);
+
+public sealed record CwStoerungenSnapshot(
+   bool? StoerungChW1,
+   bool? StoerungChW2,
+   bool? StoerungChW3,
    DateTime TimestampUtc,
    string Source);
 

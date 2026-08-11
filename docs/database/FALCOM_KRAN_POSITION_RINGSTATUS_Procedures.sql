@@ -218,7 +218,7 @@ BEGIN
         AND qp.ID IS NOT NULL
         AND @ZielPositionID IS NOT NULL
         AND COALESCE(prod.IstMengeKg, 0) < CONVERT(decimal(18,3), COALESCE(NULLIF(b.BerechnetKg, 0), NULLIF(CONVERT(decimal(18,3), b.Menge), 0)))
-      ORDER BY b.PositionsNr ASC, b.ID ASC;
+      ORDER BY COALESCE(b.ChargierReihenfolge, 2147483647) ASC, b.PositionsNr ASC, b.ID ASC;
 
       IF @QuellBoxID IS NULL
       BEGIN

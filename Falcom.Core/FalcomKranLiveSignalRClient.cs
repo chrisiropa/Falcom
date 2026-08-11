@@ -57,6 +57,48 @@ public sealed class FalcomKranLiveSignalRClient
       return Task.CompletedTask;
    }
 
+   public Task SendCwIstgewichteAsync(
+      int? istgewChW1,
+      int? istgewChW2,
+      int? istgewChW3,
+      CancellationToken cancellationToken)
+   {
+      if (cancellationToken.IsCancellationRequested)
+      {
+         return Task.FromCanceled(cancellationToken);
+      }
+
+      liveStatusService.SetCwIstgewichte(
+         istgewChW1,
+         istgewChW2,
+         istgewChW3,
+         DateTime.UtcNow,
+         "CW-SPS");
+
+      return Task.CompletedTask;
+   }
+
+   public Task SendCwStoerungenAsync(
+      bool? stoerungChW1,
+      bool? stoerungChW2,
+      bool? stoerungChW3,
+      CancellationToken cancellationToken)
+   {
+      if (cancellationToken.IsCancellationRequested)
+      {
+         return Task.FromCanceled(cancellationToken);
+      }
+
+      liveStatusService.SetCwStoerungen(
+         stoerungChW1,
+         stoerungChW2,
+         stoerungChW3,
+         DateTime.UtcNow,
+         "CW-SPS");
+
+      return Task.CompletedTask;
+   }
+
    public Task SendKranOpcEventAsync(
       int eventId,
       string eventName,

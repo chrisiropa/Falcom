@@ -11,19 +11,24 @@
    <Window.Resources>
       <Style x:Key="Card" TargetType="Border">
          <Setter Property="Background" Value="#1F2937" />
-         <Setter Property="CornerRadius" Value="10" />
-         <Setter Property="Padding" Value="14" />
-         <Setter Property="Margin" Value="8" />
+         <Setter Property="CornerRadius" Value="8" />
+         <Setter Property="Padding" Value="10" />
+         <Setter Property="Margin" Value="5" />
       </Style>
       <Style x:Key="Caption" TargetType="TextBlock">
          <Setter Property="Foreground" Value="#9CA3AF" />
-         <Setter Property="FontSize" Value="13" />
+         <Setter Property="FontSize" Value="11" />
       </Style>
       <Style x:Key="Value" TargetType="TextBlock">
          <Setter Property="Foreground" Value="#F9FAFB" />
-         <Setter Property="FontSize" Value="18" />
+         <Setter Property="FontSize" Value="15" />
          <Setter Property="FontWeight" Value="SemiBold" />
       </Style>
+      <DataTemplate x:Key="LogEntryTemplate">
+         <TextBlock Text="{Binding Line}"
+                    Foreground="{Binding Foreground}"
+                    TextWrapping="NoWrap" />
+      </DataTemplate>
    </Window.Resources>
 
    <Grid Margin="16">
@@ -37,7 +42,7 @@
          <StackPanel DockPanel.Dock="Left">
             <TextBlock Text="FALCOM Diagnose"
                        Foreground="#F9FAFB"
-                       FontSize="30"
+                       FontSize="26"
                        FontWeight="Bold" />
             <TextBlock Text="Status, Watchdog, SPS-Lebenszeichen, OPC- und Ablauf-Log"
                        Foreground="#9CA3AF"
@@ -50,18 +55,48 @@
                     FontSize="14" />
       </DockPanel>
 
-      <UniformGrid Grid.Row="1" Columns="4">
+      <UniformGrid Grid.Row="1" Columns="6">
          <Border Style="{StaticResource Card}">
             <Grid>
                <Grid.ColumnDefinitions>
                   <ColumnDefinition Width="Auto" />
                   <ColumnDefinition Width="*" />
                </Grid.ColumnDefinitions>
-               <Ellipse x:Name="OpcLamp" Width="22" Height="22" Fill="#DC2626" Margin="0,4,12,0" />
+               <Ellipse x:Name="OpcLamp" Width="18" Height="18" Fill="#DC2626" Margin="0,3,9,0" />
                <StackPanel Grid.Column="1">
-                  <TextBlock Style="{StaticResource Caption}" Text="OPC Kran-SPS" />
+                  <TextBlock Style="{StaticResource Caption}" Text="Kran-SPS" />
                   <TextBlock x:Name="OpcStatusText" Style="{StaticResource Value}" Text="Unbekannt" />
                   <TextBlock x:Name="OpcStatusTimeText" Style="{StaticResource Caption}" />
+               </StackPanel>
+            </Grid>
+         </Border>
+
+         <Border Style="{StaticResource Card}">
+            <Grid>
+               <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="Auto" />
+                  <ColumnDefinition Width="*" />
+               </Grid.ColumnDefinitions>
+               <Ellipse x:Name="CwOpcLamp" Width="18" Height="18" Fill="#DC2626" Margin="0,3,9,0" />
+               <StackPanel Grid.Column="1">
+                  <TextBlock Style="{StaticResource Caption}" Text="CW-SPS" />
+                  <TextBlock x:Name="CwOpcStatusText" Style="{StaticResource Value}" Text="Unbekannt" />
+                  <TextBlock x:Name="CwOpcStatusTimeText" Style="{StaticResource Caption}" />
+               </StackPanel>
+            </Grid>
+         </Border>
+
+         <Border Style="{StaticResource Card}">
+            <Grid>
+               <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="Auto" />
+                  <ColumnDefinition Width="*" />
+               </Grid.ColumnDefinitions>
+               <Ellipse x:Name="EOfenOpcLamp" Width="18" Height="18" Fill="#DC2626" Margin="0,3,9,0" />
+               <StackPanel Grid.Column="1">
+                  <TextBlock Style="{StaticResource Caption}" Text="E-Ofen-SPS" />
+                  <TextBlock x:Name="EOfenOpcStatusText" Style="{StaticResource Value}" Text="Unbekannt" />
+                  <TextBlock x:Name="EOfenOpcStatusTimeText" Style="{StaticResource Caption}" />
                </StackPanel>
             </Grid>
          </Border>
@@ -124,7 +159,8 @@
                            Foreground="#E5E7EB"
                            BorderThickness="0"
                            FontFamily="Consolas"
-                           FontSize="12" />
+                           FontSize="12"
+                           ItemTemplate="{StaticResource LogEntryTemplate}" />
                </DockPanel>
             </Border>
          </TabItem>
@@ -149,7 +185,8 @@
                               Foreground="#E5E7EB"
                               BorderThickness="0"
                               FontFamily="Consolas"
-                              FontSize="12" />
+                              FontSize="12"
+                              ItemTemplate="{StaticResource LogEntryTemplate}" />
                   </DockPanel>
                </Border>
 
@@ -166,7 +203,8 @@
                               Foreground="#E5E7EB"
                               BorderThickness="0"
                               FontFamily="Consolas"
-                              FontSize="12" />
+                              FontSize="12"
+                              ItemTemplate="{StaticResource LogEntryTemplate}" />
                   </DockPanel>
                </Border>
             </Grid>

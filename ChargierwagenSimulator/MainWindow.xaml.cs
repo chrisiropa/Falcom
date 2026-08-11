@@ -1,5 +1,6 @@
 using Falcom;
 using Microsoft.Extensions.Logging;
+using Opc.UaFx;
 using Opc.UaFx.Client;
 using System.Windows;
 using System.Windows.Media;
@@ -11,11 +12,18 @@ public partial class MainWindow : Window
 {
    private static readonly TimeSpan ConnectRetryDelay = TimeSpan.FromSeconds(5);
    private static readonly TimeSpan ReconnectLogThrottle = TimeSpan.FromMinutes(1);
+   private const int SimulatedIstgewChW1 = 1000;
+   private const int SimulatedIstgewChW2 = 2000;
+   private const int SimulatedIstgewChW3 = 3000;
 
    private readonly FalcomUiLogSink uiLogSink = new();
    private readonly FalcomFileSink fileLogSink;
    private readonly DispatcherTimer logRefreshTimer = new();
    private readonly DispatcherTimer statusRefreshTimer = new();
+   private readonly DispatcherTimer event402Timer = new();
+   private readonly DispatcherTimer event403Timer = new();
+   private readonly DispatcherTimer event404Timer = new();
+   private readonly DispatcherTimer event405Timer = new();
    private readonly CancellationTokenSource reconnectCancellation = new();
    private readonly string opcEndpoint;
    private readonly IReadOnlyList<EventConfiguration> events;
@@ -26,6 +34,14 @@ public partial class MainWindow : Window
    private bool disposed;
    private DateTime nextReconnectLogUtc = DateTime.MinValue;
    private long lastLogChangeVersion;
+   private int event402Counter;
+   private int event402SendFailures;
+   private int event403Counter;
+   private int event403SendFailures;
+   private int event404Counter;
+   private int event404SendFailures;
+   private int event405Counter;
+   private int event405SendFailures;
    private string opcStatusText = "Initialisierung";
    private string opcStatusDetailText = string.Empty;
 
@@ -40,6 +56,22 @@ public partial class MainWindow : Window
       statusRefreshTimer.Interval = TimeSpan.FromSeconds(1);
       statusRefreshTimer.Tick += (_, _) => RefreshStatusView();
       statusRefreshTimer.Start();
+
+      event402Timer.Interval = TimeSpan.FromSeconds(1);
+      event402Timer.Tick += (_, _) => SendEvent402Status();
+      event402Timer.Start();
+
+      event403Timer.Interval = TimeSpan.FromSeconds(1);
+      event403Timer.Tick += (_, _) => SendEvent403Beladebereit();
+      event403Timer.Start();
+
+      event404Timer.Interval = TimeSpan.FromSeconds(1);
+      event404Timer.Tick += (_, _) => SendEvent404Steuerung();
+      event404Timer.Start();
+
+      event405Timer.Interval = TimeSpan.FromSeconds(1);
+      event405Timer.Tick += (_, _) => SendEvent405GattierungAbgeschlossen();
+      event405Timer.Start();
 
       SimulatorConfiguration configuration = SimulatorConfig.Load();
       opcEndpoint = configuration.OpcEndpoint.Trim();
@@ -231,6 +263,270 @@ public partial class MainWindow : Window
       EventDetailText.Text = $"{events.Sum(x => x.Nodes.Count)} Nodes, {zuordnungen.Count} Zuordnungen";
    }
 
+   private void SendEvent402Status()
+   {
+      if (opcClient is not { State: OpcClientState.Connected })
+      {
+         return;
+      }
+
+      EventConfiguration? event402 = events.FirstOrDefault(e =>
+         e.ID == 402
+         || string.Equals(e.EventName, "Event_402", StringComparison.OrdinalIgnoreCase));
+      if (event402 is null)
+      {
+         return;
+      }
+
+      EventNodeConfiguration? triggerNode = event402.Nodes.FirstOrDefault(n =>
+         string.Equals(n.NodeRole, "Trigger", StringComparison.OrdinalIgnoreCase)
+         || string.Equals(n.NodeName, "Event_402", StringComparison.OrdinalIgnoreCase));
+      if (triggerNode is null || string.IsNullOrWhiteSpace(triggerNode.OpcNode))
+      {
+         return;
+      }
+
+      try
+      {
+         int nextValue = event402Counter == int.MaxValue
+            ? 1
+            : event402Counter + 1;
+
+         WriteEvent402PayloadNode(event402, "Istgew_ChW1", SimulatedIstgewChW1);
+         WriteEvent402PayloadNode(event402, "Istgew_ChW2", SimulatedIstgewChW2);
+         WriteEvent402PayloadNode(event402, "Istgew_ChW3", SimulatedIstgewChW3);
+         WriteNode(triggerNode.OpcNode, nextValue);
+
+         event402Counter = nextValue;
+         event402SendFailures = 0;
+         SimulationDetailText.Text = $"Event_402 sekündlich aktiv. Letzter Zaehler={event402Counter}.";
+
+         if (event402Counter == 1 || event402Counter % 60 == 0)
+         {
+            Log($"0712|Event_402 Status gesendet. Zaehler={event402Counter}, Istgew_ChW1={SimulatedIstgewChW1}, Istgew_ChW2={SimulatedIstgewChW2}, Istgew_ChW3={SimulatedIstgewChW3}.");
+         }
+      }
+      catch (Exception ex)
+      {
+         event402SendFailures++;
+         SimulationDetailText.Text = $"Event_402 Sendefehler ({event402SendFailures}).";
+
+         if (event402SendFailures == 1 || event402SendFailures % 60 == 0)
+         {
+            LogWarning($"0713|Event_402 konnte nicht geschrieben werden. Fehler={ex.GetType().Name}: {ex.Message}");
+         }
+      }
+   }
+
+   private void WriteEvent402PayloadNode(
+      EventConfiguration event402,
+      string nodeName,
+      object value)
+   {
+      EventNodeConfiguration? node = event402.Nodes.FirstOrDefault(n =>
+         string.Equals(n.NodeName, nodeName, StringComparison.OrdinalIgnoreCase));
+      if (node is null || string.IsNullOrWhiteSpace(node.OpcNode))
+      {
+         return;
+      }
+
+      WriteNode(node.OpcNode, value);
+   }
+
+   private void SendEvent403Beladebereit()
+   {
+      if (opcClient is not { State: OpcClientState.Connected })
+      {
+         return;
+      }
+
+      EventConfiguration? event403 = events.FirstOrDefault(e =>
+         e.ID == 403
+         || string.Equals(e.EventName, "Event_403", StringComparison.OrdinalIgnoreCase));
+      if (event403 is null)
+      {
+         return;
+      }
+
+      EventNodeConfiguration? triggerNode = event403.Nodes.FirstOrDefault(n =>
+         string.Equals(n.NodeRole, "Trigger", StringComparison.OrdinalIgnoreCase)
+         || string.Equals(n.NodeName, "Event_403", StringComparison.OrdinalIgnoreCase));
+      if (triggerNode is null || string.IsNullOrWhiteSpace(triggerNode.OpcNode))
+      {
+         return;
+      }
+
+      try
+      {
+         int nextValue = event403Counter == int.MaxValue
+            ? 1
+            : event403Counter + 1;
+         bool chw1 = true;
+         bool chw2 = nextValue % 2 == 0;
+         bool chw3 = nextValue % 3 == 0;
+
+         WriteEventPayloadNode(event403, "Beladebereit_ChW1", chw1);
+         WriteEventPayloadNode(event403, "Beladebereit_ChW2", chw2);
+         WriteEventPayloadNode(event403, "Beladebereit_ChW3", chw3);
+         WriteNode(triggerNode.OpcNode, nextValue);
+
+         event403Counter = nextValue;
+         event403SendFailures = 0;
+
+         if (event403Counter == 1 || event403Counter % 60 == 0)
+         {
+            Log($"0714|Event_403 Beladebereit gesendet. Zaehler={event403Counter}, Beladebereit_ChW1={chw1}, Beladebereit_ChW2={chw2}, Beladebereit_ChW3={chw3}.");
+         }
+      }
+      catch (Exception ex)
+      {
+         event403SendFailures++;
+
+         if (event403SendFailures == 1 || event403SendFailures % 60 == 0)
+         {
+            LogWarning($"0715|Event_403 konnte nicht geschrieben werden. Fehler={ex.GetType().Name}: {ex.Message}");
+         }
+      }
+   }
+
+   private void SendEvent404Steuerung()
+   {
+      if (opcClient is not { State: OpcClientState.Connected })
+      {
+         return;
+      }
+
+      EventConfiguration? event404 = events.FirstOrDefault(e =>
+         e.ID == 404
+         || string.Equals(e.EventName, "Event_404", StringComparison.OrdinalIgnoreCase));
+      if (event404 is null)
+      {
+         return;
+      }
+
+      EventNodeConfiguration? triggerNode = event404.Nodes.FirstOrDefault(n =>
+         string.Equals(n.NodeRole, "Trigger", StringComparison.OrdinalIgnoreCase)
+         || string.Equals(n.NodeName, "Event_404", StringComparison.OrdinalIgnoreCase));
+      if (triggerNode is null || string.IsNullOrWhiteSpace(triggerNode.OpcNode))
+      {
+         return;
+      }
+
+      try
+      {
+         int nextValue = event404Counter == int.MaxValue
+            ? 1
+            : event404Counter + 1;
+         bool chw1 = nextValue % 2 == 1;
+         bool chw2 = true;
+         bool chw3 = nextValue % 4 == 0;
+
+         WriteEventPayloadNode(event404, "Stoerung_ChW1", chw1);
+         WriteEventPayloadNode(event404, "Stoerung_ChW2", chw2);
+         WriteEventPayloadNode(event404, "Stoerung_ChW3", chw3);
+         WriteNode(triggerNode.OpcNode, nextValue);
+
+         event404Counter = nextValue;
+         event404SendFailures = 0;
+
+         if (event404Counter == 1 || event404Counter % 60 == 0)
+         {
+            Log($"0716|Event_404 Stoerung gesendet. Zaehler={event404Counter}, Stoerung_ChW1={chw1}, Stoerung_ChW2={chw2}, Stoerung_ChW3={chw3}.");
+         }
+      }
+      catch (Exception ex)
+      {
+         event404SendFailures++;
+
+         if (event404SendFailures == 1 || event404SendFailures % 60 == 0)
+         {
+            LogWarning($"0717|Event_404 konnte nicht geschrieben werden. Fehler={ex.GetType().Name}: {ex.Message}");
+         }
+      }
+   }
+
+   private void SendEvent405GattierungAbgeschlossen()
+   {
+      if (opcClient is not { State: OpcClientState.Connected })
+      {
+         return;
+      }
+
+      EventConfiguration? event405 = events.FirstOrDefault(e =>
+         e.ID == 405
+         || string.Equals(e.EventName, "Event_405", StringComparison.OrdinalIgnoreCase));
+      if (event405 is null)
+      {
+         return;
+      }
+
+      EventNodeConfiguration? triggerNode = event405.Nodes.FirstOrDefault(n =>
+         string.Equals(n.NodeRole, "Trigger", StringComparison.OrdinalIgnoreCase)
+         || string.Equals(n.NodeName, "Event_405", StringComparison.OrdinalIgnoreCase));
+      if (triggerNode is null || string.IsNullOrWhiteSpace(triggerNode.OpcNode))
+      {
+         return;
+      }
+
+      try
+      {
+         int nextValue = event405Counter == int.MaxValue
+            ? 1
+            : event405Counter + 1;
+
+         WriteEventPayloadNode(event405, "GattierungAbgeschl", true);
+         WriteEventPayloadNode(event405, "C", 0.02f + (nextValue % 10) / 1000f);
+         WriteEventPayloadNode(event405, "Si", 0.05f + (nextValue % 10) / 1000f);
+         WriteEventPayloadNode(event405, "MN", 0.30f + (nextValue % 10) / 1000f);
+         WriteEventPayloadNode(event405, "Cu", 0.04f + (nextValue % 10) / 1000f);
+         WriteEventPayloadNode(event405, "ChW_ID", 1);
+         WriteEventPayloadNode(event405, "AuftragsNr", 100000 + nextValue);
+         WriteNode(triggerNode.OpcNode, nextValue);
+
+         event405Counter = nextValue;
+         event405SendFailures = 0;
+
+         if (event405Counter == 1 || event405Counter % 60 == 0)
+         {
+            Log($"0718|Event_405 Gattierung abgeschlossen gesendet. Zaehler={event405Counter}, Auftrag={100000 + nextValue}.");
+         }
+      }
+      catch (Exception ex)
+      {
+         event405SendFailures++;
+
+         if (event405SendFailures == 1 || event405SendFailures % 60 == 0)
+         {
+            LogWarning($"0719|Event_405 konnte nicht geschrieben werden. Fehler={ex.GetType().Name}: {ex.Message}");
+         }
+      }
+   }
+
+   private void WriteEventPayloadNode(
+      EventConfiguration eventConfiguration,
+      string nodeName,
+      object value)
+   {
+      EventNodeConfiguration? node = eventConfiguration.Nodes.FirstOrDefault(n =>
+         string.Equals(n.NodeName, nodeName, StringComparison.OrdinalIgnoreCase));
+      if (node is null || string.IsNullOrWhiteSpace(node.OpcNode))
+      {
+         return;
+      }
+
+      WriteNode(node.OpcNode, value);
+   }
+
+   private void WriteNode(string opcNode, object value)
+   {
+      OpcStatus status = opcClient!.WriteNode(opcNode, value);
+      if (status.IsBad)
+      {
+         throw new InvalidOperationException(
+            $"OPC-Schreiben fehlgeschlagen. Node={opcNode}, Status={status.Code}, Beschreibung={status.Description}");
+      }
+   }
+
    private void RefreshEventView()
    {
       EventList.ItemsSource = events
@@ -284,6 +580,10 @@ public partial class MainWindow : Window
    {
       disposed = true;
       reconnectCancellation.Cancel();
+      event402Timer.Stop();
+      event403Timer.Stop();
+      event404Timer.Stop();
+      event405Timer.Stop();
       opcClient?.Disconnect();
       opcClient?.Dispose();
       reconnectCancellation.Dispose();

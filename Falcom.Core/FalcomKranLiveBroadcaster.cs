@@ -27,6 +27,8 @@ public sealed class FalcomKranLiveBroadcaster : BackgroundService
    {
       liveStatusService.SpsLebensZaehlerChanged += OnSpsLebensZaehlerChanged;
       liveStatusService.KranPositionChanged += OnKranPositionChanged;
+      liveStatusService.CwIstgewichteChanged += OnCwIstgewichteChanged;
+      liveStatusService.CwStoerungenChanged += OnCwStoerungenChanged;
       liveStatusService.KranOpcEventChanged += OnKranOpcEventChanged;
 
       try
@@ -47,6 +49,8 @@ public sealed class FalcomKranLiveBroadcaster : BackgroundService
       {
          liveStatusService.SpsLebensZaehlerChanged -= OnSpsLebensZaehlerChanged;
          liveStatusService.KranPositionChanged -= OnKranPositionChanged;
+         liveStatusService.CwIstgewichteChanged -= OnCwIstgewichteChanged;
+         liveStatusService.CwStoerungenChanged -= OnCwStoerungenChanged;
          liveStatusService.KranOpcEventChanged -= OnKranOpcEventChanged;
       }
    }
@@ -59,6 +63,16 @@ public sealed class FalcomKranLiveBroadcaster : BackgroundService
    private void OnKranPositionChanged(KranPositionSnapshot snapshot)
    {
       updates.Writer.TryWrite(new LiveUpdate("KranPosition", snapshot));
+   }
+
+   private void OnCwIstgewichteChanged(CwIstgewichteSnapshot snapshot)
+   {
+      updates.Writer.TryWrite(new LiveUpdate("CwIstgewichte", snapshot));
+   }
+
+   private void OnCwStoerungenChanged(CwStoerungenSnapshot snapshot)
+   {
+      updates.Writer.TryWrite(new LiveUpdate("CwStoerungen", snapshot));
    }
 
    private void OnKranOpcEventChanged(KranOpcEventSnapshot snapshot)

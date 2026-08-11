@@ -13,6 +13,8 @@ namespace Falcom
       private static readonly TimeSpan Event201ReconnectTimeout = TimeSpan.FromSeconds(25);
       private const int Event101Id = 101;
       private const string Event101Direction = "FALCOM->KRAN_SPS";
+      private const int Event301Id = 301;
+      private const string Event301Direction = "FALCOM->CW";
       private const int Event203Id = 203;
       private const string Event203Name = "Event_203";
       private const string Event203Direction = "KRAN_SPS->FALCOM";
@@ -44,6 +46,21 @@ namespace Falcom
       private const string Event206Name = "Event_206";
       private const string Event206Direction = "KRAN_SPS->FALCOM";
       private const string Event206TriggerNodeName = "Event_206";
+      private const string Event401Name = "Event_401";
+      private const string Event401Direction = "CW->FALCOM";
+      private const string Event401TriggerNodeName = "Event_401";
+      private const string Event402Name = "Event_402";
+      private const string Event402Direction = "CW->FALCOM";
+      private const string Event402TriggerNodeName = "Event_402";
+      private const string Event403Name = "Event_403";
+      private const string Event403Direction = "CW->FALCOM";
+      private const string Event403TriggerNodeName = "Event_403";
+      private const string Event404Name = "Event_404";
+      private const string Event404Direction = "CW->FALCOM";
+      private const string Event404TriggerNodeName = "Event_404";
+      private const string Event405Name = "Event_405";
+      private const string Event405Direction = "CW->FALCOM";
+      private const string Event405TriggerNodeName = "Event_405";
       private const int KranfahrtBeendetEventId = 202;
       private const int KranfahrtAuftragEventId = 102;
       private const string KranfahrtAuftragEventName = KranfahrtAuftragEvent.EventName;
@@ -60,6 +77,7 @@ namespace Falcom
       private readonly List<OpcMonitoredItem> monitoredItems = new();
       private readonly string opcServerEndpoint;
       private readonly string event101NodeId;
+      private readonly string event301NodeId;
       private readonly string event201NodeId;
       private readonly Dictionary<string, string> event203OpcNodesByName;
       private readonly Dictionary<string, string> event104OpcNodesByName;
@@ -68,6 +86,11 @@ namespace Falcom
       private readonly Dictionary<string, string> event205OpcNodesByName;
       private readonly Dictionary<string, string> event106OpcNodesByName;
       private readonly Dictionary<string, string> event206OpcNodesByName;
+      private readonly Dictionary<string, string> event401OpcNodesByName;
+      private readonly Dictionary<string, string> event402OpcNodesByName;
+      private readonly Dictionary<string, string> event403OpcNodesByName;
+      private readonly Dictionary<string, string> event404OpcNodesByName;
+      private readonly Dictionary<string, string> event405OpcNodesByName;
       private readonly Dictionary<string, string> kranfahrtAuftragLiveOpcNodesByName;
       private OpcClient? client = null;
       private OpcSubscription? subscription = null;
@@ -99,6 +122,16 @@ namespace Falcom
       private bool event205InitialwertGesehen;
       private int? lastEvent206AnforderungsZaehler;
       private bool event206InitialwertGesehen;
+      private int? lastEvent401AenderungsZaehler;
+      private bool event401InitialwertGesehen;
+      private int? lastEvent402AenderungsZaehler;
+      private bool event402InitialwertGesehen;
+      private int? lastEvent403AenderungsZaehler;
+      private bool event403InitialwertGesehen;
+      private int? lastEvent404AenderungsZaehler;
+      private bool event404InitialwertGesehen;
+      private int? lastEvent405AenderungsZaehler;
+      private bool event405InitialwertGesehen;
       private int? aktuellePosKranX;
       private int? aktuellePosKatzeY;
       private int? aktuellePosHubZ;
@@ -131,6 +164,10 @@ namespace Falcom
             eventName: WatchdogEvent.EventName,
             direction: "FALCOM->KRAN_SPS",
             nodeName: WatchdogEvent.EventName);
+         event301NodeId = LoadRequiredEventOpcNode(
+            eventName: CwWatchdogEvent.EventName,
+            direction: Event301Direction,
+            nodeName: CwWatchdogEvent.EventName);
          event201NodeId = LoadRequiredEventOpcNode(
             eventName: KranSpsLebensZaehlerEvent.EventName,
             direction: "KRAN_SPS->FALCOM",
@@ -156,6 +193,21 @@ namespace Falcom
          event206OpcNodesByName = LoadOptionalEventOpcNodes(
             Event206Name,
             Event206Direction);
+         event401OpcNodesByName = LoadOptionalEventOpcNodes(
+            Event401Name,
+            Event401Direction);
+         event402OpcNodesByName = LoadOptionalEventOpcNodes(
+            Event402Name,
+            Event402Direction);
+         event403OpcNodesByName = LoadOptionalEventOpcNodes(
+            Event403Name,
+            Event403Direction);
+         event404OpcNodesByName = LoadOptionalEventOpcNodes(
+            Event404Name,
+            Event404Direction);
+         event405OpcNodesByName = LoadOptionalEventOpcNodes(
+            Event405Name,
+            Event405Direction);
          kranfahrtAuftragLiveOpcNodesByName = LoadOptionalEventOpcNodes(
             KranfahrtAuftragEventName,
             KranfahrtAuftragDirection);
@@ -522,6 +574,47 @@ namespace Falcom
             return Task.FromResult(
                OpcSendResult.Failed(
                   $"Event_101 konnte nicht an die Kran-SPS gesendet werden. Node={event101NodeId}, Wert={lebensZaehler}, Fehler={ex.GetType().Name}: {ex.Message}"));
+         }
+      }
+
+      public Task<OpcSendResult> SendFalcomCwLebensZaehlerAsync(
+         int lebensZaehler,
+         CancellationToken cancellationToken)
+      {
+         cancellationToken.ThrowIfCancellationRequested();
+
+         try
+         {
+            EnsureConnected();
+
+            lock (_syncRoot)
+            {
+               WriteRequiredNode(event301NodeId, lebensZaehler);
+            }
+
+            _ = _kranLiveSignalRClient.SendKranOpcEventAsync(
+               Event301Id,
+               CwWatchdogEvent.EventName,
+               Event301Direction,
+               CwWatchdogEvent.EventName,
+               lebensZaehler,
+               new Dictionary<string, object?>
+               {
+                  [CwWatchdogEvent.EventName] = lebensZaehler
+               },
+               CancellationToken.None);
+
+            MarkOpcDataFlowAvailable("Verbunden");
+            return Task.FromResult(OpcSendResult.Ok());
+         }
+         catch (Exception ex)
+         {
+            MarkOpcDataFlowUnavailable("Reconnect laeuft", "Event_301 konnte nicht geschrieben werden");
+            StartBackgroundReconnectLoop("Event_301 konnte nicht geschrieben werden");
+
+            return Task.FromResult(
+               OpcSendResult.Failed(
+                  $"Event_301 konnte nicht an die CW-SPS gesendet werden. Node={event301NodeId}, Wert={lebensZaehler}, Fehler={ex.GetType().Name}: {ex.Message}"));
          }
       }
 
@@ -1197,6 +1290,40 @@ namespace Falcom
          return value is null ? 0 : Convert.ToInt32(value, CultureInfo.InvariantCulture);
       }
 
+      private static int? ConvertToNullableInt32(object? value)
+      {
+         if (value is null)
+         {
+            return null;
+         }
+
+         try
+         {
+            return Convert.ToInt32(value, CultureInfo.InvariantCulture);
+         }
+         catch (Exception)
+         {
+            return null;
+         }
+      }
+
+      private static bool? ConvertToNullableBoolean(object? value)
+      {
+         if (value is null)
+         {
+            return null;
+         }
+
+         try
+         {
+            return Convert.ToBoolean(value, CultureInfo.InvariantCulture);
+         }
+         catch (Exception)
+         {
+            return null;
+         }
+      }
+
       private float ReadRequiredSingleNode(string nodeId)
       {
          object? value = ReadRequiredNodeValue(nodeId);
@@ -1254,10 +1381,172 @@ namespace Falcom
             client?.Connect();
 
             RecreateSubscription();
+            RunStartupOpcNodeReadCheck();
             kranfahrtAuftragZaehlerInitialisiert = false;
 
             _logger.LogInformation("001B|OPC-Verbindung und Kanalregistrierung sind bereit.");
          }
+      }
+
+      private void RunStartupOpcNodeReadCheck()
+      {
+         if (client is null)
+         {
+            _logger.LogWarning("0180|OPC-Startcheck uebersprungen: OPC-Client ist nicht initialisiert.");
+            return;
+         }
+
+         IReadOnlyList<(int EventId, string EventName, string Direction, string Partner, string NodeName, string NodeRole, string OpcNode)> nodes;
+
+         try
+         {
+            nodes = LoadActiveEventOpcNodesForStartupCheck();
+         }
+         catch (Exception ex)
+         {
+            _logger.LogWarning(ex, "0180|OPC-Startcheck uebersprungen: Event-Node-Konfiguration konnte nicht aus der Datenbank gelesen werden.");
+            return;
+         }
+
+         if (nodes.Count == 0)
+         {
+            _logger.LogWarning("0180|OPC-Startcheck uebersprungen: Keine aktiven Event-Nodes in der Datenbank gefunden.");
+            return;
+         }
+
+         int okCount = 0;
+         int failedCount = 0;
+         var failedOpcNodes = new List<string>();
+
+         _logger.LogInformation("0180|OPC-Startcheck gestartet: {Count} aktive Event-Nodes werden testweise gelesen.", nodes.Count);
+
+         foreach ((int eventId, string eventName, string direction, string partner, string nodeName, string nodeRole, string opcNode) in nodes)
+         {
+            if (!IsConfiguredOpcNode(opcNode))
+            {
+               failedCount++;
+               failedOpcNodes.Add(string.IsNullOrWhiteSpace(opcNode) ? "<LEER>" : opcNode);
+               _logger.LogError(
+                  "0182|OPC-Startcheck FEHLER: EventID={EventId}, Event={Event}, Direction={Direction}, Partner={Partner}, NodeName={NodeName}, Rolle={Role}, OPC_Node ist leer oder ungueltig.",
+                  eventId,
+                  eventName,
+                  direction,
+                  partner,
+                  nodeName,
+                  nodeRole);
+               continue;
+            }
+
+            try
+            {
+               OpcValue value = client.ReadNode(opcNode);
+               if (value.Status.IsGood)
+               {
+                  okCount++;
+                  _logger.LogDebug(
+                     "0183|OPC-Startcheck OK: EventID={EventId}, Event={Event}, Direction={Direction}, Partner={Partner}, NodeName={NodeName}, Rolle={Role}, Node={Node}, {Diagnose}.",
+                     eventId,
+                     eventName,
+                     direction,
+                     partner,
+                     nodeName,
+                     nodeRole,
+                     opcNode,
+                     DescribeOpcValue(value));
+                  continue;
+               }
+
+               failedCount++;
+               failedOpcNodes.Add(opcNode);
+               _logger.LogError(
+                  "0182|OPC-Startcheck FEHLER: EventID={EventId}, Event={Event}, Direction={Direction}, Partner={Partner}, NodeName={NodeName}, Rolle={Role}, Node={Node}, {Diagnose}.",
+                  eventId,
+                  eventName,
+                  direction,
+                  partner,
+                  nodeName,
+                  nodeRole,
+                  opcNode,
+                  DescribeOpcValue(value));
+            }
+            catch (Exception ex)
+            {
+               failedCount++;
+               failedOpcNodes.Add(opcNode);
+               _logger.LogError(
+                  ex,
+                  "0182|OPC-Startcheck EXCEPTION: EventID={EventId}, Event={Event}, Direction={Direction}, Partner={Partner}, NodeName={NodeName}, Rolle={Role}, Node={Node}.",
+                  eventId,
+                  eventName,
+                  direction,
+                  partner,
+                  nodeName,
+                  nodeRole,
+                  opcNode);
+            }
+         }
+
+         if (failedCount == 0)
+         {
+            _logger.LogInformation(
+               "0181|OPC-Startcheck abgeschlossen: Alle {OkCount} aktiven Event-Nodes sind lesbar.",
+               okCount);
+            return;
+         }
+
+         _logger.LogError(
+            "0181|OPC-Startcheck abgeschlossen: Lesbar={OkCount}, Fehler={FailedCount}, Gesamt={TotalCount}. Details siehe Logzeilen 0182.",
+            okCount,
+            failedCount,
+            nodes.Count);
+
+         _logger.LogError(
+            "\n{FailedOpcNodes}",
+            string.Join(Environment.NewLine, failedOpcNodes.Distinct(StringComparer.OrdinalIgnoreCase)));
+      }
+
+      private IReadOnlyList<(int EventId, string EventName, string Direction, string Partner, string NodeName, string NodeRole, string OpcNode)> LoadActiveEventOpcNodesForStartupCheck()
+      {
+         var nodes = new List<(int EventId, string EventName, string Direction, string Partner, string NodeName, string NodeRole, string OpcNode)>();
+
+         using SqlConnection connection = new(_configManager.ConnectionString);
+         using SqlCommand command = new(
+            """
+            SELECT
+               e.ID AS EventID,
+               e.EventName,
+               e.Direction,
+               ISNULL(e.Partner, N'') AS Partner,
+               n.NodeName,
+               n.NodeRole,
+               n.OPC_Node
+            FROM dbo.FALCOM_EVENTS e
+            INNER JOIN dbo.FALCOM_EVENT_OPC_NODES n
+               ON n.EventID = e.ID
+            WHERE ISNULL(e.IsActive, 1) = 1
+            ORDER BY e.ID, n.ID
+            """,
+            connection);
+
+         command.CommandType = CommandType.Text;
+         command.CommandTimeout = 30;
+
+         connection.Open();
+         using SqlDataReader reader = command.ExecuteReader();
+
+         while (reader.Read())
+         {
+            nodes.Add((
+               Convert.ToInt32(reader["EventID"], CultureInfo.InvariantCulture),
+               Convert.ToString(reader["EventName"], CultureInfo.InvariantCulture)?.Trim() ?? string.Empty,
+               Convert.ToString(reader["Direction"], CultureInfo.InvariantCulture)?.Trim() ?? string.Empty,
+               Convert.ToString(reader["Partner"], CultureInfo.InvariantCulture)?.Trim() ?? string.Empty,
+               Convert.ToString(reader["NodeName"], CultureInfo.InvariantCulture)?.Trim() ?? string.Empty,
+               Convert.ToString(reader["NodeRole"], CultureInfo.InvariantCulture)?.Trim() ?? string.Empty,
+               Convert.ToString(reader["OPC_Node"], CultureInfo.InvariantCulture)?.Trim() ?? string.Empty));
+         }
+
+         return nodes;
       }
 
       private void RecreateSubscription()
@@ -1329,6 +1618,8 @@ namespace Falcom
          spsDataUnavailable = false;
          spsLebensZaehlerFreigegeben = true;
          _runtimeStatus.SetOpcKranSpsStatus(true, statusText);
+         _runtimeStatus.SetOpcCwSpsStatus(true, statusText);
+         _runtimeStatus.SetOpcEOfenSpsStatus(true, statusText);
       }
 
       private void MarkOpcDataFlowUnavailable(string opcStatusText, string lebensZaehlerStatusText)
@@ -1337,6 +1628,8 @@ namespace Falcom
          spsLebensZaehlerFreigegeben = false;
          _runtimeStatus.SetOpcKranSpsStatus(false, opcStatusText);
          _runtimeStatus.SetSpsLebensZaehlerUnavailable(lebensZaehlerStatusText);
+         _runtimeStatus.SetCwLebensZaehlerUnavailable(opcStatusText);
+         _runtimeStatus.SetEOfenLebensZaehlerUnavailable(opcStatusText);
       }
       private sealed record KranfahrtAuftragOpcNodes(
          string AuftragNummer,
@@ -1540,6 +1833,101 @@ namespace Falcom
          {
             _logger.LogWarning(
                "01F0|Event_206 ist nicht aktiv: Trigger-Node Event_206 ist nicht gueltig konfiguriert.");
+         }
+
+         event401InitialwertGesehen = false;
+         lastEvent401AenderungsZaehler = null;
+         if (event401OpcNodesByName.TryGetValue(Event401TriggerNodeName, out string? event401TriggerNode)
+             && IsConfiguredOpcNode(event401TriggerNode))
+         {
+            var event401Item = new OpcMonitoredItem(event401TriggerNode, OpcAttribute.Value)
+            {
+               Tag = "Event_401.Event_401"
+            };
+            event401Item.DataChangeReceived += HandleDataChange;
+            subscription.AddMonitoredItem(event401Item);
+            monitoredItems.Add(event401Item);
+         }
+         else
+         {
+            _logger.LogWarning(
+               "0317|Event_401 ist nicht aktiv: Trigger-Node Event_401 ist nicht gueltig konfiguriert.");
+         }
+
+         event402InitialwertGesehen = false;
+         lastEvent402AenderungsZaehler = null;
+         if (event402OpcNodesByName.TryGetValue(Event402TriggerNodeName, out string? event402TriggerNode)
+             && IsConfiguredOpcNode(event402TriggerNode))
+         {
+            var event402Item = new OpcMonitoredItem(event402TriggerNode, OpcAttribute.Value)
+            {
+               Tag = "Event_402.Event_402"
+            };
+            event402Item.DataChangeReceived += HandleDataChange;
+            subscription.AddMonitoredItem(event402Item);
+            monitoredItems.Add(event402Item);
+         }
+         else
+         {
+            _logger.LogWarning(
+               "0307|Event_402 ist nicht aktiv: Trigger-Node Event_402 ist nicht gueltig konfiguriert.");
+         }
+
+         event403InitialwertGesehen = false;
+         lastEvent403AenderungsZaehler = null;
+         if (event403OpcNodesByName.TryGetValue(Event403TriggerNodeName, out string? event403TriggerNode)
+             && IsConfiguredOpcNode(event403TriggerNode))
+         {
+            var event403Item = new OpcMonitoredItem(event403TriggerNode, OpcAttribute.Value)
+            {
+               Tag = "Event_403.Event_403"
+            };
+            event403Item.DataChangeReceived += HandleDataChange;
+            subscription.AddMonitoredItem(event403Item);
+            monitoredItems.Add(event403Item);
+         }
+         else
+         {
+            _logger.LogWarning(
+               "030B|Event_403 ist nicht aktiv: Trigger-Node Event_403 ist nicht gueltig konfiguriert.");
+         }
+
+         event404InitialwertGesehen = false;
+         lastEvent404AenderungsZaehler = null;
+         if (event404OpcNodesByName.TryGetValue(Event404TriggerNodeName, out string? event404TriggerNode)
+             && IsConfiguredOpcNode(event404TriggerNode))
+         {
+            var event404Item = new OpcMonitoredItem(event404TriggerNode, OpcAttribute.Value)
+            {
+               Tag = "Event_404.Event_404"
+            };
+            event404Item.DataChangeReceived += HandleDataChange;
+            subscription.AddMonitoredItem(event404Item);
+            monitoredItems.Add(event404Item);
+         }
+         else
+         {
+            _logger.LogWarning(
+               "030F|Event_404 ist nicht aktiv: Trigger-Node Event_404 ist nicht gueltig konfiguriert.");
+         }
+
+         event405InitialwertGesehen = false;
+         lastEvent405AenderungsZaehler = null;
+         if (event405OpcNodesByName.TryGetValue(Event405TriggerNodeName, out string? event405TriggerNode)
+             && IsConfiguredOpcNode(event405TriggerNode))
+         {
+            var event405Item = new OpcMonitoredItem(event405TriggerNode, OpcAttribute.Value)
+            {
+               Tag = "Event_405.Event_405"
+            };
+            event405Item.DataChangeReceived += HandleDataChange;
+            subscription.AddMonitoredItem(event405Item);
+            monitoredItems.Add(event405Item);
+         }
+         else
+         {
+            _logger.LogWarning(
+               "0313|Event_405 ist nicht aktiv: Trigger-Node Event_405 ist nicht gueltig konfiguriert.");
          }
 
          if (TryGetConfiguredKranfahrtAuftragLiveNode(Event102TriggerNodeName, out string telegrammNummerNode))
@@ -1887,6 +2275,41 @@ namespace Falcom
                 && string.Equals(nodeId, triggerNode, StringComparison.Ordinal);
       }
 
+      private bool IsEvent401TriggerNode(string nodeId)
+      {
+         return event401OpcNodesByName.TryGetValue(Event401TriggerNodeName, out string? triggerNode)
+                && IsConfiguredOpcNode(triggerNode)
+                && string.Equals(nodeId, triggerNode, StringComparison.Ordinal);
+      }
+
+      private bool IsEvent402TriggerNode(string nodeId)
+      {
+         return event402OpcNodesByName.TryGetValue(Event402TriggerNodeName, out string? triggerNode)
+                && IsConfiguredOpcNode(triggerNode)
+                && string.Equals(nodeId, triggerNode, StringComparison.Ordinal);
+      }
+
+      private bool IsEvent403TriggerNode(string nodeId)
+      {
+         return event403OpcNodesByName.TryGetValue(Event403TriggerNodeName, out string? triggerNode)
+                && IsConfiguredOpcNode(triggerNode)
+                && string.Equals(nodeId, triggerNode, StringComparison.Ordinal);
+      }
+
+      private bool IsEvent404TriggerNode(string nodeId)
+      {
+         return event404OpcNodesByName.TryGetValue(Event404TriggerNodeName, out string? triggerNode)
+                && IsConfiguredOpcNode(triggerNode)
+                && string.Equals(nodeId, triggerNode, StringComparison.Ordinal);
+      }
+
+      private bool IsEvent405TriggerNode(string nodeId)
+      {
+         return event405OpcNodesByName.TryGetValue(Event405TriggerNodeName, out string? triggerNode)
+                && IsConfiguredOpcNode(triggerNode)
+                && string.Equals(nodeId, triggerNode, StringComparison.Ordinal);
+      }
+
       private void HandleEvent204Trigger(int anforderungsZaehler)
       {
          bool istInitialwert = !event204InitialwertGesehen;
@@ -2093,6 +2516,248 @@ namespace Falcom
          }
       }
 
+      private void HandleEvent402Trigger(int aenderungsZaehler)
+      {
+         bool istInitialwert = !event402InitialwertGesehen;
+         event402InitialwertGesehen = true;
+
+         if (aenderungsZaehler <= 0)
+         {
+            _logger.LogInformation(
+               "0308|Event_402 Trigger ist 0. Lese trotzdem die aktuelle CW-Status-Payload fuer die Produktionsuebersicht.");
+         }
+
+         if (lastEvent402AenderungsZaehler == aenderungsZaehler)
+         {
+            return;
+         }
+
+         lastEvent402AenderungsZaehler = aenderungsZaehler;
+
+         try
+         {
+            _runtimeStatus.SetCwDataReceived("Event_402");
+            Dictionary<string, object?> values = ReadConfiguredEventValues(
+               event402OpcNodesByName,
+               Event402Name);
+
+            values.TryGetValue("Istgew_ChW1", out object? istgewChW1);
+            values.TryGetValue("Istgew_ChW2", out object? istgewChW2);
+            values.TryGetValue("Istgew_ChW3", out object? istgewChW3);
+
+            _ = _kranLiveSignalRClient.SendCwIstgewichteAsync(
+               ConvertToNullableInt32(istgewChW1),
+               ConvertToNullableInt32(istgewChW2),
+               ConvertToNullableInt32(istgewChW3),
+               CancellationToken.None);
+
+            _logger.LogInformation(
+               "0309|Event_402 empfangen und Payload gelesen: AenderungsZaehler={AenderungsZaehler}, Initialwert={IstInitialwert}, Istgew_ChW1={IstgewChW1}, Istgew_ChW2={IstgewChW2}, Istgew_ChW3={IstgewChW3}.",
+               aenderungsZaehler,
+               istInitialwert,
+               istgewChW1,
+               istgewChW2,
+               istgewChW3);
+         }
+         catch (Exception ex)
+         {
+            _logger.LogWarning(
+               ex,
+               "030A|Event_402 wurde getriggert, Payload konnte aber nicht gelesen werden. AenderungsZaehler={AenderungsZaehler}.",
+               aenderungsZaehler);
+         }
+      }
+
+      private void HandleEvent401Trigger(int aenderungsZaehler)
+      {
+         bool istInitialwert = !event401InitialwertGesehen;
+         event401InitialwertGesehen = true;
+
+         if (aenderungsZaehler <= 0)
+         {
+            lastEvent401AenderungsZaehler = aenderungsZaehler;
+            _runtimeStatus.SetCwLebensZaehlerUnavailable("Event_401 Trigger ist 0");
+            _logger.LogInformation(
+               "0318|Event_401 Trigger ist 0 und wird als leeres CW-Lebenszeichen ignoriert.");
+            return;
+         }
+
+         if (lastEvent401AenderungsZaehler == aenderungsZaehler)
+         {
+            return;
+         }
+
+         lastEvent401AenderungsZaehler = aenderungsZaehler;
+
+         _runtimeStatus.SetCwLebensZaehlerReceived(aenderungsZaehler);
+
+         _logger.LogInformation(
+            "0319|Event_401 CW-Lebenszeichen empfangen: Lebenszaehler={Lebenszaehler}, Initialwert={IstInitialwert}.",
+            aenderungsZaehler,
+            istInitialwert);
+      }
+
+      private void SetCwPartnerDataReceived(string statusText)
+      {
+         _runtimeStatus.SetCwDataReceived(statusText);
+      }
+
+      private void HandleEvent403Trigger(int aenderungsZaehler)
+      {
+         bool istInitialwert = !event403InitialwertGesehen;
+         event403InitialwertGesehen = true;
+
+         if (aenderungsZaehler <= 0)
+         {
+            lastEvent403AenderungsZaehler = aenderungsZaehler;
+            _logger.LogInformation(
+               "030C|Event_403 Trigger ist 0 und wird als leere Beladebereit-Meldung ignoriert.");
+            return;
+         }
+
+         if (lastEvent403AenderungsZaehler == aenderungsZaehler)
+         {
+            return;
+         }
+
+         lastEvent403AenderungsZaehler = aenderungsZaehler;
+
+         try
+         {
+            SetCwPartnerDataReceived("Event_403");
+            Dictionary<string, object?> values = ReadConfiguredEventValues(
+               event403OpcNodesByName,
+               Event403Name);
+
+            values.TryGetValue("Beladebereit_ChW1", out object? beladebereitChW1);
+            values.TryGetValue("Beladebereit_ChW2", out object? beladebereitChW2);
+            values.TryGetValue("Beladebereit_ChW3", out object? beladebereitChW3);
+
+            _logger.LogInformation(
+               "030D|Event_403 empfangen und Payload gelesen: AenderungsZaehler={AenderungsZaehler}, Initialwert={IstInitialwert}, Beladebereit_ChW1={BeladebereitChW1}, Beladebereit_ChW2={BeladebereitChW2}, Beladebereit_ChW3={BeladebereitChW3}.",
+               aenderungsZaehler,
+               istInitialwert,
+               beladebereitChW1,
+               beladebereitChW2,
+               beladebereitChW3);
+         }
+         catch (Exception ex)
+         {
+            _logger.LogWarning(
+               ex,
+               "030E|Event_403 wurde getriggert, Payload konnte aber nicht gelesen werden. AenderungsZaehler={AenderungsZaehler}.",
+               aenderungsZaehler);
+         }
+      }
+
+      private void HandleEvent404Trigger(int aenderungsZaehler)
+      {
+         bool istInitialwert = !event404InitialwertGesehen;
+         event404InitialwertGesehen = true;
+
+         if (aenderungsZaehler <= 0)
+         {
+            _logger.LogInformation(
+               "0310|Event_404 Trigger ist 0. Lese trotzdem die aktuelle CW-Stoerungs-Payload fuer die Produktionsuebersicht.");
+         }
+
+         if (lastEvent404AenderungsZaehler == aenderungsZaehler)
+         {
+            return;
+         }
+
+         lastEvent404AenderungsZaehler = aenderungsZaehler;
+
+         try
+         {
+            SetCwPartnerDataReceived("Event_404");
+            Dictionary<string, object?> values = ReadConfiguredEventValues(
+               event404OpcNodesByName,
+               Event404Name);
+
+            values.TryGetValue("Stoerung_ChW1", out object? stoerungChW1);
+            values.TryGetValue("Stoerung_ChW2", out object? stoerungChW2);
+            values.TryGetValue("Stoerung_ChW3", out object? stoerungChW3);
+
+            _ = _kranLiveSignalRClient.SendCwStoerungenAsync(
+               ConvertToNullableBoolean(stoerungChW1),
+               ConvertToNullableBoolean(stoerungChW2),
+               ConvertToNullableBoolean(stoerungChW3),
+               CancellationToken.None);
+
+            _logger.LogInformation(
+               "0311|Event_404 empfangen und Payload gelesen: AenderungsZaehler={AenderungsZaehler}, Initialwert={IstInitialwert}, Stoerung_ChW1={StoerungChW1}, Stoerung_ChW2={StoerungChW2}, Stoerung_ChW3={StoerungChW3}.",
+               aenderungsZaehler,
+               istInitialwert,
+               stoerungChW1,
+               stoerungChW2,
+               stoerungChW3);
+         }
+         catch (Exception ex)
+         {
+            _logger.LogWarning(
+               ex,
+               "0312|Event_404 wurde getriggert, Payload konnte aber nicht gelesen werden. AenderungsZaehler={AenderungsZaehler}.",
+               aenderungsZaehler);
+         }
+      }
+
+      private void HandleEvent405Trigger(int aenderungsZaehler)
+      {
+         bool istInitialwert = !event405InitialwertGesehen;
+         event405InitialwertGesehen = true;
+
+         if (aenderungsZaehler <= 0)
+         {
+            lastEvent405AenderungsZaehler = aenderungsZaehler;
+            _logger.LogInformation(
+               "0314|Event_405 Trigger ist 0 und wird als leere GattierungAbgeschlossen-Meldung ignoriert.");
+            return;
+         }
+
+         if (lastEvent405AenderungsZaehler == aenderungsZaehler)
+         {
+            return;
+         }
+
+         lastEvent405AenderungsZaehler = aenderungsZaehler;
+
+         try
+         {
+            SetCwPartnerDataReceived("Event_405");
+            Dictionary<string, object?> values = ReadConfiguredEventValues(
+               event405OpcNodesByName,
+               Event405Name);
+
+            values.TryGetValue("GattierungAbgeschl", out object? gattierungAbgeschl);
+            values.TryGetValue("C", out object? c);
+            values.TryGetValue("Si", out object? si);
+            values.TryGetValue("MN", out object? mn);
+            values.TryGetValue("Cu", out object? cu);
+            values.TryGetValue("ChW_ID", out object? chwId);
+            values.TryGetValue("AuftragsNr", out object? auftragsNr);
+
+            _logger.LogInformation(
+               "0315|Event_405 empfangen und Payload gelesen: AenderungsZaehler={AenderungsZaehler}, Initialwert={IstInitialwert}, GattierungAbgeschl={GattierungAbgeschl}, C={C}, Si={Si}, MN={MN}, Cu={Cu}, ChW_ID={ChWID}, AuftragsNr={AuftragsNr}.",
+               aenderungsZaehler,
+               istInitialwert,
+               gattierungAbgeschl,
+               c,
+               si,
+               mn,
+               cu,
+               chwId,
+               auftragsNr);
+         }
+         catch (Exception ex)
+         {
+            _logger.LogWarning(
+               ex,
+               "0316|Event_405 wurde getriggert, Payload konnte aber nicht gelesen werden. AenderungsZaehler={AenderungsZaehler}.",
+               aenderungsZaehler);
+         }
+      }
+
       private void EnsureKranfahrtAuftragZaehlerInitialisiert(
          KranfahrtAuftragOpcNodes nodes)
       {
@@ -2254,6 +2919,31 @@ if (string.Equals(
             if (IsEvent206TriggerNode(changedNodeId))
             {
                HandleEvent206Trigger(Convert.ToInt32(neuerZaehlerWert));
+               return;
+            }
+            if (IsEvent401TriggerNode(changedNodeId))
+            {
+               HandleEvent401Trigger(Convert.ToInt32(neuerZaehlerWert));
+               return;
+            }
+            if (IsEvent402TriggerNode(changedNodeId))
+            {
+               HandleEvent402Trigger(Convert.ToInt32(neuerZaehlerWert));
+               return;
+            }
+            if (IsEvent403TriggerNode(changedNodeId))
+            {
+               HandleEvent403Trigger(Convert.ToInt32(neuerZaehlerWert));
+               return;
+            }
+            if (IsEvent404TriggerNode(changedNodeId))
+            {
+               HandleEvent404Trigger(Convert.ToInt32(neuerZaehlerWert));
+               return;
+            }
+            if (IsEvent405TriggerNode(changedNodeId))
+            {
+               HandleEvent405Trigger(Convert.ToInt32(neuerZaehlerWert));
                return;
             }
 
@@ -2551,8 +3241,8 @@ if (string.Equals(
 
          if (e.NewState == OpcClientState.Connected)
          {
-            _runtimeStatus.SetOpcKranSpsStatus(true, "Verbunden");
-            _logger.LogWarning("002B|OPC UA Client erfolgreich verbunden / wiederverbunden!");
+            MarkOpcDataFlowAvailable("Verbunden");
+            _logger.LogInformation("002B|OPC UA Client erfolgreich verbunden / wiederverbunden!");
          }
          else if (e.NewState == OpcClientState.Disconnected)
          {

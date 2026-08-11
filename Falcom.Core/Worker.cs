@@ -15,6 +15,7 @@ namespace Falcom
       private readonly OPC_Client_Crane _opcClientCrane;
       private readonly FalcomEventQueue _eventQueue; // NEU: Die Event-Queue injizieren
       private readonly WatchdogSender _watchdogSender;
+      private readonly CwWatchdogSender _cwWatchdogSender;
       private readonly AktuelleFahrtRepository _aktuelleFahrtRepository;
       private readonly BunkerMaterialRepository _bunkerMaterialRepository;
       private readonly KranPositionenRepository _kranPositionenRepository;
@@ -26,6 +27,9 @@ namespace Falcom
       private int watchdogEventPending;
       private int watchdogValue;
       private int watchdogEventsInCurrentMinute;
+      private int cwWatchdogEventPending;
+      private int cwWatchdogValue;
+      private int cwWatchdogEventsInCurrentMinute;
       private DateTime nextWatchdogSummaryUtc = DateTime.UtcNow.AddMinutes(1);
 
       public Worker(
@@ -34,6 +38,7 @@ namespace Falcom
           OPC_Client_Crane opcClientCrane,
           FalcomEventQueue eventQueue,
           WatchdogSender watchdogSender,
+          CwWatchdogSender cwWatchdogSender,
           AktuelleFahrtRepository aktuelleFahrtRepository,
           BunkerMaterialRepository bunkerMaterialRepository,
           KranPositionenRepository kranPositionenRepository,
@@ -46,6 +51,7 @@ namespace Falcom
          _opcClientCrane = opcClientCrane;
          _eventQueue = eventQueue; // NEU
          _watchdogSender = watchdogSender;
+         _cwWatchdogSender = cwWatchdogSender;
          _aktuelleFahrtRepository = aktuelleFahrtRepository;
          _bunkerMaterialRepository = bunkerMaterialRepository;
          _kranPositionenRepository = kranPositionenRepository;
@@ -104,6 +110,27 @@ namespace Falcom
                            {
                               Interlocked.Exchange(
                                  ref watchdogEventPending,
+                                 0);
+                           }
+
+                           continue;
+                        }
+
+                        if (falcomEvent is CwWatchdogEvent cwWatchdogEvent)
+                        {
+                           try
+                           {
+                              cwWatchdogEventsInCurrentMinute++;
+                              LogCwWatchdogSummaryIfDue(cwWatchdogEvent.LebensZaehler);
+
+                              await _cwWatchdogSender.SendAsync(
+                                 cwWatchdogEvent.LebensZaehler,
+                                 stoppingToken);
+                           }
+                           finally
+                           {
+                              Interlocked.Exchange(
+                                 ref cwWatchdogEventPending,
                                  0);
                            }
 
@@ -519,6 +546,21 @@ namespace Falcom
          nextWatchdogSummaryUtc = nowUtc.AddMinutes(1);
       }
 
+      private void LogCwWatchdogSummaryIfDue(int currentLebensZaehler)
+      {
+         if (currentLebensZaehler != 0 && currentLebensZaehler % 60 != 0)
+         {
+            return;
+         }
+
+         _logger.LogInformation(
+            "0306|CW-Watchdog aktiv. In den letzten ca. 60 Sekunden wurden {WatchdogCount} CW-Watchdog-Events verarbeitet. Aktueller LebensZaehler={LebensZaehler}.",
+            cwWatchdogEventsInCurrentMinute,
+            currentLebensZaehler);
+
+         cwWatchdogEventsInCurrentMinute = 0;
+      }
+
       private void InitializeStateFromDatabase()
       {
          AktuelleFahrtResult aktuelleFahrt =
@@ -613,6 +655,20 @@ namespace Falcom
             await _eventQueue.Writer.WriteAsync(
                new WatchdogEvent(watchdogValue),
                stoppingToken);
+
+            if (Interlocked.CompareExchange(
+               ref cwWatchdogEventPending,
+               1,
+               0) == 0)
+            {
+               await _eventQueue.Writer.WriteAsync(
+                  new CwWatchdogEvent(cwWatchdogValue),
+                  stoppingToken);
+
+               cwWatchdogValue = cwWatchdogValue == int.MaxValue
+                  ? 0
+                  : cwWatchdogValue + 1;
+            }
 
             watchdogValue = watchdogValue == int.MaxValue
                ? 0

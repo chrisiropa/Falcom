@@ -177,7 +177,7 @@ BEGIN
    WHERE b.AuftragID = @ChargierAuftragID
      AND b.BerechnungAktiv = 1
      AND COALESCE(NULLIF(b.BerechnetKg, 0), NULLIF(CONVERT(decimal(18,3), b.Menge), 0), 0) > 0
-   ORDER BY b.PositionsNr ASC, b.ID ASC;
+   ORDER BY COALESCE(b.ChargierReihenfolge, 2147483647) ASC, b.PositionsNr ASC, b.ID ASC;
 
    IF @QuellBoxID IS NULL
    BEGIN
