@@ -74,7 +74,11 @@ namespace Falcom
       private readonly AktuelleFahrtRepository _aktuelleFahrtRepository;
       private readonly FalcomEventQueue _eventQueue; // Privates Feld fuer die Queue
       private readonly object _syncRoot = new();
+      private readonly object _cwSyncRoot = new();
+      private readonly object _eOfenSyncRoot = new();
       private readonly List<OpcMonitoredItem> monitoredItems = new();
+      private readonly List<OpcMonitoredItem> cwMonitoredItems = new();
+      private readonly List<OpcMonitoredItem> eOfenMonitoredItems = new();
       private readonly string opcServerEndpoint;
       private readonly string event101NodeId;
       private readonly string event301NodeId;
@@ -93,7 +97,11 @@ namespace Falcom
       private readonly Dictionary<string, string> event405OpcNodesByName;
       private readonly Dictionary<string, string> kranfahrtAuftragLiveOpcNodesByName;
       private OpcClient? client = null;
+      private OpcClient? cwClient = null;
+      private OpcClient? eOfenClient = null;
       private OpcSubscription? subscription = null;
+      private OpcSubscription? cwSubscription = null;
+      private OpcSubscription? eOfenSubscription = null;
       private bool spsDataUnavailable;
       private volatile bool spsLebensZaehlerFreigegeben;
       private DateTime nextDataFlowErrorLogUtc = DateTime.MinValue;
@@ -105,12 +113,16 @@ namespace Falcom
       private DateTime nextEvent203LogUtc = DateTime.UtcNow.AddMinutes(1);
       private DateTime nextEvent203ConfigurationLogUtc = DateTime.MinValue;
       private DateTime nextBackgroundReconnectLogUtc = DateTime.MinValue;
+      private DateTime nextCwBackgroundReconnectLogUtc = DateTime.MinValue;
+      private DateTime nextEOfenBackgroundReconnectLogUtc = DateTime.MinValue;
       private int kranfahrtAuftragTelegrammNummer;
       private bool kranfahrtAuftragZaehlerInitialisiert;
       private int kranSpsLebensZaehlerEventsInCurrentMinute;
       private int? lastEvent201Value;
       private int event203EventsInCurrentMinute;
       private int backgroundReconnectLoopRunning;
+      private int cwBackgroundReconnectLoopRunning;
+      private int eOfenBackgroundReconnectLoopRunning;
       private int? lastKranfahrtAuftragTelegrammNummer;
       private int? lastKranfahrtBeendetAenderungsZaehler;
       private bool kranfahrtBeendetInitialwertGesehen;
@@ -221,6 +233,8 @@ namespace Falcom
 
          // Client-Instanz das erste Mal erstellen
          CreateClientInstance();
+         CreateCwClientInstance();
+         CreateEOfenClientInstance();
 
          _logger.LogInformation("0011|OPC_Client_Crane initialisiert fuer {OpcServerEndpoint}. Bereit fuer Connect().", opcServerEndpoint);
       }
@@ -244,6 +258,38 @@ namespace Falcom
          this.client.StateChanged += OnClientStateChanged;
       }
 
+      private void CreateCwClientInstance()
+      {
+         if (cwClient is not null)
+         {
+            cwClient.StateChanged -= OnCwClientStateChanged;
+         }
+
+         cwClient = new OpcClient(opcServerEndpoint)
+         {
+            OperationTimeout = 5_000,
+            SessionTimeout = 5_000,
+            ReconnectTimeout = 5_000
+         };
+         cwClient.StateChanged += OnCwClientStateChanged;
+      }
+
+      private void CreateEOfenClientInstance()
+      {
+         if (eOfenClient is not null)
+         {
+            eOfenClient.StateChanged -= OnEOfenClientStateChanged;
+         }
+
+         eOfenClient = new OpcClient(opcServerEndpoint)
+         {
+            OperationTimeout = 5_000,
+            SessionTimeout = 5_000,
+            ReconnectTimeout = 5_000
+         };
+         eOfenClient.StateChanged += OnEOfenClientStateChanged;
+      }
+
       public void Connect()
       {
          ConnectOnce();
@@ -263,7 +309,9 @@ namespace Falcom
                spsLebensZaehlerFreigegeben = false;
                _runtimeStatus.SetSpsLebensZaehlerUnavailable("OPC-Datenfluss wird geprueft");
                ConnectOnce();
-               MarkOpcDataFlowAvailable("Verbunden");
+               TryConnectCwOrStartReconnect("Initialer Verbindungsaufbau");
+               TryConnectEOfenOrStartReconnect("Initialer Verbindungsaufbau");
+               MarkOpcDataFlowChecking("Verbunden, Datenfluss wird geprueft", "Event_201 wird geprueft");
                _logger.LogInformation("0013|OPC-Verbindungsversuch {Attempt} erfolgreich abgeschlossen.", attempt);
                return;
             }
@@ -393,9 +441,9 @@ namespace Falcom
                            if (client is { State: OpcClientState.Connected })
                            {
                               RecreateSubscription();
-                              MarkOpcDataFlowAvailable("Verbunden");
+                              MarkOpcDataFlowChecking("Verbunden, Datenfluss wird geprueft", "Event_201 wird geprueft");
                               _logger.LogInformation(
-                                 "005E|OPC-Hintergrund-Reconnect erfolgreich. Versuch={Attempt}.",
+                                 "005E|OPC-Hintergrund-Reconnect: Subscription neu registriert. Versuch={Attempt}. Warte auf Event_201.",
                                  attempt);
                               return;
                            }
@@ -419,9 +467,9 @@ namespace Falcom
 
                            CreateClientInstance();
                            ConnectOnce();
-                           MarkOpcDataFlowAvailable("Verbunden");
+                           MarkOpcDataFlowChecking("Verbunden, Datenfluss wird geprueft", "Event_201 wird geprueft");
                            _logger.LogInformation(
-                              "0100|OPC-Hintergrund-Reconnect erfolgreich. Versuch={Attempt}.",
+                              "0100|OPC-Hintergrund-Reconnect erfolgreich. Versuch={Attempt}. Warte auf Event_201.",
                               attempt);
                            return;
                         }
@@ -452,6 +500,186 @@ namespace Falcom
                finally
                {
                   Interlocked.Exchange(ref backgroundReconnectLoopRunning, 0);
+               }
+            },
+            backgroundReconnectCancellation.Token);
+      }
+
+      private void StartCwBackgroundReconnectLoop(string reason)
+      {
+         if (disposed || backgroundReconnectCancellation.IsCancellationRequested)
+         {
+            return;
+         }
+
+         if (Interlocked.CompareExchange(
+                ref cwBackgroundReconnectLoopRunning,
+                1,
+                0) != 0)
+         {
+            return;
+         }
+
+         _logger.LogWarning(
+            "0324|CW-OPC-Hintergrund-Reconnect wird gestartet. Grund={Reason}.",
+            reason);
+
+         _ = Task.Run(
+            async () =>
+            {
+               var attempt = 1;
+               CancellationToken cancellationToken = backgroundReconnectCancellation.Token;
+
+               try
+               {
+                  while (!disposed && !cancellationToken.IsCancellationRequested)
+                  {
+                     try
+                     {
+                        lock (_cwSyncRoot)
+                        {
+                           ResetCwSubscription();
+
+                           if (cwClient is not null)
+                           {
+                              try
+                              {
+                                 cwClient.StateChanged -= OnCwClientStateChanged;
+                                 cwClient.Disconnect();
+                              }
+                              catch
+                              {
+                              }
+
+                              cwClient.Dispose();
+                              cwClient = null;
+                           }
+
+                           CreateCwClientInstance();
+                           ConnectCwOnce();
+                           _runtimeStatus.SetOpcCwSpsStatus(true, "Verbunden");
+                           _logger.LogInformation(
+                              "0325|CW-OPC-Hintergrund-Reconnect erfolgreich. Versuch={Attempt}.",
+                              attempt);
+                           return;
+                        }
+                     }
+                     catch (Exception ex)
+                     {
+                        _runtimeStatus.SetCwLebensZaehlerUnavailable("CW Reconnect laeuft");
+
+                        if (DateTime.UtcNow >= nextCwBackgroundReconnectLogUtc)
+                        {
+                           _logger.LogWarning(
+                              "0326|CW-OPC-Hintergrund-Reconnect Versuch={Attempt} noch nicht erfolgreich. Naechster Versuch in {DelaySeconds} Sekunden. Fehler={ExceptionType}: {Message}",
+                              attempt,
+                              ConnectRetryDelay.TotalSeconds,
+                              ex.GetType().Name,
+                              ex.Message);
+                           nextCwBackgroundReconnectLogUtc = DateTime.UtcNow.AddMinutes(1);
+                        }
+                     }
+
+                     attempt++;
+                     await Task.Delay(ConnectRetryDelay, cancellationToken);
+                  }
+               }
+               catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+               {
+               }
+               finally
+               {
+                  Interlocked.Exchange(ref cwBackgroundReconnectLoopRunning, 0);
+               }
+            },
+            backgroundReconnectCancellation.Token);
+      }
+
+      private void StartEOfenBackgroundReconnectLoop(string reason)
+      {
+         if (disposed || backgroundReconnectCancellation.IsCancellationRequested)
+         {
+            return;
+         }
+
+         if (Interlocked.CompareExchange(
+                ref eOfenBackgroundReconnectLoopRunning,
+                1,
+                0) != 0)
+         {
+            return;
+         }
+
+         _logger.LogWarning(
+            "0524|E-Ofen-OPC-Hintergrund-Reconnect wird gestartet. Grund={Reason}.",
+            reason);
+
+         _ = Task.Run(
+            async () =>
+            {
+               var attempt = 1;
+               CancellationToken cancellationToken = backgroundReconnectCancellation.Token;
+
+               try
+               {
+                  while (!disposed && !cancellationToken.IsCancellationRequested)
+                  {
+                     try
+                     {
+                        lock (_eOfenSyncRoot)
+                        {
+                           ResetEOfenSubscription();
+
+                           if (eOfenClient is not null)
+                           {
+                              try
+                              {
+                                 eOfenClient.StateChanged -= OnEOfenClientStateChanged;
+                                 eOfenClient.Disconnect();
+                              }
+                              catch
+                              {
+                              }
+
+                              eOfenClient.Dispose();
+                              eOfenClient = null;
+                           }
+
+                           CreateEOfenClientInstance();
+                           ConnectEOfenOnce();
+                           _runtimeStatus.SetOpcEOfenSpsStatus(true, "Verbunden");
+                           _logger.LogInformation(
+                              "0525|E-Ofen-OPC-Hintergrund-Reconnect erfolgreich. Versuch={Attempt}.",
+                              attempt);
+                           return;
+                        }
+                     }
+                     catch (Exception ex)
+                     {
+                        _runtimeStatus.SetEOfenLebensZaehlerUnavailable("E-Ofen Reconnect laeuft");
+
+                        if (DateTime.UtcNow >= nextEOfenBackgroundReconnectLogUtc)
+                        {
+                           _logger.LogWarning(
+                              "0526|E-Ofen-OPC-Hintergrund-Reconnect Versuch={Attempt} noch nicht erfolgreich. Naechster Versuch in {DelaySeconds} Sekunden. Fehler={ExceptionType}: {Message}",
+                              attempt,
+                              ConnectRetryDelay.TotalSeconds,
+                              ex.GetType().Name,
+                              ex.Message);
+                           nextEOfenBackgroundReconnectLogUtc = DateTime.UtcNow.AddMinutes(1);
+                        }
+                     }
+
+                     attempt++;
+                     await Task.Delay(ConnectRetryDelay, cancellationToken);
+                  }
+               }
+               catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+               {
+               }
+               finally
+               {
+                  Interlocked.Exchange(ref eOfenBackgroundReconnectLoopRunning, 0);
                }
             },
             backgroundReconnectCancellation.Token);
@@ -563,7 +791,6 @@ namespace Falcom
                },
                CancellationToken.None);
 
-            MarkOpcDataFlowAvailable("Verbunden");
             return Task.FromResult(OpcSendResult.Ok());
          }
          catch (Exception ex)
@@ -585,11 +812,11 @@ namespace Falcom
 
          try
          {
-            EnsureConnected();
+            EnsureCwConnected();
 
-            lock (_syncRoot)
+            lock (_cwSyncRoot)
             {
-               WriteRequiredNode(event301NodeId, lebensZaehler);
+               WriteRequiredNode(cwClient!, event301NodeId, lebensZaehler);
             }
 
             _ = _kranLiveSignalRClient.SendKranOpcEventAsync(
@@ -604,13 +831,13 @@ namespace Falcom
                },
                CancellationToken.None);
 
-            MarkOpcDataFlowAvailable("Verbunden");
+            _runtimeStatus.SetOpcCwSpsStatus(true, "Verbunden");
             return Task.FromResult(OpcSendResult.Ok());
          }
          catch (Exception ex)
          {
-            MarkOpcDataFlowUnavailable("Reconnect laeuft", "Event_301 konnte nicht geschrieben werden");
-            StartBackgroundReconnectLoop("Event_301 konnte nicht geschrieben werden");
+            _runtimeStatus.SetCwLebensZaehlerUnavailable("Event_301 konnte nicht geschrieben werden");
+            StartCwBackgroundReconnectLoop("Event_301 konnte nicht geschrieben werden");
 
             return Task.FromResult(
                OpcSendResult.Failed(
@@ -991,6 +1218,36 @@ namespace Falcom
          }
       }
 
+      private void EnsureCwConnected()
+      {
+         lock (_cwSyncRoot)
+         {
+            if (cwClient is { State: OpcClientState.Connected })
+            {
+               return;
+            }
+
+            _logger.LogInformation(
+               "0322|OPC-CW-Client ist nicht verbunden. Verbindung wird vor der CW-Operation aufgebaut.");
+            ConnectCwOnce();
+         }
+      }
+
+      private void EnsureEOfenConnected()
+      {
+         lock (_eOfenSyncRoot)
+         {
+            if (eOfenClient is { State: OpcClientState.Connected })
+            {
+               return;
+            }
+
+            _logger.LogInformation(
+               "0522|OPC-E-Ofen-Client ist nicht verbunden. Verbindung wird vor der E-Ofen-Operation aufgebaut.");
+            ConnectEOfenOnce();
+         }
+      }
+
       private KranfahrtAuftragOpcNodes? LoadKranfahrtAuftragOpcNodes()
       {
          Dictionary<string, string> opcNodes = new(StringComparer.OrdinalIgnoreCase);
@@ -1253,11 +1510,16 @@ namespace Falcom
 
       private void WriteRequiredNode(string nodeId, object value)
       {
+         WriteRequiredNode(client!, nodeId, value);
+      }
+
+      private void WriteRequiredNode(OpcClient targetClient, string nodeId, object value)
+      {
          _logger.LogInformation(
             "0051|OPC Senden: Node={Node}, Wert={Value}",
             nodeId,
             value);
-         OpcStatus status = client!.WriteNode(nodeId, value);
+         OpcStatus status = targetClient.WriteNode(nodeId, value);
 
          if (status.IsBad)
          {
@@ -1385,6 +1647,82 @@ namespace Falcom
             kranfahrtAuftragZaehlerInitialisiert = false;
 
             _logger.LogInformation("001B|OPC-Verbindung und Kanalregistrierung sind bereit.");
+         }
+      }
+
+      private void TryConnectCwOrStartReconnect(string reason)
+      {
+         try
+         {
+            ConnectCwOnce();
+         }
+         catch (Exception ex)
+         {
+            _runtimeStatus.SetCwLebensZaehlerUnavailable("CW Reconnect laeuft");
+            _logger.LogWarning(
+               ex,
+               "032B|CW-OPC-Verbindung konnte nicht aufgebaut werden. Hintergrund-Reconnect wird gestartet. Grund={Reason}.",
+               reason);
+            StartCwBackgroundReconnectLoop(reason);
+         }
+      }
+
+      private void TryConnectEOfenOrStartReconnect(string reason)
+      {
+         try
+         {
+            ConnectEOfenOnce();
+         }
+         catch (Exception ex)
+         {
+            _runtimeStatus.SetEOfenLebensZaehlerUnavailable("E-Ofen Reconnect laeuft");
+            _logger.LogWarning(
+               ex,
+               "052B|E-Ofen-OPC-Verbindung konnte nicht aufgebaut werden. Hintergrund-Reconnect wird gestartet. Grund={Reason}.",
+               reason);
+            StartEOfenBackgroundReconnectLoop(reason);
+         }
+      }
+
+      private void ConnectCwOnce()
+      {
+         if (disposed)
+         {
+            throw new ObjectDisposedException(nameof(OPC_Client_Crane));
+         }
+
+         lock (_cwSyncRoot)
+         {
+            ResetCwSubscription();
+
+            _logger.LogInformation("0320|Verbindung zur CW-SPS ueber {OpcServerEndpoint} wird aufgebaut.", opcServerEndpoint);
+            cwClient?.Connect();
+
+            RecreateCwSubscription();
+            _runtimeStatus.SetOpcCwSpsStatus(true, "Verbunden");
+
+            _logger.LogInformation("0321|CW-OPC-Verbindung und Kanalregistrierung sind bereit.");
+         }
+      }
+
+      private void ConnectEOfenOnce()
+      {
+         if (disposed)
+         {
+            throw new ObjectDisposedException(nameof(OPC_Client_Crane));
+         }
+
+         lock (_eOfenSyncRoot)
+         {
+            ResetEOfenSubscription();
+
+            _logger.LogInformation("0520|Verbindung zur E-Ofen-SPS ueber {OpcServerEndpoint} wird aufgebaut.", opcServerEndpoint);
+            eOfenClient?.Connect();
+
+            eOfenSubscription = eOfenClient?.SubscribeNodes();
+            _runtimeStatus.SetOpcEOfenSpsStatus(true, "Verbunden");
+
+            _logger.LogInformation("0521|E-Ofen-OPC-Verbindung ist bereit.");
          }
       }
 
@@ -1554,10 +1892,93 @@ namespace Falcom
          ResetSubscription();
          subscription = client?.SubscribeNodes();
          subscriptionCreatedUtc = DateTime.UtcNow;
+         lastEvent201ReceivedUtc = DateTime.MinValue;
+         event201WatchdogFaultStartedUtc = DateTime.MinValue;
+         nextEvent201WatchdogLogUtc = DateTime.MinValue;
 
          if (!ConnectChannels())
          {
             throw new InvalidOperationException("OPC-Kanal 'Zaehler' konnte nicht registriert werden.");
+         }
+      }
+
+      private void RecreateCwSubscription()
+      {
+         ResetCwSubscription();
+         cwSubscription = cwClient?.SubscribeNodes();
+
+         if (!ConnectCwChannels())
+         {
+            throw new InvalidOperationException("OPC-Kanal 'CW' konnte nicht registriert werden.");
+         }
+      }
+
+      private bool ConnectCwChannels()
+      {
+         if (cwSubscription == null || cwClient == null)
+         {
+            return false;
+         }
+
+         AddCwMonitoredTrigger(Event401Name, Event401TriggerNodeName, event401OpcNodesByName, "0317");
+         AddCwMonitoredTrigger(Event402Name, Event402TriggerNodeName, event402OpcNodesByName, "0307");
+         AddCwMonitoredTrigger(Event403Name, Event403TriggerNodeName, event403OpcNodesByName, "030B");
+         AddCwMonitoredTrigger(Event404Name, Event404TriggerNodeName, event404OpcNodesByName, "030F");
+         AddCwMonitoredTrigger(Event405Name, Event405TriggerNodeName, event405OpcNodesByName, "0313");
+
+         return cwMonitoredItems.Count > 0;
+      }
+
+      private void AddCwMonitoredTrigger(
+         string eventName,
+         string triggerNodeName,
+         IReadOnlyDictionary<string, string> opcNodesByName,
+         string logCode)
+      {
+         if (string.Equals(eventName, Event401Name, StringComparison.OrdinalIgnoreCase))
+         {
+            event401InitialwertGesehen = false;
+            lastEvent401AenderungsZaehler = null;
+         }
+         else if (string.Equals(eventName, Event402Name, StringComparison.OrdinalIgnoreCase))
+         {
+            event402InitialwertGesehen = false;
+            lastEvent402AenderungsZaehler = null;
+         }
+         else if (string.Equals(eventName, Event403Name, StringComparison.OrdinalIgnoreCase))
+         {
+            event403InitialwertGesehen = false;
+            lastEvent403AenderungsZaehler = null;
+         }
+         else if (string.Equals(eventName, Event404Name, StringComparison.OrdinalIgnoreCase))
+         {
+            event404InitialwertGesehen = false;
+            lastEvent404AenderungsZaehler = null;
+         }
+         else if (string.Equals(eventName, Event405Name, StringComparison.OrdinalIgnoreCase))
+         {
+            event405InitialwertGesehen = false;
+            lastEvent405AenderungsZaehler = null;
+         }
+
+         if (opcNodesByName.TryGetValue(triggerNodeName, out string? triggerNode)
+             && IsConfiguredOpcNode(triggerNode))
+         {
+            var item = new OpcMonitoredItem(triggerNode, OpcAttribute.Value)
+            {
+               Tag = $"{eventName}.{triggerNodeName}"
+            };
+            item.DataChangeReceived += HandleDataChange;
+            cwSubscription!.AddMonitoredItem(item);
+            cwMonitoredItems.Add(item);
+         }
+         else
+         {
+            _logger.LogWarning(
+               "{LogCode}|{EventName} ist nicht aktiv: Trigger-Node {TriggerNodeName} ist nicht gueltig konfiguriert.",
+               logCode,
+               eventName,
+               triggerNodeName);
          }
       }
 
@@ -1570,18 +1991,19 @@ namespace Falcom
 
          if (referenceUtc == DateTime.MinValue)
          {
-            return true;
+            return false;
          }
 
          TimeSpan age = nowUtc - referenceUtc;
          bool initialWait = lastEvent201ReceivedUtc == DateTime.MinValue;
-         TimeSpan warningTimeout = initialWait
+         TimeSpan reconnectTimeout = initialWait
             ? Event201StartupGracePeriod
             : Event201ReconnectTimeout;
 
-         if (age < warningTimeout && event201WatchdogFaultStartedUtc == DateTime.MinValue)
+         if (age < reconnectTimeout)
          {
-            return true;
+            event201WatchdogFaultStartedUtc = DateTime.MinValue;
+            return !initialWait;
          }
 
          if (event201WatchdogFaultStartedUtc == DateTime.MinValue)
@@ -1589,19 +2011,10 @@ namespace Falcom
             event201WatchdogFaultStartedUtc = nowUtc;
          }
 
-         TimeSpan faultAge = nowUtc - event201WatchdogFaultStartedUtc;
-
-         if (faultAge >= Event201ReconnectTimeout)
-         {
-            MarkOpcDataFlowUnavailable("Reconnect laeuft", "Event_201 bleibt aus");
-            throw new InvalidOperationException(
-               $"Event_201 wurde seit {age.TotalSeconds:F0} Sekunden nicht empfangen. Radikaler Reconnect wird gestartet.");
-         }
-
          if (nowUtc >= nextEvent201WatchdogLogUtc)
          {
-            _logger.LogWarning(
-               "0061|Event_201 Subscription-Watchdog: Seit {AgeSeconds:F0} Sekunden kein SPS-Lebenszaehler empfangen. Warte auf DataChange bis zum radikalen Reconnect. Node={Node}, LetzterWert={LastValue}, Initialphase={InitialWait}.",
+            _logger.LogError(
+               "0061|Event_201 Subscription-Watchdog: Seit {AgeSeconds:F0} Sekunden kein SPS-Lebenszaehler empfangen. Radikaler Reconnect wird gestartet. Node={Node}, LetzterWert={LastValue}, Initialphase={InitialWait}.",
                age.TotalSeconds,
                event201NodeId,
                lastEvent201Value,
@@ -1609,8 +2022,9 @@ namespace Falcom
             nextEvent201WatchdogLogUtc = nowUtc.AddSeconds(30);
          }
 
-         MarkOpcDataFlowUnavailable("OPC-Datenfluss wird geprueft", "Event_201 bleibt aus");
-         return false;
+         MarkOpcDataFlowUnavailable("Reconnect laeuft", "Event_201 bleibt aus");
+         throw new InvalidOperationException(
+            $"Event_201 wurde seit {age.TotalSeconds:F0} Sekunden nicht empfangen. Radikaler Reconnect wird gestartet.");
       }
 
       private void MarkOpcDataFlowAvailable(string statusText)
@@ -1618,8 +2032,14 @@ namespace Falcom
          spsDataUnavailable = false;
          spsLebensZaehlerFreigegeben = true;
          _runtimeStatus.SetOpcKranSpsStatus(true, statusText);
-         _runtimeStatus.SetOpcCwSpsStatus(true, statusText);
-         _runtimeStatus.SetOpcEOfenSpsStatus(true, statusText);
+      }
+
+      private void MarkOpcDataFlowChecking(string opcStatusText, string lebensZaehlerStatusText)
+      {
+         spsDataUnavailable = true;
+         spsLebensZaehlerFreigegeben = false;
+         _runtimeStatus.SetOpcKranSpsStatus(true, opcStatusText);
+         _runtimeStatus.SetSpsLebensZaehlerUnavailable(lebensZaehlerStatusText);
       }
 
       private void MarkOpcDataFlowUnavailable(string opcStatusText, string lebensZaehlerStatusText)
@@ -1628,8 +2048,6 @@ namespace Falcom
          spsLebensZaehlerFreigegeben = false;
          _runtimeStatus.SetOpcKranSpsStatus(false, opcStatusText);
          _runtimeStatus.SetSpsLebensZaehlerUnavailable(lebensZaehlerStatusText);
-         _runtimeStatus.SetCwLebensZaehlerUnavailable(opcStatusText);
-         _runtimeStatus.SetEOfenLebensZaehlerUnavailable(opcStatusText);
       }
       private sealed record KranfahrtAuftragOpcNodes(
          string AuftragNummer,
@@ -1699,6 +2117,9 @@ namespace Falcom
                _logger.LogError(ex, "001F|Fehler beim Herunterfahren des OPC_Client_Crane.");
             }
          }
+
+         DisconnectCwClient();
+         DisconnectEOfenClient();
       }
 
       public void Dispose()
@@ -1719,6 +2140,85 @@ namespace Falcom
             backgroundReconnectCancellation.Cancel();
             backgroundReconnectCancellation.Dispose();
             disposed = true;
+         }
+
+         DisposeCwClient();
+         DisposeEOfenClient();
+      }
+
+      private void DisconnectCwClient()
+      {
+         lock (_cwSyncRoot)
+         {
+            try
+            {
+               ResetCwSubscription();
+
+               if (cwClient is not null)
+               {
+                  cwClient.StateChanged -= OnCwClientStateChanged;
+                  cwClient.Disconnect();
+               }
+            }
+            catch (Exception ex)
+            {
+               _logger.LogError(ex, "032C|Fehler beim Trennen des CW-OPC-Clients.");
+            }
+         }
+      }
+
+      private void DisconnectEOfenClient()
+      {
+         lock (_eOfenSyncRoot)
+         {
+            try
+            {
+               ResetEOfenSubscription();
+
+               if (eOfenClient is not null)
+               {
+                  eOfenClient.StateChanged -= OnEOfenClientStateChanged;
+                  eOfenClient.Disconnect();
+               }
+            }
+            catch (Exception ex)
+            {
+               _logger.LogError(ex, "052C|Fehler beim Trennen des E-Ofen-OPC-Clients.");
+            }
+         }
+      }
+
+      private void DisposeCwClient()
+      {
+         lock (_cwSyncRoot)
+         {
+            ResetCwSubscription();
+
+            if (cwClient is null)
+            {
+               return;
+            }
+
+            cwClient.StateChanged -= OnCwClientStateChanged;
+            cwClient.Dispose();
+            cwClient = null;
+         }
+      }
+
+      private void DisposeEOfenClient()
+      {
+         lock (_eOfenSyncRoot)
+         {
+            ResetEOfenSubscription();
+
+            if (eOfenClient is null)
+            {
+               return;
+            }
+
+            eOfenClient.StateChanged -= OnEOfenClientStateChanged;
+            eOfenClient.Dispose();
+            eOfenClient = null;
          }
       }
 
@@ -1751,6 +2251,68 @@ namespace Falcom
          }
 
          subscription = null;
+      }
+
+      private void ResetCwSubscription()
+      {
+         if (cwSubscription is null)
+         {
+            cwMonitoredItems.Clear();
+            return;
+         }
+
+         foreach (OpcMonitoredItem item in cwMonitoredItems)
+         {
+            item.DataChangeReceived -= HandleDataChange;
+         }
+
+         if (cwMonitoredItems.Count > 0)
+         {
+            try
+            {
+               cwSubscription.RemoveMonitoredItem(cwMonitoredItems);
+               cwSubscription.ApplyChanges();
+            }
+            catch (Exception ex)
+            {
+               _logger.LogDebug(ex, "0323|Alte CW-Subscription konnte wegen totem Kanal nicht sauber entfernt werden. Wird erzwungen.");
+            }
+
+            cwMonitoredItems.Clear();
+         }
+
+         cwSubscription = null;
+      }
+
+      private void ResetEOfenSubscription()
+      {
+         if (eOfenSubscription is null)
+         {
+            eOfenMonitoredItems.Clear();
+            return;
+         }
+
+         foreach (OpcMonitoredItem item in eOfenMonitoredItems)
+         {
+            item.DataChangeReceived -= HandleDataChange;
+         }
+
+         if (eOfenMonitoredItems.Count > 0)
+         {
+            try
+            {
+               eOfenSubscription.RemoveMonitoredItem(eOfenMonitoredItems);
+               eOfenSubscription.ApplyChanges();
+            }
+            catch (Exception ex)
+            {
+               _logger.LogDebug(ex, "0523|Alte E-Ofen-Subscription konnte wegen totem Kanal nicht sauber entfernt werden. Wird erzwungen.");
+            }
+
+            eOfenMonitoredItems.Clear();
+         }
+
+         eOfenSubscription = null;
       }
 
       public Boolean ConnectChannels()
@@ -1833,101 +2395,6 @@ namespace Falcom
          {
             _logger.LogWarning(
                "01F0|Event_206 ist nicht aktiv: Trigger-Node Event_206 ist nicht gueltig konfiguriert.");
-         }
-
-         event401InitialwertGesehen = false;
-         lastEvent401AenderungsZaehler = null;
-         if (event401OpcNodesByName.TryGetValue(Event401TriggerNodeName, out string? event401TriggerNode)
-             && IsConfiguredOpcNode(event401TriggerNode))
-         {
-            var event401Item = new OpcMonitoredItem(event401TriggerNode, OpcAttribute.Value)
-            {
-               Tag = "Event_401.Event_401"
-            };
-            event401Item.DataChangeReceived += HandleDataChange;
-            subscription.AddMonitoredItem(event401Item);
-            monitoredItems.Add(event401Item);
-         }
-         else
-         {
-            _logger.LogWarning(
-               "0317|Event_401 ist nicht aktiv: Trigger-Node Event_401 ist nicht gueltig konfiguriert.");
-         }
-
-         event402InitialwertGesehen = false;
-         lastEvent402AenderungsZaehler = null;
-         if (event402OpcNodesByName.TryGetValue(Event402TriggerNodeName, out string? event402TriggerNode)
-             && IsConfiguredOpcNode(event402TriggerNode))
-         {
-            var event402Item = new OpcMonitoredItem(event402TriggerNode, OpcAttribute.Value)
-            {
-               Tag = "Event_402.Event_402"
-            };
-            event402Item.DataChangeReceived += HandleDataChange;
-            subscription.AddMonitoredItem(event402Item);
-            monitoredItems.Add(event402Item);
-         }
-         else
-         {
-            _logger.LogWarning(
-               "0307|Event_402 ist nicht aktiv: Trigger-Node Event_402 ist nicht gueltig konfiguriert.");
-         }
-
-         event403InitialwertGesehen = false;
-         lastEvent403AenderungsZaehler = null;
-         if (event403OpcNodesByName.TryGetValue(Event403TriggerNodeName, out string? event403TriggerNode)
-             && IsConfiguredOpcNode(event403TriggerNode))
-         {
-            var event403Item = new OpcMonitoredItem(event403TriggerNode, OpcAttribute.Value)
-            {
-               Tag = "Event_403.Event_403"
-            };
-            event403Item.DataChangeReceived += HandleDataChange;
-            subscription.AddMonitoredItem(event403Item);
-            monitoredItems.Add(event403Item);
-         }
-         else
-         {
-            _logger.LogWarning(
-               "030B|Event_403 ist nicht aktiv: Trigger-Node Event_403 ist nicht gueltig konfiguriert.");
-         }
-
-         event404InitialwertGesehen = false;
-         lastEvent404AenderungsZaehler = null;
-         if (event404OpcNodesByName.TryGetValue(Event404TriggerNodeName, out string? event404TriggerNode)
-             && IsConfiguredOpcNode(event404TriggerNode))
-         {
-            var event404Item = new OpcMonitoredItem(event404TriggerNode, OpcAttribute.Value)
-            {
-               Tag = "Event_404.Event_404"
-            };
-            event404Item.DataChangeReceived += HandleDataChange;
-            subscription.AddMonitoredItem(event404Item);
-            monitoredItems.Add(event404Item);
-         }
-         else
-         {
-            _logger.LogWarning(
-               "030F|Event_404 ist nicht aktiv: Trigger-Node Event_404 ist nicht gueltig konfiguriert.");
-         }
-
-         event405InitialwertGesehen = false;
-         lastEvent405AenderungsZaehler = null;
-         if (event405OpcNodesByName.TryGetValue(Event405TriggerNodeName, out string? event405TriggerNode)
-             && IsConfiguredOpcNode(event405TriggerNode))
-         {
-            var event405Item = new OpcMonitoredItem(event405TriggerNode, OpcAttribute.Value)
-            {
-               Tag = "Event_405.Event_405"
-            };
-            event405Item.DataChangeReceived += HandleDataChange;
-            subscription.AddMonitoredItem(event405Item);
-            monitoredItems.Add(event405Item);
-         }
-         else
-         {
-            _logger.LogWarning(
-               "0313|Event_405 ist nicht aktiv: Trigger-Node Event_405 ist nicht gueltig konfiguriert.");
          }
 
          if (TryGetConfiguredKranfahrtAuftragLiveNode(Event102TriggerNodeName, out string telegrammNummerNode))
@@ -2161,7 +2628,20 @@ namespace Falcom
          string variable,
          string opcNode)
       {
-         OpcValue value = client!.ReadNode(opcNode);
+         return ReadRequiredOpcPayloadWithNullRetry(
+            client!,
+            eventName,
+            variable,
+            opcNode);
+      }
+
+      private OpcValue ReadRequiredOpcPayloadWithNullRetry(
+         OpcClient targetClient,
+         string eventName,
+         string variable,
+         string opcNode)
+      {
+         OpcValue value = targetClient.ReadNode(opcNode);
 
          if (!value.Status.IsGood)
          {
@@ -2183,7 +2663,7 @@ namespace Falcom
 
          System.Threading.Thread.Sleep(500);
 
-         OpcValue retryValue = client.ReadNode(opcNode);
+         OpcValue retryValue = targetClient.ReadNode(opcNode);
 
          if (!retryValue.Status.IsGood)
          {
@@ -2227,32 +2707,64 @@ namespace Falcom
          IReadOnlyDictionary<string, string> opcNodesByName,
          string eventName = "KonfiguriertesOPCEvent")
       {
+         return ReadConfiguredEventValues(
+            client!,
+            opcNodesByName,
+            eventName);
+      }
+
+      private Dictionary<string, object?> ReadConfiguredEventValues(
+         OpcClient targetClient,
+         IReadOnlyDictionary<string, string> opcNodesByName,
+         string eventName = "KonfiguriertesOPCEvent")
+      {
          var values = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
 
-         if (client is null)
+         if (targetClient is null)
          {
             throw new InvalidOperationException("OPC-Client ist nicht initialisiert. Eventwerte konnten nicht gelesen werden.");
          }
 
-         lock (_syncRoot)
+         object? lockTarget = ReferenceEquals(targetClient, client)
+            ? _syncRoot
+            : null;
+
+         if (lockTarget is not null)
          {
-            foreach (KeyValuePair<string, string> node in opcNodesByName)
+            lock (lockTarget)
             {
-               if (!IsConfiguredOpcNode(node.Value))
-               {
-                  continue;
-               }
-
-               OpcValue value = ReadRequiredOpcPayloadWithNullRetry(
-                   eventName,
-                  node.Key,
-                  node.Value);
-
-               values[node.Key] = value.Value;
+               ReadConfiguredEventValuesUnlocked(targetClient, opcNodesByName, eventName, values);
             }
+         }
+         else
+         {
+            ReadConfiguredEventValuesUnlocked(targetClient, opcNodesByName, eventName, values);
          }
 
          return values;
+      }
+
+      private void ReadConfiguredEventValuesUnlocked(
+         OpcClient targetClient,
+         IReadOnlyDictionary<string, string> opcNodesByName,
+         string eventName,
+         Dictionary<string, object?> values)
+      {
+         foreach (KeyValuePair<string, string> node in opcNodesByName)
+         {
+            if (!IsConfiguredOpcNode(node.Value))
+            {
+               continue;
+            }
+
+            OpcValue value = ReadRequiredOpcPayloadWithNullRetry(
+               targetClient,
+               eventName,
+               node.Key,
+               node.Value);
+
+            values[node.Key] = value.Value;
+         }
       }
 
       private bool IsEvent204TriggerNode(string nodeId)
@@ -2537,9 +3049,14 @@ namespace Falcom
          try
          {
             _runtimeStatus.SetCwDataReceived("Event_402");
-            Dictionary<string, object?> values = ReadConfiguredEventValues(
-               event402OpcNodesByName,
-               Event402Name);
+            Dictionary<string, object?> values;
+            lock (_cwSyncRoot)
+            {
+               values = ReadConfiguredEventValues(
+                  cwClient!,
+                  event402OpcNodesByName,
+                  Event402Name);
+            }
 
             values.TryGetValue("Istgew_ChW1", out object? istgewChW1);
             values.TryGetValue("Istgew_ChW2", out object? istgewChW2);
@@ -2625,9 +3142,14 @@ namespace Falcom
          try
          {
             SetCwPartnerDataReceived("Event_403");
-            Dictionary<string, object?> values = ReadConfiguredEventValues(
-               event403OpcNodesByName,
-               Event403Name);
+            Dictionary<string, object?> values;
+            lock (_cwSyncRoot)
+            {
+               values = ReadConfiguredEventValues(
+                  cwClient!,
+                  event403OpcNodesByName,
+                  Event403Name);
+            }
 
             values.TryGetValue("Beladebereit_ChW1", out object? beladebereitChW1);
             values.TryGetValue("Beladebereit_ChW2", out object? beladebereitChW2);
@@ -2671,9 +3193,14 @@ namespace Falcom
          try
          {
             SetCwPartnerDataReceived("Event_404");
-            Dictionary<string, object?> values = ReadConfiguredEventValues(
-               event404OpcNodesByName,
-               Event404Name);
+            Dictionary<string, object?> values;
+            lock (_cwSyncRoot)
+            {
+               values = ReadConfiguredEventValues(
+                  cwClient!,
+                  event404OpcNodesByName,
+                  Event404Name);
+            }
 
             values.TryGetValue("Stoerung_ChW1", out object? stoerungChW1);
             values.TryGetValue("Stoerung_ChW2", out object? stoerungChW2);
@@ -2725,9 +3252,14 @@ namespace Falcom
          try
          {
             SetCwPartnerDataReceived("Event_405");
-            Dictionary<string, object?> values = ReadConfiguredEventValues(
-               event405OpcNodesByName,
-               Event405Name);
+            Dictionary<string, object?> values;
+            lock (_cwSyncRoot)
+            {
+               values = ReadConfiguredEventValues(
+                  cwClient!,
+                  event405OpcNodesByName,
+                  Event405Name);
+            }
 
             values.TryGetValue("GattierungAbgeschl", out object? gattierungAbgeschl);
             values.TryGetValue("C", out object? c);
@@ -3237,12 +3769,12 @@ if (string.Equals(
 
       private void OnClientStateChanged(object? sender, OpcClientStateChangedEventArgs e)
       {
-         _logger.LogDebug("002A|OPC Client Zustand geaendert von {OldState} zu {NewState}", e.OldState, e.NewState);
+         _logger.LogDebug("002A|Kran-OPC Client Zustand geaendert von {OldState} zu {NewState}", e.OldState, e.NewState);
 
          if (e.NewState == OpcClientState.Connected)
          {
-            MarkOpcDataFlowAvailable("Verbunden");
-            _logger.LogInformation("002B|OPC UA Client erfolgreich verbunden / wiederverbunden!");
+            MarkOpcDataFlowChecking("Verbunden, Datenfluss wird geprueft", "Event_201 wird geprueft");
+            _logger.LogInformation("002B|OPC UA Client verbunden / wiederverbunden. Warte auf Event_201-Datenfluss.");
          }
          else if (e.NewState == OpcClientState.Disconnected)
          {
@@ -3255,6 +3787,52 @@ if (string.Equals(
             MarkOpcDataFlowUnavailable("Reconnect laeuft", "OPC Reconnect laeuft");
             _logger.LogInformation("002D|Verbindung verloren. Auto-Reconnect versucht gerade die Wiederverbindung...");
             StartBackgroundReconnectLoop("OPC Client meldet Reconnecting");
+         }
+      }
+
+      private void OnCwClientStateChanged(object? sender, OpcClientStateChangedEventArgs e)
+      {
+         _logger.LogDebug("0327|CW-OPC Client Zustand geaendert von {OldState} zu {NewState}", e.OldState, e.NewState);
+
+         if (e.NewState == OpcClientState.Connected)
+         {
+            _runtimeStatus.SetOpcCwSpsStatus(true, "Verbunden");
+            _logger.LogInformation("0328|CW-OPC Client erfolgreich verbunden / wiederverbunden.");
+         }
+         else if (e.NewState == OpcClientState.Disconnected)
+         {
+            _runtimeStatus.SetCwLebensZaehlerUnavailable("CW OPC getrennt");
+            _logger.LogError("0329|Die Verbindung zur CW-SPS wurde getrennt.");
+            StartCwBackgroundReconnectLoop("CW-OPC Client meldet Disconnected");
+         }
+         else if (e.NewState == OpcClientState.Reconnecting)
+         {
+            _runtimeStatus.SetCwLebensZaehlerUnavailable("CW Reconnect laeuft");
+            _logger.LogInformation("032A|CW-Verbindung verloren. Auto-Reconnect versucht gerade die Wiederverbindung...");
+            StartCwBackgroundReconnectLoop("CW-OPC Client meldet Reconnecting");
+         }
+      }
+
+      private void OnEOfenClientStateChanged(object? sender, OpcClientStateChangedEventArgs e)
+      {
+         _logger.LogDebug("0527|E-Ofen-OPC Client Zustand geaendert von {OldState} zu {NewState}", e.OldState, e.NewState);
+
+         if (e.NewState == OpcClientState.Connected)
+         {
+            _runtimeStatus.SetOpcEOfenSpsStatus(true, "Verbunden");
+            _logger.LogInformation("0528|E-Ofen-OPC Client erfolgreich verbunden / wiederverbunden.");
+         }
+         else if (e.NewState == OpcClientState.Disconnected)
+         {
+            _runtimeStatus.SetEOfenLebensZaehlerUnavailable("E-Ofen OPC getrennt");
+            _logger.LogError("0529|Die Verbindung zur E-Ofen-SPS wurde getrennt.");
+            StartEOfenBackgroundReconnectLoop("E-Ofen-OPC Client meldet Disconnected");
+         }
+         else if (e.NewState == OpcClientState.Reconnecting)
+         {
+            _runtimeStatus.SetEOfenLebensZaehlerUnavailable("E-Ofen Reconnect laeuft");
+            _logger.LogInformation("052A|E-Ofen-Verbindung verloren. Auto-Reconnect versucht gerade die Wiederverbindung...");
+            StartEOfenBackgroundReconnectLoop("E-Ofen-OPC Client meldet Reconnecting");
          }
       }
 
