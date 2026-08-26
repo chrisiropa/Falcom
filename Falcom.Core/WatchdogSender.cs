@@ -3,6 +3,7 @@ namespace Falcom
    public sealed class WatchdogSender : IDisposable
    {
       private static readonly TimeSpan SendErrorLogThrottle = TimeSpan.FromSeconds(60);
+      private static readonly TimeSpan SendLockTimeout = TimeSpan.FromMilliseconds(250);
 
       private readonly ILogger<WatchdogSender> _logger;
       private readonly OPC_Client_Crane _opcClientCrane;
@@ -25,7 +26,20 @@ namespace Falcom
          int lebensZaehler,
          CancellationToken stoppingToken)
       {
-         await sendLock.WaitAsync(stoppingToken);
+         if (!await sendLock.WaitAsync(SendLockTimeout, stoppingToken))
+         {
+            _runtimeStatus.SetWatchdogError("Vorheriger Sendelauf blockiert");
+
+            if (DateTime.UtcNow >= nextSendErrorLogUtc)
+            {
+               _logger.LogWarning(
+                  "003D|Watchdog-Lebenszaehler wird uebersprungen, weil ein vorheriger OPC-Sendelauf noch blockiert. LebensZaehler={LebensZaehler}.",
+                  lebensZaehler);
+               nextSendErrorLogUtc = DateTime.UtcNow + SendErrorLogThrottle;
+            }
+
+            return;
+         }
 
          try
          {

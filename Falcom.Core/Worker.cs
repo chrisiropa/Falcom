@@ -10,6 +10,8 @@ namespace Falcom
 {
    public class Worker : BackgroundService
    {
+      private static readonly TimeSpan OpcDispatcherOperationTimeout = TimeSpan.FromSeconds(6);
+
       private readonly ILogger<Worker> _logger;
       private readonly ConfigManager _configManager;
       private readonly OPC_Client_Crane _opcClientCrane;
@@ -102,8 +104,11 @@ namespace Falcom
                               watchdogEventsInCurrentMinute++;
                               LogWatchdogSummaryIfDue(watchdogEvent.LebensZaehler);
 
-                              await _watchdogSender.SendAsync(
-                                 watchdogEvent.LebensZaehler,
+                              await RunOpcDispatcherOperationWithTimeoutAsync(
+                                 $"Event_101 Watchdog LebensZaehler={watchdogEvent.LebensZaehler}",
+                                 token => _watchdogSender.SendAsync(
+                                    watchdogEvent.LebensZaehler,
+                                    token),
                                  stoppingToken);
                            }
                            finally
@@ -123,8 +128,11 @@ namespace Falcom
                               cwWatchdogEventsInCurrentMinute++;
                               LogCwWatchdogSummaryIfDue(cwWatchdogEvent.LebensZaehler);
 
-                              await _cwWatchdogSender.SendAsync(
-                                 cwWatchdogEvent.LebensZaehler,
+                              await RunOpcDispatcherOperationWithTimeoutAsync(
+                                 $"Event_301 CW-Watchdog LebensZaehler={cwWatchdogEvent.LebensZaehler}",
+                                 token => _cwWatchdogSender.SendAsync(
+                                    cwWatchdogEvent.LebensZaehler,
+                                    token),
                                  stoppingToken);
                            }
                            finally
@@ -151,10 +159,14 @@ namespace Falcom
 
                            BunkerMaterialSnapshot snapshot = _bunkerMaterialRepository.GetSnapshot();
                            OPC_Client_Crane.OpcSendResult antwort =
-                              await _opcClientCrane.SendBunkerMaterialResponseAsync(
-                                 bunkerAnforderung.AnforderungsZaehler,
-                                 snapshot,
-                                 stoppingToken);
+                              await RunOpcDispatcherOperationWithTimeoutAsync(
+                                 $"Event_104 Bunkermaterial senden AnforderungsZaehler={bunkerAnforderung.AnforderungsZaehler}",
+                                 token => _opcClientCrane.SendBunkerMaterialResponseAsync(
+                                    bunkerAnforderung.AnforderungsZaehler,
+                                    snapshot,
+                                    token),
+                                 stoppingToken,
+                                 reason => OPC_Client_Crane.OpcSendResult.Failed(reason));
 
                            if (!antwort.Success)
                            {
@@ -201,10 +213,14 @@ namespace Falcom
 
                            MaterialEigenschaftenSnapshot snapshot = _materialEigenschaftenRepository.GetSnapshot();
                            OPC_Client_Crane.OpcSendResult antwort =
-                              await _opcClientCrane.SendMaterialEigenschaftenResponseAsync(
-                                 materialAnforderung.AnforderungsZaehler,
-                                 snapshot,
-                                 stoppingToken);
+                              await RunOpcDispatcherOperationWithTimeoutAsync(
+                                 $"Event_105 Materialeigenschaften senden AnforderungsZaehler={materialAnforderung.AnforderungsZaehler}",
+                                 token => _opcClientCrane.SendMaterialEigenschaftenResponseAsync(
+                                    materialAnforderung.AnforderungsZaehler,
+                                    snapshot,
+                                    token),
+                                 stoppingToken,
+                                 reason => OPC_Client_Crane.OpcSendResult.Failed(reason));
 
                            if (!antwort.Success)
                            {
@@ -251,10 +267,14 @@ namespace Falcom
 
                            KranPositionenSnapshot snapshot = _kranPositionenRepository.GetSnapshot();
                            OPC_Client_Crane.OpcSendResult antwort =
-                              await _opcClientCrane.SendKranPositionenResponseAsync(
-                                 positionenAnforderung.AnforderungsZaehler,
-                                 snapshot,
-                                 stoppingToken);
+                              await RunOpcDispatcherOperationWithTimeoutAsync(
+                                 $"Event_106 Kranpositionen senden AnforderungsZaehler={positionenAnforderung.AnforderungsZaehler}",
+                                 token => _opcClientCrane.SendKranPositionenResponseAsync(
+                                    positionenAnforderung.AnforderungsZaehler,
+                                    snapshot,
+                                    token),
+                                 stoppingToken,
+                                 reason => OPC_Client_Crane.OpcSendResult.Failed(reason));
 
                            if (!antwort.Success)
                            {
@@ -329,9 +349,13 @@ namespace Falcom
                                     auftragTeilfahrt: result.AuftragTeilfahrt ?? 1);
 
                               OPC_Client_Crane.OpcSendResult sendResult =
-                                 await _opcClientCrane.SendKranfahrtAuftragAsync(
-                                    kranfahrtAuftragEvent,
-                                    stoppingToken);
+                                 await RunOpcDispatcherOperationWithTimeoutAsync(
+                                    $"Event_102 Kranfahrt senden AktuelleFahrtID={result.AktuelleFahrtID}, AuftragID={result.AuftragID}",
+                                    token => _opcClientCrane.SendKranfahrtAuftragAsync(
+                                       kranfahrtAuftragEvent,
+                                       token),
+                                    stoppingToken,
+                                    reason => OPC_Client_Crane.OpcSendResult.Failed(reason));
 
                               if (!sendResult.Success)
                               {
@@ -461,7 +485,10 @@ namespace Falcom
                         }
 
                         // 1. Datenfluss zur SPS sicherstellen
-                        await _opcClientCrane.EnsureDataFlowAsync(stoppingToken);
+                        await RunOpcDispatcherOperationWithTimeoutAsync(
+                           "OPC-Datenflusspruefung nach Dispatcher-Event",
+                           token => _opcClientCrane.EnsureDataFlowAsync(token),
+                           stoppingToken);
 
                         // Optionale Ueberwachungsausgabe
                         //LogOpenCraneQueueOrdersIfChanged();
@@ -656,10 +683,11 @@ namespace Falcom
                new WatchdogEvent(watchdogValue),
                stoppingToken);
 
-            if (Interlocked.CompareExchange(
-               ref cwWatchdogEventPending,
-               1,
-               0) == 0)
+            if (_opcClientCrane.IsCwBranchActive
+                && Interlocked.CompareExchange(
+                  ref cwWatchdogEventPending,
+                  1,
+                  0) == 0)
             {
                await _eventQueue.Writer.WriteAsync(
                   new CwWatchdogEvent(cwWatchdogValue),
@@ -684,7 +712,10 @@ namespace Falcom
          {
             try
             {
-               await _opcClientCrane.EnsureDataFlowAsync(stoppingToken);
+               await RunOpcDispatcherOperationWithTimeoutAsync(
+                  "Zyklische OPC-Datenflusspruefung",
+                  token => _opcClientCrane.EnsureDataFlowAsync(token),
+                  stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -735,9 +766,13 @@ namespace Falcom
                      auftragTeilfahrt: aktuelleFahrt.AuftragTeilfahrt ?? 1);
 
                OPC_Client_Crane.OpcSendResult sendResult =
-                  await _opcClientCrane.SendKranfahrtAuftragAsync(
-                     kranfahrtAuftragEvent,
-                     stoppingToken);
+                  await RunOpcDispatcherOperationWithTimeoutAsync(
+                     $"Event_102 Kranfahrt erneut senden AktuelleFahrtID={aktuelleFahrt.AktuelleFahrtID}, AuftragID={aktuelleFahrt.AuftragID}",
+                     token => _opcClientCrane.SendKranfahrtAuftragAsync(
+                        kranfahrtAuftragEvent,
+                        token),
+                     stoppingToken,
+                     reason => OPC_Client_Crane.OpcSendResult.Failed(reason));
 
                if (sendResult.Success)
                {
@@ -822,7 +857,11 @@ namespace Falcom
                if (string.Equals(anforderung.Vorgang, "IMPORT_AUS_SPS", StringComparison.OrdinalIgnoreCase))
                {
                   OPC_Client_Crane.OpcReadResult<MaterialEigenschaftenSnapshot> readResult =
-                     await _opcClientCrane.ReadMaterialEigenschaftenFromSpsAsync(stoppingToken);
+                     await RunOpcDispatcherOperationWithTimeoutAsync(
+                        $"Event_105 Materialeigenschaften aus SPS lesen AnforderungID={anforderung.ID}",
+                        token => _opcClientCrane.ReadMaterialEigenschaftenFromSpsAsync(token),
+                        stoppingToken,
+                        OPC_Client_Crane.OpcReadResult<MaterialEigenschaftenSnapshot>.Failed);
 
                   if (!readResult.Success || readResult.Value is null)
                   {
@@ -854,10 +893,14 @@ namespace Falcom
 
                MaterialEigenschaftenSnapshot snapshot = _materialEigenschaftenRepository.GetSnapshot();
                OPC_Client_Crane.OpcSendResult antwort =
-                  await _opcClientCrane.SendMaterialEigenschaftenResponseAsync(
-                     anforderung.ID,
-                     snapshot,
-                     stoppingToken);
+                  await RunOpcDispatcherOperationWithTimeoutAsync(
+                     $"Event_105 Materialeigenschaften per DB-Anforderung senden AnforderungID={anforderung.ID}",
+                     token => _opcClientCrane.SendMaterialEigenschaftenResponseAsync(
+                        anforderung.ID,
+                        snapshot,
+                        token),
+                     stoppingToken,
+                     reason => OPC_Client_Crane.OpcSendResult.Failed(reason));
 
                _materialEigenschaftenAnforderungRepository.Complete(
                   anforderung.ID,
@@ -896,6 +939,62 @@ namespace Falcom
       {
          _logger.LogInformation("0039|Windows-Dienst Stop angefordert.");
          await base.StopAsync(cancellationToken);
+      }
+
+      private async Task RunOpcDispatcherOperationWithTimeoutAsync(
+         string operationName,
+         Func<CancellationToken, Task> operation,
+         CancellationToken stoppingToken)
+      {
+         await RunOpcDispatcherOperationWithTimeoutAsync(
+            operationName,
+            async token =>
+            {
+               await operation(token);
+               return true;
+            },
+            stoppingToken,
+            _ => false);
+      }
+
+      private async Task<T> RunOpcDispatcherOperationWithTimeoutAsync<T>(
+         string operationName,
+         Func<CancellationToken, Task<T>> operation,
+         CancellationToken stoppingToken,
+         Func<string, T> createTimeoutResult)
+      {
+         using CancellationTokenSource timeoutCancellation =
+            CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+
+         Task<T> operationTask = Task.Run(
+            () => operation(timeoutCancellation.Token),
+            CancellationToken.None);
+
+         Task timeoutTask = Task.Delay(OpcDispatcherOperationTimeout, stoppingToken);
+         Task completedTask = await Task.WhenAny(operationTask, timeoutTask);
+
+         if (completedTask == operationTask)
+         {
+            return await operationTask;
+         }
+
+         string reason =
+            $"{operationName} hat laenger als {OpcDispatcherOperationTimeout.TotalSeconds:N0} Sekunden gedauert. Dispatcher wird freigegeben und die Operation gilt als technischer Fehler.";
+
+         _logger.LogError(
+            "0091|OPC-Operation im Dispatcher-Timeout. Operation={OperationName}, TimeoutSekunden={TimeoutSeconds}. Der Dispatcher wird freigegeben; ein eventuell intern haengender OPC-Aufruf darf den Ablauf nicht blockieren.",
+            operationName,
+            OpcDispatcherOperationTimeout.TotalSeconds);
+
+         try
+         {
+            timeoutCancellation.Cancel();
+         }
+         catch
+         {
+         }
+
+         return createTimeoutResult(reason);
       }
 
       

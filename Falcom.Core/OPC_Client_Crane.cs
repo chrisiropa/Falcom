@@ -15,6 +15,7 @@ namespace Falcom
       private const string Event101Direction = "FALCOM->KRAN_SPS";
       private const int Event301Id = 301;
       private const string Event301Direction = "FALCOM->CW";
+      private const int Event501Id = 501;
       private const int Event203Id = 203;
       private const string Event203Name = "Event_203";
       private const string Event203Direction = "KRAN_SPS->FALCOM";
@@ -81,7 +82,7 @@ namespace Falcom
       private readonly List<OpcMonitoredItem> eOfenMonitoredItems = new();
       private readonly string opcServerEndpoint;
       private readonly string event101NodeId;
-      private readonly string event301NodeId;
+      private readonly string? event301NodeId;
       private readonly string event201NodeId;
       private readonly Dictionary<string, string> event203OpcNodesByName;
       private readonly Dictionary<string, string> event104OpcNodesByName;
@@ -151,6 +152,8 @@ namespace Falcom
       private int? aktuelleMasseNetto;
       private string? lastKranfahrtAuftragConfigurationIssue;
       private readonly CancellationTokenSource backgroundReconnectCancellation = new();
+      public bool IsCwBranchActive { get; }
+      public bool IsEOfenBranchActive { get; }
       private bool disposed;
 
       // NEU: FalcomEventQueue im Konstruktor anfordern
@@ -172,14 +175,33 @@ namespace Falcom
          TraegerLicense();
          KranfahrtBeendetEvent.LoadOpcNodes(configManager);
          LkwPlatzLeer207Event.LoadOpcNodes(configManager);
+         IsCwBranchActive = LoadEventIsActive(Event301Id);
+         IsEOfenBranchActive = LoadEventIsActive(Event501Id);
+
+         if (!IsCwBranchActive)
+         {
+            _logger.LogInformation(
+               "032C|CW-Zweig ist inaktiv, weil Event_301 in FALCOM_EVENTS nicht aktiv ist. Es wird keine CW-OPC-Verbindung aufgebaut und keine CW-Subscription registriert.");
+            _runtimeStatus.SetCwLebensZaehlerUnavailable("CW inaktiv");
+         }
+
+         if (!IsEOfenBranchActive)
+         {
+            _logger.LogInformation(
+               "052C|E-Ofen-Zweig ist inaktiv, weil Event_501 in FALCOM_EVENTS nicht aktiv ist. Es wird keine E-Ofen-OPC-Verbindung aufgebaut und keine E-Ofen-Subscription registriert.");
+            _runtimeStatus.SetEOfenLebensZaehlerUnavailable("E-Ofen inaktiv");
+         }
+
          event101NodeId = LoadRequiredEventOpcNode(
             eventName: WatchdogEvent.EventName,
             direction: "FALCOM->KRAN_SPS",
             nodeName: WatchdogEvent.EventName);
-         event301NodeId = LoadRequiredEventOpcNode(
-            eventName: CwWatchdogEvent.EventName,
-            direction: Event301Direction,
-            nodeName: CwWatchdogEvent.EventName);
+         event301NodeId = IsCwBranchActive
+            ? LoadRequiredEventOpcNode(
+               eventName: CwWatchdogEvent.EventName,
+               direction: Event301Direction,
+               nodeName: CwWatchdogEvent.EventName)
+            : null;
          event201NodeId = LoadRequiredEventOpcNode(
             eventName: KranSpsLebensZaehlerEvent.EventName,
             direction: "KRAN_SPS->FALCOM",
@@ -205,21 +227,21 @@ namespace Falcom
          event206OpcNodesByName = LoadOptionalEventOpcNodes(
             Event206Name,
             Event206Direction);
-         event401OpcNodesByName = LoadOptionalEventOpcNodes(
-            Event401Name,
-            Event401Direction);
-         event402OpcNodesByName = LoadOptionalEventOpcNodes(
-            Event402Name,
-            Event402Direction);
-         event403OpcNodesByName = LoadOptionalEventOpcNodes(
-            Event403Name,
-            Event403Direction);
-         event404OpcNodesByName = LoadOptionalEventOpcNodes(
-            Event404Name,
-            Event404Direction);
-         event405OpcNodesByName = LoadOptionalEventOpcNodes(
-            Event405Name,
-            Event405Direction);
+         event401OpcNodesByName = IsCwBranchActive
+            ? LoadOptionalEventOpcNodes(Event401Name, Event401Direction)
+            : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+         event402OpcNodesByName = IsCwBranchActive
+            ? LoadOptionalEventOpcNodes(Event402Name, Event402Direction)
+            : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+         event403OpcNodesByName = IsCwBranchActive
+            ? LoadOptionalEventOpcNodes(Event403Name, Event403Direction)
+            : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+         event404OpcNodesByName = IsCwBranchActive
+            ? LoadOptionalEventOpcNodes(Event404Name, Event404Direction)
+            : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+         event405OpcNodesByName = IsCwBranchActive
+            ? LoadOptionalEventOpcNodes(Event405Name, Event405Direction)
+            : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
          kranfahrtAuftragLiveOpcNodesByName = LoadOptionalEventOpcNodes(
             KranfahrtAuftragEventName,
             KranfahrtAuftragDirection);
@@ -233,8 +255,15 @@ namespace Falcom
 
          // Client-Instanz das erste Mal erstellen
          CreateClientInstance();
-         CreateCwClientInstance();
-         CreateEOfenClientInstance();
+         if (IsCwBranchActive)
+         {
+            CreateCwClientInstance();
+         }
+
+         if (IsEOfenBranchActive)
+         {
+            CreateEOfenClientInstance();
+         }
 
          _logger.LogInformation("0011|OPC_Client_Crane initialisiert fuer {OpcServerEndpoint}. Bereit fuer Connect().", opcServerEndpoint);
       }
@@ -309,8 +338,16 @@ namespace Falcom
                spsLebensZaehlerFreigegeben = false;
                _runtimeStatus.SetSpsLebensZaehlerUnavailable("OPC-Datenfluss wird geprueft");
                ConnectOnce();
-               TryConnectCwOrStartReconnect("Initialer Verbindungsaufbau");
-               TryConnectEOfenOrStartReconnect("Initialer Verbindungsaufbau");
+               if (IsCwBranchActive)
+               {
+                  TryConnectCwOrStartReconnect("Initialer Verbindungsaufbau");
+               }
+
+               if (IsEOfenBranchActive)
+               {
+                  TryConnectEOfenOrStartReconnect("Initialer Verbindungsaufbau");
+               }
+
                MarkOpcDataFlowChecking("Verbunden, Datenfluss wird geprueft", "Event_201 wird geprueft");
                _logger.LogInformation("0013|OPC-Verbindungsversuch {Attempt} erfolgreich abgeschlossen.", attempt);
                return;
@@ -507,6 +544,11 @@ namespace Falcom
 
       private void StartCwBackgroundReconnectLoop(string reason)
       {
+         if (!IsCwBranchActive)
+         {
+            return;
+         }
+
          if (disposed || backgroundReconnectCancellation.IsCancellationRequested)
          {
             return;
@@ -597,6 +639,11 @@ namespace Falcom
 
       private void StartEOfenBackgroundReconnectLoop(string reason)
       {
+         if (!IsEOfenBranchActive)
+         {
+            return;
+         }
+
          if (disposed || backgroundReconnectCancellation.IsCancellationRequested)
          {
             return;
@@ -810,13 +857,23 @@ namespace Falcom
       {
          cancellationToken.ThrowIfCancellationRequested();
 
+         if (!IsCwBranchActive)
+         {
+            return Task.FromResult(OpcSendResult.Failed("CW-Zweig ist inaktiv, weil Event_301 nicht aktiv ist."));
+         }
+
+         if (!IsConfiguredOpcNode(event301NodeId))
+         {
+            return Task.FromResult(OpcSendResult.Failed("CW-Zweig ist aktiv, aber Event_301 ist nicht gueltig konfiguriert."));
+         }
+
          try
          {
             EnsureCwConnected();
 
             lock (_cwSyncRoot)
             {
-               WriteRequiredNode(cwClient!, event301NodeId, lebensZaehler);
+               WriteRequiredNode(cwClient!, event301NodeId!, lebensZaehler);
             }
 
             _ = _kranLiveSignalRClient.SendKranOpcEventAsync(
@@ -1220,6 +1277,11 @@ namespace Falcom
 
       private void EnsureCwConnected()
       {
+         if (!IsCwBranchActive)
+         {
+            throw new InvalidOperationException("CW-Zweig ist inaktiv, weil Event_301 nicht aktiv ist.");
+         }
+
          lock (_cwSyncRoot)
          {
             if (cwClient is { State: OpcClientState.Connected })
@@ -1235,6 +1297,11 @@ namespace Falcom
 
       private void EnsureEOfenConnected()
       {
+         if (!IsEOfenBranchActive)
+         {
+            throw new InvalidOperationException("E-Ofen-Zweig ist inaktiv, weil Event_501 nicht aktiv ist.");
+         }
+
          lock (_eOfenSyncRoot)
          {
             if (eOfenClient is { State: OpcClientState.Connected })
@@ -1374,6 +1441,45 @@ namespace Falcom
          }
 
          return result;
+      }
+
+      private bool LoadEventIsActive(int eventId)
+      {
+         try
+         {
+            using SqlConnection connection = new(_configManager.ConnectionString);
+            using SqlCommand command = new(
+               """
+               SELECT TOP (1) ISNULL(IsActive, 1)
+               FROM dbo.FALCOM_EVENTS
+               WHERE ID = @EventID;
+               """,
+               connection)
+            {
+               CommandType = CommandType.Text,
+               CommandTimeout = 10
+            };
+
+            command.Parameters.Add("@EventID", SqlDbType.Int).Value = eventId;
+
+            connection.Open();
+            object? value = command.ExecuteScalar();
+
+            if (value is null || value == DBNull.Value)
+            {
+               return false;
+            }
+
+            return Convert.ToBoolean(value, CultureInfo.InvariantCulture);
+         }
+         catch (Exception ex)
+         {
+            _logger.LogWarning(
+               ex,
+               "0059|Event-Aktivstatus konnte nicht gelesen werden. EventID={EventID}. Der zugehoerige optionale Zweig wird vorsichtshalber nicht gestartet.",
+               eventId);
+            return false;
+         }
       }
 
       private static bool IsConfiguredOpcNode(string? opcNode)
@@ -1519,6 +1625,8 @@ namespace Falcom
             "0051|OPC Senden: Node={Node}, Wert={Value}",
             nodeId,
             value);
+
+         //Hier bleibt er manchmal hängen ! CG: 26.08.2026
          OpcStatus status = targetClient.WriteNode(nodeId, value);
 
          if (status.IsBad)
@@ -1652,6 +1760,11 @@ namespace Falcom
 
       private void TryConnectCwOrStartReconnect(string reason)
       {
+         if (!IsCwBranchActive)
+         {
+            return;
+         }
+
          try
          {
             ConnectCwOnce();
@@ -1669,6 +1782,11 @@ namespace Falcom
 
       private void TryConnectEOfenOrStartReconnect(string reason)
       {
+         if (!IsEOfenBranchActive)
+         {
+            return;
+         }
+
          try
          {
             ConnectEOfenOnce();
@@ -1686,6 +1804,11 @@ namespace Falcom
 
       private void ConnectCwOnce()
       {
+         if (!IsCwBranchActive)
+         {
+            return;
+         }
+
          if (disposed)
          {
             throw new ObjectDisposedException(nameof(OPC_Client_Crane));
@@ -1707,6 +1830,11 @@ namespace Falcom
 
       private void ConnectEOfenOnce()
       {
+         if (!IsEOfenBranchActive)
+         {
+            return;
+         }
+
          if (disposed)
          {
             throw new ObjectDisposedException(nameof(OPC_Client_Crane));
@@ -1862,12 +1990,22 @@ namespace Falcom
             INNER JOIN dbo.FALCOM_EVENT_OPC_NODES n
                ON n.EventID = e.ID
             WHERE ISNULL(e.IsActive, 1) = 1
+              AND (
+                    @CwBranchActive = 1
+                    OR UPPER(ISNULL(e.Partner, N'')) NOT IN (N'CW', N'CHARGIERWAGEN')
+                  )
+              AND (
+                    @EOfenBranchActive = 1
+                    OR UPPER(ISNULL(e.Partner, N'')) NOT IN (N'EOFEN', N'E-OFEN')
+                  )
             ORDER BY e.ID, n.ID
             """,
             connection);
 
          command.CommandType = CommandType.Text;
          command.CommandTimeout = 30;
+         command.Parameters.Add("@CwBranchActive", SqlDbType.Bit).Value = IsCwBranchActive;
+         command.Parameters.Add("@EOfenBranchActive", SqlDbType.Bit).Value = IsEOfenBranchActive;
 
          connection.Open();
          using SqlDataReader reader = command.ExecuteReader();
@@ -1925,6 +2063,12 @@ namespace Falcom
          AddCwMonitoredTrigger(Event403Name, Event403TriggerNodeName, event403OpcNodesByName, "030B");
          AddCwMonitoredTrigger(Event404Name, Event404TriggerNodeName, event404OpcNodesByName, "030F");
          AddCwMonitoredTrigger(Event405Name, Event405TriggerNodeName, event405OpcNodesByName, "0313");
+
+         cwSubscription.ApplyChanges();
+
+         _logger.LogInformation(
+            "0322|Kanal 'CW' erfolgreich registriert. MonitoredItems={Count}.",
+            cwMonitoredItems.Count);
 
          return cwMonitoredItems.Count > 0;
       }
