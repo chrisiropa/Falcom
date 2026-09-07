@@ -343,58 +343,11 @@ namespace Falcom
                            {
                               _runtimeStatus.SetAktuelleFahrt(result);
 
-                              KranfahrtAuftragEvent kranfahrtAuftragEvent =
-                                 KranfahrtAuftragEvent.FromAktuelleFahrt(
-                                    result,
-                                    auftragTeilfahrt: result.AuftragTeilfahrt ?? 1);
-
-                              OPC_Client_Crane.OpcSendResult sendResult =
-                                 await RunOpcDispatcherOperationWithTimeoutAsync(
-                                    $"Event_102 Kranfahrt senden AktuelleFahrtID={result.AktuelleFahrtID}, AuftragID={result.AuftragID}",
-                                    token => _opcClientCrane.SendKranfahrtAuftragAsync(
-                                       kranfahrtAuftragEvent,
-                                       token),
-                                    stoppingToken,
-                                    reason => OPC_Client_Crane.OpcSendResult.Failed(reason));
-
-                              if (!sendResult.Success)
-                              {
-                                 AktuelleFahrtResult sendFailureResult =
-                                    _aktuelleFahrtRepository.MarkSpsSendFailure(
-                                       result.AktuelleFahrtID,
-                                       sendResult.Reason);
-
-                                 _runtimeStatus.SetAktuelleFahrt(sendFailureResult);
-
-                                 _logger.LogWarning(
-                                    "0110|Technischer SPS-Sendefehler. Aktuelle Fahrt bleibt aktiv und wird automatisch erneut gesendet: AktuelleFahrtID={AktuelleFahrtID}, AuftragID={AuftragID}, Teilfahrt={AuftragTeilfahrt}, Grund={Reason}.",
-                                    sendFailureResult.AktuelleFahrtID,
-                                    sendFailureResult.AuftragID,
-                                    sendFailureResult.AuftragTeilfahrt,
-                                    sendResult.Reason);
-
-                                 SetState(ProcessState.OpcGestoert);
-                              }
-                              else
-                              {
-                                 AktuelleFahrtResult sentResult =
-                                    _aktuelleFahrtRepository.MarkSpsSendSuccess(
-                                       result.AktuelleFahrtID,
-                                       sendResult.TelegrammNummer,
-                                       sendResult.ZaehlerAnfahrt);
-
-                                 _runtimeStatus.SetAktuelleFahrt(sentResult);
-
-                                 _logger.LogInformation(
-                                    "0086|SPS-Fahrauftrag als gesendet markiert: AktuelleFahrtID={AktuelleFahrtID}, AuftragID={AuftragID}, Teilfahrt={AuftragTeilfahrt}, TelegrammNummer={TelegrammNummer}.",
-                                    sentResult.AktuelleFahrtID,
-                                    sentResult.AuftragID,
-                                    sentResult.AuftragTeilfahrt,
-                                    sendResult.TelegrammNummer);
-
-                                 SetState(ProcessState.FahrtAnSpsGesendet);
-                                 SetState(ProcessState.WarteAufSpsRueckmeldung);
-                              }
+                              _logger.LogInformation(
+                                 "008C|Aktuelle Fahrt fuer den zentralen SPS-Sender vorgemerkt. AktuelleFahrtID={AktuelleFahrtID}, AuftragID={AuftragID}, Teilfahrt={AuftragTeilfahrt}. Event_102 wird ausschliesslich durch die SPS-Sendepruefung ausgegeben.",
+                                 result.AktuelleFahrtID,
+                                 result.AuftragID,
+                                 result.AuftragTeilfahrt);
                            }
                            else
                            {
