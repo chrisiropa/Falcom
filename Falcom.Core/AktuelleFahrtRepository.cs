@@ -54,6 +54,46 @@ namespace Falcom
             : AktuelleFahrtResult.Empty("FALCOM_GetAktuelleFahrt lieferte kein Ergebnis.");
       }
 
+      public AktuelleFahrtResult RequestSpsResend(
+         long? aktuelleFahrtId,
+         string angefordertVon,
+         string grund)
+      {
+         if (aktuelleFahrtId is null)
+         {
+            return AktuelleFahrtResult.Empty("Keine aktuelle Fahrt fuer SPS-Resend angegeben.");
+         }
+
+         using SqlConnection connection = new(_configManager.ConnectionString);
+         using SqlCommand command = new(
+            """
+            UPDATE dbo.FALCOM_AKTUELLE_FAHRT
+               SET SpsSendestatus = N'NEU_SENDEN',
+                   SpsSendewunschAm = SYSDATETIME(),
+                   SpsSendewunschVon = @AngefordertVon,
+                   SpsSendewunschGrund = @Grund,
+                   SpsSendefehler = NULL,
+                   SpsNaechsterSendeversuchAm = NULL
+             WHERE ID = @AktuelleFahrtID
+               AND SpsSendestatus IN (N'OFFEN', N'SENDET', N'GESENDET');
+            """,
+            connection);
+
+         command.CommandType = CommandType.Text;
+         command.CommandTimeout = 10;
+         command.Parameters.Add("@AktuelleFahrtID", SqlDbType.BigInt).Value = aktuelleFahrtId.Value;
+         command.Parameters.Add("@AngefordertVon", SqlDbType.NVarChar, 128).Value =
+            ToDbValue(angefordertVon);
+         command.Parameters.Add("@Grund", SqlDbType.NVarChar, 512).Value =
+            ToDbValue(grund);
+
+         connection.Open();
+         SetRequiredSqlOptions(connection);
+         command.ExecuteNonQuery();
+
+         return GetAktuelleFahrt();
+      }
+
       public AktuelleFahrtResult TryClaimSpsResend()
       {
          using SqlConnection connection = new(_configManager.ConnectionString);

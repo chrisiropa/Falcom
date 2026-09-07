@@ -2443,9 +2443,9 @@ public partial class MainWindow : Window
         {
             Opc.UaFx.Client.Licenser.LicenseKey = ConfigManager.TraegerLicenseKey;
         }
-    }
+   }
 
-    private void SetOpcConnected(string status)
+   private void SetOpcConnected(string status)
     {
         OpcLamp.Fill = Brushes.LimeGreen;
         opcStatusText = "Verbunden";

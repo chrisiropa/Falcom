@@ -10,7 +10,7 @@ namespace Falcom
 {
    public class Worker : BackgroundService
    {
-      private static readonly TimeSpan OpcDispatcherOperationTimeout = TimeSpan.FromSeconds(6);
+      private static readonly TimeSpan OpcDispatcherOperationTimeout = TimeSpan.FromSeconds(20);
 
       private readonly ILogger<Worker> _logger;
       private readonly ConfigManager _configManager;
@@ -621,6 +621,24 @@ namespace Falcom
                   aktuelleFahrt.SpsSendefehler);
                SetState(ProcessState.OpcGestoert);
             }
+            else if (RequiresStartupSpsResend(aktuelleFahrt.SpsSendestatus))
+            {
+               aktuelleFahrt = _aktuelleFahrtRepository.RequestSpsResend(
+                  aktuelleFahrt.AktuelleFahrtID,
+                  "FALCOM Programmstart",
+                  "Offene Fahrt nach Programmstart erneut an SPS senden, damit eine neu gestartete SPS den Trigger sicher erhaelt.");
+
+               _runtimeStatus.SetAktuelleFahrt(aktuelleFahrt);
+
+               _logger.LogWarning(
+                  "0112|Programmstart: Aktuelle Fahrt war bereits als gesendet markiert und wurde fuer erneutes Event_102 vorgemerkt. AktuelleFahrtID={AktuelleFahrtID}, AuftragID={AuftragID}, Teilfahrt={AuftragTeilfahrt}, SpsSendestatus={SpsSendestatus}.",
+                  aktuelleFahrt.AktuelleFahrtID,
+                  aktuelleFahrt.AuftragID,
+                  aktuelleFahrt.AuftragTeilfahrt,
+                  aktuelleFahrt.SpsSendestatus);
+
+               SetState(ProcessState.WarteAufSpsRueckmeldung);
+            }
             else
             {
                SetState(ProcessState.WarteAufSpsRueckmeldung);
@@ -631,6 +649,12 @@ namespace Falcom
          _logger.LogInformation(
             "0055|Programmstart: Keine aktuelle Fahrt in FALCOM_AKTUELLE_FAHRT gefunden. Zustand Idle.");
          SetState(ProcessState.Idle);
+      }
+
+      private static bool RequiresStartupSpsResend(string? spsSendestatus)
+      {
+         return string.Equals(spsSendestatus, "GESENDET", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(spsSendestatus, "SENDET", StringComparison.OrdinalIgnoreCase);
       }
 
       private void SetState(ProcessState nextState)
@@ -986,6 +1010,12 @@ namespace Falcom
             operationName,
             OpcDispatcherOperationTimeout.TotalSeconds);
 
+         if (ShouldForceKranOpcHardReconnect(operationName))
+         {
+            _opcClientCrane.ForceKranOpcHardReconnect(
+               $"Dispatcher-Timeout bei {operationName}");
+         }
+
          try
          {
             timeoutCancellation.Cancel();
@@ -995,6 +1025,13 @@ namespace Falcom
          }
 
          return createTimeoutResult(reason);
+      }
+
+      private static bool ShouldForceKranOpcHardReconnect(string operationName)
+      {
+         return !operationName.StartsWith("Event_301 ", StringComparison.OrdinalIgnoreCase)
+                && !operationName.StartsWith("CW-", StringComparison.OrdinalIgnoreCase)
+                && !operationName.StartsWith("E-Ofen", StringComparison.OrdinalIgnoreCase);
       }
 
       

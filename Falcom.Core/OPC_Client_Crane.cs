@@ -124,6 +124,7 @@ namespace Falcom
       private int backgroundReconnectLoopRunning;
       private int cwBackgroundReconnectLoopRunning;
       private int eOfenBackgroundReconnectLoopRunning;
+      private int activeKranOpcOperations;
       private int? lastKranfahrtAuftragTelegrammNummer;
       private int? lastKranfahrtBeendetAenderungsZaehler;
       private bool kranfahrtBeendetInitialwertGesehen;
@@ -411,24 +412,22 @@ namespace Falcom
                {
                   _logger.LogInformation("0017|OPC-Wiederherstellungsversuch {Attempt} wird gestartet (Radikaler Reconnect).", attempt);
 
+                  OpcClient? retiredClient = null;
+
                   lock (_syncRoot)
                   {
                      if (client is not null)
                      {
-                        try
-                        {
-                           client.Disconnect();
-                        }
-                        catch
-                        {
-                        }
-                        client.Dispose();
+                        client.StateChanged -= OnClientStateChanged;
+                        retiredClient = client;
                         client = null;
                      }
 
                      CreateClientInstance();
                      ConnectOnce();
                   }
+
+                  DisposeRetiredKranClientWhenSafe(retiredClient);
 
                   _logger.LogInformation("0018|OPC-Wiederherstellungsversuch {Attempt} abgeschlossen. SPS-Daten werden erneut geprueft.", attempt);
                }
@@ -475,6 +474,8 @@ namespace Falcom
                      {
                         lock (_syncRoot)
                         {
+                           OpcClient? retiredClient = null;
+
                            if (client is { State: OpcClientState.Connected })
                            {
                               RecreateSubscription();
@@ -492,18 +493,18 @@ namespace Falcom
                               try
                               {
                                  client.StateChanged -= OnClientStateChanged;
-                                 client.Disconnect();
                               }
                               catch
                               {
                               }
 
-                              client.Dispose();
+                              retiredClient = client;
                               client = null;
                            }
 
                            CreateClientInstance();
                            ConnectOnce();
+                           DisposeRetiredKranClientWhenSafe(retiredClient);
                            MarkOpcDataFlowChecking("Verbunden, Datenfluss wird geprueft", "Event_201 wird geprueft");
                            _logger.LogInformation(
                               "0100|OPC-Hintergrund-Reconnect erfolgreich. Versuch={Attempt}. Warte auf Event_201.",
@@ -540,6 +541,48 @@ namespace Falcom
                }
             },
             backgroundReconnectCancellation.Token);
+      }
+
+      public void ForceKranOpcHardReconnect(string reason)
+      {
+         if (disposed || backgroundReconnectCancellation.IsCancellationRequested)
+         {
+            return;
+         }
+
+         OpcClient? staleClient = null;
+
+         lock (_syncRoot)
+         {
+            MarkOpcDataFlowUnavailable("Reconnect laeuft", "OPC-Client wird hart neu aufgebaut");
+
+            foreach (OpcMonitoredItem item in monitoredItems)
+            {
+               item.DataChangeReceived -= HandleDataChange;
+            }
+
+            monitoredItems.Clear();
+            subscription = null;
+
+            if (client is not null)
+            {
+               client.StateChanged -= OnClientStateChanged;
+               staleClient = client;
+               client = null;
+            }
+
+            CreateClientInstance();
+         }
+
+         if (staleClient is not null)
+         {
+            DisposeRetiredKranClientWhenSafe(staleClient);
+         }
+
+         _logger.LogWarning(
+            "0062|Kran-OPC-Client wird nach Timeout hart neu aufgebaut. Grund={Reason}.",
+            reason);
+         StartBackgroundReconnectLoop(reason);
       }
 
       private void StartCwBackgroundReconnectLoop(string reason)
@@ -749,52 +792,63 @@ namespace Falcom
 
          try
          {
-            EnsureConnected();
-            EnsureKranfahrtAuftragZaehlerInitialisiert(nodes);
+            OpcClient targetClient = AcquireConnectedKranClientForOperation();
 
-            int telegrammNummer = kranfahrtAuftragTelegrammNummer == int.MaxValue
-               ? 0
-               : kranfahrtAuftragTelegrammNummer + 1;
+            try
+            {
+               EnsureKranfahrtAuftragZaehlerInitialisiert(targetClient, nodes);
 
-            WriteRequiredNode(nodes.AuftragNummer, Convert.ToInt32(kranfahrtAuftragEvent.AuftragNummer));
-            WriteRequiredNode(nodes.AuftragTeilfahrt, kranfahrtAuftragEvent.AuftragTeilfahrt);
-            WriteRequiredNodeWithStringFallback(
-               nodes.Quelle,
-               Convert.ToInt32(kranfahrtAuftragEvent.QuellePositionID),
-               KranfahrtAuftragEvent.QuelleNodeName);
-            WriteRequiredNodeWithStringFallback(
-               nodes.Ziel,
-               Convert.ToInt32(kranfahrtAuftragEvent.ZielPositionID),
-               KranfahrtAuftragEvent.ZielNodeName);
-            WriteRequiredNode(nodes.QuelleUnterposition, kranfahrtAuftragEvent.QuelleUnterposition);
-            WriteRequiredNode(nodes.ZielUnterposition, kranfahrtAuftragEvent.ZielUnterposition);
-            WriteRequiredNode(
-               nodes.SollMasse,
-               decimal.ToInt32(decimal.Round(kranfahrtAuftragEvent.SollMasseKg, 0, MidpointRounding.AwayFromZero)));
-            WriteRequiredNode(nodes.MasseTolPos, kranfahrtAuftragEvent.MasseTolPosKg);
-            WriteRequiredNode(nodes.MasseTolNeg, kranfahrtAuftragEvent.MasseTolNegKg);
-            WriteRequiredNode(nodes.MaterialNr, kranfahrtAuftragEvent.MaterialNr);
+               int telegrammNummer = kranfahrtAuftragTelegrammNummer == int.MaxValue
+                  ? 0
+                  : kranfahrtAuftragTelegrammNummer + 1;
 
-            // Event_102 ist der eigentliche Trigger fuer die Kran-SPS/Simulation.
-            // Deshalb bewusst zuletzt schreiben, nachdem alle Payload-Werte stehen.
-            WriteRequiredNode(nodes.EventTrigger, telegrammNummer);
+               WriteRequiredNode(targetClient, nodes.AuftragNummer, Convert.ToInt32(kranfahrtAuftragEvent.AuftragNummer));
+               WriteRequiredNode(targetClient, nodes.AuftragTeilfahrt, kranfahrtAuftragEvent.AuftragTeilfahrt);
+               WriteRequiredNodeWithStringFallback(
+                  targetClient,
+                  nodes.Quelle,
+                  Convert.ToInt32(kranfahrtAuftragEvent.QuellePositionID),
+                  KranfahrtAuftragEvent.QuelleNodeName);
+               WriteRequiredNodeWithStringFallback(
+                  targetClient,
+                  nodes.Ziel,
+                  Convert.ToInt32(kranfahrtAuftragEvent.ZielPositionID),
+                  KranfahrtAuftragEvent.ZielNodeName);
+               WriteRequiredNode(targetClient, nodes.QuelleUnterposition, kranfahrtAuftragEvent.QuelleUnterposition);
+               WriteRequiredNode(targetClient, nodes.ZielUnterposition, kranfahrtAuftragEvent.ZielUnterposition);
+               WriteRequiredNode(
+                  targetClient,
+                  nodes.SollMasse,
+                  decimal.ToInt32(decimal.Round(kranfahrtAuftragEvent.SollMasseKg, 0, MidpointRounding.AwayFromZero)));
+               WriteRequiredNode(targetClient, nodes.MasseTolPos, kranfahrtAuftragEvent.MasseTolPosKg);
+               WriteRequiredNode(targetClient, nodes.MasseTolNeg, kranfahrtAuftragEvent.MasseTolNegKg);
+               WriteRequiredNode(targetClient, nodes.MaterialNr, kranfahrtAuftragEvent.MaterialNr);
 
-            kranfahrtAuftragTelegrammNummer = telegrammNummer;
+               // Event_102 ist der eigentliche Trigger fuer die Kran-SPS/Simulation.
+               // Deshalb bewusst zuletzt schreiben, nachdem alle Payload-Werte stehen.
+               WriteRequiredNode(targetClient, nodes.EventTrigger, telegrammNummer);
 
-            _logger.LogInformation(               "0047|Event_102 an SPS gesendet: Nr={AuftragID}, TeilNr={AuftragTeilfahrt}, Quelle={QuellePositionID}, QuelleUnterposition={QuelleUnterposition}, Ziel={ZielPositionID}, ZielUnterposition={ZielUnterposition}, SollMasse={SollMasseKg}, MasseTol_pos={MasseTolPosKg}, MasseTol_neg={MasseTolNegKg}, MaterialNr={MaterialNr}, Event_102={TelegrammNummer}.",
-               kranfahrtAuftragEvent.AuftragNummer,
-               kranfahrtAuftragEvent.AuftragTeilfahrt,
-               kranfahrtAuftragEvent.QuellePositionID,
-               kranfahrtAuftragEvent.QuelleUnterposition,
-               kranfahrtAuftragEvent.ZielPositionID,
-               kranfahrtAuftragEvent.ZielUnterposition,
-               kranfahrtAuftragEvent.SollMasseKg,
-               kranfahrtAuftragEvent.MasseTolPosKg,
-               kranfahrtAuftragEvent.MasseTolNegKg,
-               kranfahrtAuftragEvent.MaterialNr,
-               telegrammNummer);
+               kranfahrtAuftragTelegrammNummer = telegrammNummer;
 
-            return Task.FromResult(OpcSendResult.Ok(telegrammNummer));
+               _logger.LogInformation(               "0047|Event_102 an SPS gesendet: Nr={AuftragID}, TeilNr={AuftragTeilfahrt}, Quelle={QuellePositionID}, QuelleUnterposition={QuelleUnterposition}, Ziel={ZielPositionID}, ZielUnterposition={ZielUnterposition}, SollMasse={SollMasseKg}, MasseTol_pos={MasseTolPosKg}, MasseTol_neg={MasseTolNegKg}, MaterialNr={MaterialNr}, Event_102={TelegrammNummer}.",
+                  kranfahrtAuftragEvent.AuftragNummer,
+                  kranfahrtAuftragEvent.AuftragTeilfahrt,
+                  kranfahrtAuftragEvent.QuellePositionID,
+                  kranfahrtAuftragEvent.QuelleUnterposition,
+                  kranfahrtAuftragEvent.ZielPositionID,
+                  kranfahrtAuftragEvent.ZielUnterposition,
+                  kranfahrtAuftragEvent.SollMasseKg,
+                  kranfahrtAuftragEvent.MasseTolPosKg,
+                  kranfahrtAuftragEvent.MasseTolNegKg,
+                  kranfahrtAuftragEvent.MaterialNr,
+                  telegrammNummer);
+
+               return Task.FromResult(OpcSendResult.Ok(telegrammNummer));
+            }
+            finally
+            {
+               ReleaseKranClientOperation();
+            }
          }
          catch (Exception ex)
          {
@@ -1553,9 +1607,22 @@ namespace Falcom
          int value,
          string nodeName)
       {
+         WriteRequiredNodeWithStringFallback(
+            client ?? throw new InvalidOperationException("OPC-Kranclient ist nicht initialisiert."),
+            nodeId,
+            value,
+            nodeName);
+      }
+
+      private void WriteRequiredNodeWithStringFallback(
+         OpcClient targetClient,
+         string nodeId,
+         int value,
+         string nodeName)
+      {
          try
          {
-            WriteRequiredNode(nodeId, value);
+            WriteRequiredNode(targetClient, nodeId, value);
          }
          catch (Exception ex)
          {
@@ -1567,6 +1634,7 @@ namespace Falcom
                ex.Message);
 
             WriteRequiredNode(
+               targetClient,
                nodeId,
                value.ToString(System.Globalization.CultureInfo.InvariantCulture));
          }
@@ -1616,7 +1684,71 @@ namespace Falcom
 
       private void WriteRequiredNode(string nodeId, object value)
       {
-         WriteRequiredNode(client!, nodeId, value);
+         OpcClient targetClient = client
+            ?? throw new InvalidOperationException("OPC-Kranclient ist nicht initialisiert.");
+
+         WriteRequiredNode(targetClient, nodeId, value);
+      }
+
+      private OpcClient AcquireConnectedKranClientForOperation()
+      {
+         lock (_syncRoot)
+         {
+            if (client is not { State: OpcClientState.Connected })
+            {
+               _logger.LogInformation(
+                  "0049|OPC-Kranclient ist nicht verbunden. Verbindung wird vor der SPS-Operation aufgebaut.");
+               ConnectOnce();
+            }
+
+            OpcClient targetClient = client
+               ?? throw new InvalidOperationException("OPC-Kranclient ist nicht initialisiert.");
+
+            Interlocked.Increment(ref activeKranOpcOperations);
+            return targetClient;
+         }
+      }
+
+      private void ReleaseKranClientOperation()
+      {
+         Interlocked.Decrement(ref activeKranOpcOperations);
+      }
+
+      private void DisposeRetiredKranClientWhenSafe(OpcClient? retiredClient)
+      {
+         if (retiredClient is null)
+         {
+            return;
+         }
+
+         _ = Task.Run(async () =>
+         {
+            for (int attempt = 0; attempt < 60; attempt++)
+            {
+               if (Volatile.Read(ref activeKranOpcOperations) <= 0)
+               {
+                  break;
+               }
+
+               await Task.Delay(500);
+            }
+
+            try
+            {
+               retiredClient.Disconnect();
+            }
+            catch
+            {
+            }
+
+            try
+            {
+               retiredClient.Dispose();
+            }
+            catch
+            {
+            }
+         });
       }
 
       private void WriteRequiredNode(OpcClient targetClient, string nodeId, object value)
@@ -3437,12 +3569,22 @@ namespace Falcom
       private void EnsureKranfahrtAuftragZaehlerInitialisiert(
          KranfahrtAuftragOpcNodes nodes)
       {
+         EnsureKranfahrtAuftragZaehlerInitialisiert(
+            client ?? throw new InvalidOperationException("OPC-Kranclient ist nicht initialisiert."),
+            nodes);
+      }
+
+      private void EnsureKranfahrtAuftragZaehlerInitialisiert(
+         OpcClient targetClient,
+         KranfahrtAuftragOpcNodes nodes)
+      {
          if (kranfahrtAuftragZaehlerInitialisiert)
          {
             return;
          }
 
          OpcValue triggerValue = ReadRequiredOpcPayloadWithNullRetry(
+            targetClient,
             KranfahrtAuftragEvent.EventName,
             KranfahrtAuftragEvent.EventTriggerNodeName,
             nodes.EventTrigger);
