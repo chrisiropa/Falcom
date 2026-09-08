@@ -194,6 +194,31 @@ namespace Falcom
             : AktuelleFahrtResult.Empty("FALCOM_CompleteAktuelleFahrt lieferte kein Ergebnis.");
       }
 
+      public AktuelleFahrtResult HoldAktuelleFahrtNachSpsRueckmeldefehler(
+         KranfahrtBeendetEvent kranfahrtBeendetEvent)
+      {
+         using SqlConnection connection = new(_configManager.ConnectionString);
+         using SqlCommand command = CreateStoredProcedureCommand(
+            connection,
+            "dbo.FALCOM_HoldAktuelleFahrtNachSpsRueckmeldefehler");
+
+         command.Parameters.Add("@AuftragsNummer", SqlDbType.BigInt).Value = kranfahrtBeendetEvent.AuftragsNummer;
+         command.Parameters.Add("@AuftragTeilfahrt", SqlDbType.BigInt).Value = kranfahrtBeendetEvent.TeilfahrtID;
+         command.Parameters.Add("@Status", SqlDbType.Int).Value = kranfahrtBeendetEvent.Status;
+         command.Parameters.Add("@AenderungsZaehler", SqlDbType.Int).Value = kranfahrtBeendetEvent.ÄnderungsZähler;
+
+         connection.Open();
+         SetRequiredSqlOptions(connection);
+         using SqlDataReader reader = command.ExecuteReader();
+
+         if (!reader.Read() || !GetBoolean(reader, "Success"))
+         {
+            return AktuelleFahrtResult.Empty(GetString(reader, "Reason"));
+         }
+
+         return GetAktuelleFahrt();
+      }
+
       public AktuelleFahrtResult CompleteEinlagerAuftragLkwLeer(
          LkwPlatzLeer207Event lkwPlatzLeerEvent)
       {

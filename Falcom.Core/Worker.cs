@@ -367,9 +367,10 @@ namespace Falcom
                               kranfahrtBeendetEvent.IstGewicht,
                               kranfahrtBeendetEvent.ÄnderungsZähler);
 
-                           AktuelleFahrtResult result =
-                              _aktuelleFahrtRepository.CompleteAktuelleFahrt(
-                                 kranfahrtBeendetEvent);
+                           bool istSpsRueckmeldefehler = kranfahrtBeendetEvent.Status != 0;
+                           AktuelleFahrtResult result = istSpsRueckmeldefehler
+                              ? _aktuelleFahrtRepository.HoldAktuelleFahrtNachSpsRueckmeldefehler(kranfahrtBeendetEvent)
+                              : _aktuelleFahrtRepository.CompleteAktuelleFahrt(kranfahrtBeendetEvent);
 
                            _logger.LogInformation(
                               "0046|KranfahrtBeendet verarbeitet: Erfolg={Success}, Grund={Reason}, AktuelleFahrtID={AktuelleFahrtID}, AuftragID={AuftragID}, Typ={AuftragsTyp}, IstMengeKg={IstMengeKg}.",
@@ -380,7 +381,18 @@ namespace Falcom
                               result.AuftragsTyp,
                               result.IstMengeKg);
 
-                           if (result.Success)
+                           if (istSpsRueckmeldefehler && result.Success)
+                           {
+                              _runtimeStatus.SetAktuelleFahrt(result);
+                              _logger.LogWarning(
+                                 "0113|SPS meldet Teilfahrt nicht regulaer beendet. Die aktuelle Fahrt bleibt gesperrt und wird nicht automatisch wiederholt. AktuelleFahrtID={AktuelleFahrtID}, AuftragID={AuftragID}, Teilfahrt={AuftragTeilfahrt}, Status={Status}. Bediener kann wiederholen oder abbrechen.",
+                                 result.AktuelleFahrtID,
+                                 result.AuftragID,
+                                 result.AuftragTeilfahrt,
+                                 kranfahrtBeendetEvent.Status);
+                              SetState(ProcessState.Fehler);
+                           }
+                           else if (result.Success)
                            {
                               SetState(ProcessState.FahrtAbgeschlossen);
                               SetState(ProcessState.Idle);
