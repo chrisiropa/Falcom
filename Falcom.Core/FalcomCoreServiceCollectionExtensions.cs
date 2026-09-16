@@ -18,9 +18,6 @@ public static class FalcomCoreServiceCollectionExtensions
       services.AddSingleton<FalcomEventQueue>();
       services.AddSingleton<WatchdogSender>();
       services.AddSingleton<CwWatchdogSender>();
-      services.AddSingleton<FalcomKranLiveStatusService>();
-      services.AddSingleton<FalcomKranLiveSignalRClient>();
-      services.AddHostedService<FalcomKranLiveSignalRServer>();
       services.AddSingleton<AktuelleFahrtRepository>();
       services.AddSingleton<BunkerMaterialRepository>();
       services.AddSingleton<KranPositionenRepository>();

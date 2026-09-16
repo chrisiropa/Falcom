@@ -71,7 +71,6 @@ namespace Falcom
       private readonly ILogger<OPC_Client_Crane> _logger;
       private readonly ConfigManager _configManager;
       private readonly FalcomRuntimeStatus _runtimeStatus;
-      private readonly FalcomKranLiveSignalRClient _kranLiveSignalRClient;
       private readonly AktuelleFahrtRepository _aktuelleFahrtRepository;
       private readonly FalcomEventQueue _eventQueue; // Privates Feld fuer die Queue
       private readonly object _syncRoot = new();
@@ -162,15 +161,13 @@ namespace Falcom
          ILogger<OPC_Client_Crane> logger,
          Parameter parameter,
          ConfigManager configManager,
-         FalcomRuntimeStatus runtimeStatus,
-         FalcomKranLiveSignalRClient kranLiveSignalRClient,
+          FalcomRuntimeStatus runtimeStatus,
          AktuelleFahrtRepository aktuelleFahrtRepository,
          FalcomEventQueue eventQueue)
       {
          _logger = logger;
          _configManager = configManager;
          _runtimeStatus = runtimeStatus;
-         _kranLiveSignalRClient = kranLiveSignalRClient;
          _aktuelleFahrtRepository = aktuelleFahrtRepository;
          _eventQueue = eventQueue; // Zuweisung fuer den spaeteren Zugriff
          TraegerLicense();
@@ -880,18 +877,6 @@ namespace Falcom
                WriteRequiredNode(event101NodeId, lebensZaehler);
             }
 
-            _ = _kranLiveSignalRClient.SendKranOpcEventAsync(
-               Event101Id,
-               WatchdogEvent.EventName,
-               Event101Direction,
-               WatchdogEvent.EventName,
-               lebensZaehler,
-               new Dictionary<string, object?>
-               {
-                  [WatchdogEvent.EventName] = lebensZaehler
-               },
-               CancellationToken.None);
-
             return Task.FromResult(OpcSendResult.Ok());
          }
          catch (Exception ex)
@@ -929,18 +914,6 @@ namespace Falcom
             {
                WriteRequiredNode(cwClient!, event301NodeId!, lebensZaehler);
             }
-
-            _ = _kranLiveSignalRClient.SendKranOpcEventAsync(
-               Event301Id,
-               CwWatchdogEvent.EventName,
-               Event301Direction,
-               CwWatchdogEvent.EventName,
-               lebensZaehler,
-               new Dictionary<string, object?>
-               {
-                  [CwWatchdogEvent.EventName] = lebensZaehler
-               },
-               CancellationToken.None);
 
             _runtimeStatus.SetOpcCwSpsStatus(true, "Verbunden");
             return Task.FromResult(OpcSendResult.Ok());
@@ -2785,23 +2758,6 @@ namespace Falcom
             aktuelleMasseNetto = GetOptionalEventInt32(eventValues, MasseNettoNodeName);
             event203EventsInCurrentMinute++;
 
-            _ = _kranLiveSignalRClient.SendKranPositionAsync(
-               aktuellePosKranX,
-               aktuellePosKatzeY,
-               aktuellePosHubZ,
-               aktuellerMagnetAn,
-               aktuelleMasseNetto,
-               CancellationToken.None);
-
-            _ = _kranLiveSignalRClient.SendKranOpcEventAsync(
-               Event203Id,
-               Event203Name,
-               Event203Direction,
-               Event203TriggerNodeName,
-               triggerValue,
-               eventValues,
-               CancellationToken.None);
-
             LogEvent203SummaryIfDue();
          }
          catch (Exception ex)
@@ -2847,15 +2803,6 @@ namespace Falcom
          {
             Dictionary<string, object?> values = ReadConfiguredEventValues(kranfahrtAuftragLiveOpcNodesByName);
 
-            _ = _kranLiveSignalRClient.SendKranOpcEventAsync(
-               KranfahrtAuftragEventId,
-               KranfahrtAuftragEventName,
-               KranfahrtAuftragDirection,
-               Event102TriggerNodeName,
-               telegrammNummer,
-               values,
-               CancellationToken.None);
-
             _logger.LogInformation(
                "0063|Event_102 Live-Snapshot an Webanwendung vorgemerkt. Triggerwert={TelegrammNummer}.",
                telegrammNummer);
@@ -2889,14 +2836,6 @@ namespace Falcom
             [KranfahrtBeendetEvent.IstGewichtNodeName] = istGewicht
          };
 
-         _ = _kranLiveSignalRClient.SendKranOpcEventAsync(
-            KranfahrtBeendetEventId,
-            KranfahrtBeendetEvent.EventName,
-            "KRAN_SPS->FALCOM",
-            KranfahrtBeendetEvent.TriggerNodeName,
-            aenderungsZaehler,
-            values,
-            CancellationToken.None);
       }
 
       private OpcValue ReadRequiredOpcPayloadWithNullRetry(
@@ -3338,12 +3277,6 @@ namespace Falcom
             values.TryGetValue("Istgew_ChW2", out object? istgewChW2);
             values.TryGetValue("Istgew_ChW3", out object? istgewChW3);
 
-            _ = _kranLiveSignalRClient.SendCwIstgewichteAsync(
-               ConvertToNullableInt32(istgewChW1),
-               ConvertToNullableInt32(istgewChW2),
-               ConvertToNullableInt32(istgewChW3),
-               CancellationToken.None);
-
             _logger.LogInformation(
                "0309|Event_402 empfangen und Payload gelesen: AenderungsZaehler={AenderungsZaehler}, Initialwert={IstInitialwert}, Istgew_ChW1={IstgewChW1}, Istgew_ChW2={IstgewChW2}, Istgew_ChW3={IstgewChW3}.",
                aenderungsZaehler,
@@ -3481,12 +3414,6 @@ namespace Falcom
             values.TryGetValue("Stoerung_ChW1", out object? stoerungChW1);
             values.TryGetValue("Stoerung_ChW2", out object? stoerungChW2);
             values.TryGetValue("Stoerung_ChW3", out object? stoerungChW3);
-
-            _ = _kranLiveSignalRClient.SendCwStoerungenAsync(
-               ConvertToNullableBoolean(stoerungChW1),
-               ConvertToNullableBoolean(stoerungChW2),
-               ConvertToNullableBoolean(stoerungChW3),
-               CancellationToken.None);
 
             _logger.LogInformation(
                "0311|Event_404 empfangen und Payload gelesen: AenderungsZaehler={AenderungsZaehler}, Initialwert={IstInitialwert}, Stoerung_ChW1={StoerungChW1}, Stoerung_ChW2={StoerungChW2}, Stoerung_ChW3={StoerungChW3}.",
@@ -3713,9 +3640,6 @@ if (string.Equals(
 
                kranSpsLebensZaehlerEventsInCurrentMinute++;
                _runtimeStatus.SetSpsLebensZaehlerReceived(lebensZaehler);
-               _ = _kranLiveSignalRClient.SendSpsLebensZaehlerAsync(
-                  lebensZaehler,
-                  CancellationToken.None);
                LogKranSpsLebensZaehlerSummaryIfDue(lebensZaehler);
                return;
             }
